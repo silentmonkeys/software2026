@@ -1,17 +1,15 @@
 from datetime import datetime, timedelta
+import bcrypt
 from jose import jwt
-from passlib.context import CryptContext
 from app.core.config import settings
-
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(p: str) -> str:
-    return pwd_ctx.hash(p)
+    return bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(p: str, hashed: str) -> bool:
-    return pwd_ctx.verify(p, hashed)
+    return bcrypt.checkpw(p.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def create_token(sub: str, role: str) -> str:
