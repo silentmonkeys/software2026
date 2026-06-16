@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.workbuddy/
+loongchip.db
+chroma_db/
+uploads/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+Thumbs.db
