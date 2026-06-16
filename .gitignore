@@ -17,3 +17,7 @@ dist-ssr
 pnpm-lock.yaml
 yarn.lock
 package-lock.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
