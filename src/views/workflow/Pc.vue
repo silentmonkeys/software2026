@@ -1,16 +1,23 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getFlow, submitReport } from '@/api/workflow'
-import { AlertTriangle, Clock, Wrench, BookOpen, ChevronLeft, CheckCircle2, Camera, ArrowRight } from 'lucide-vue-next'
-import { showToast } from 'vant'
+import { AlertTriangle, Clock, Wrench, BookOpen, ChevronLeft, ChevronRight, CheckCircle2, Camera, ArrowRight, X, Home } from 'lucide-vue-next'
+import { showToast, showConfirmDialog } from 'vant'
 
 const wf = useWorkflowStore()
+const route = useRoute()
+const router = useRouter()
 
-onMounted(async () => {
-  const f = await getFlow()
+const loadFlow = async () => {
+  const id = (route.params.id as string) || undefined
+  const f = await getFlow(id)
   wf.setFlow(f)
-})
+}
+
+onMounted(loadFlow)
+watch(() => route.params.id, loadFlow)
 
 const onNext = () => {
   if (!wf.currentStep) return
@@ -33,15 +40,47 @@ const remainingMinFmt = computed(() => {
 })
 
 const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps > 0)
+
+const back = () => router.push('/workflow')
+
+const exitWork = async () => {
+  if (wf.currentIdx > 0 && !completed.value) {
+    try {
+      await showConfirmDialog({
+        title: '退出当前作业?',
+        message: '检修流程未完成,退出后已勾选的校验点会保留,但需重新进入才能继续。',
+        confirmButtonText: '退出',
+        cancelButtonText: '继续作业'
+      })
+    } catch { return }
+  }
+  back()
+}
 </script>
 
 <template>
   <div v-if="wf.flow" class="h-full flex flex-col overflow-hidden">
-    <!-- 顶部 -->
-    <header class="flex-shrink-0 px-6 py-4 bg-card border-b border-border">
-      <div class="flex items-start gap-6 flex-wrap">
+    <!-- 面包屑 / 顶部 -->
+    <header class="flex-shrink-0 px-6 pt-3 pb-3 bg-card border-b border-border">
+      <!-- 面包屑 -->
+      <div class="flex items-center gap-1 text-xs text-text-2 mb-2">
+        <button class="hover:text-accent flex items-center gap-1" @click="router.push('/dashboard')">
+          <Home class="w-3 h-3" /> 工作台
+        </button>
+        <ChevronRight class="w-3 h-3" />
+        <button class="hover:text-accent" @click="back">作业指引</button>
+        <ChevronRight class="w-3 h-3" />
+        <span class="text-text font-medium truncate">{{ wf.flow.name }}</span>
+      </div>
+
+      <div class="flex items-start gap-4 flex-wrap">
+        <!-- 返回按钮 -->
+        <button @click="back" class="h-9 px-3 rounded-btn border border-border bg-bg hover:bg-card flex items-center gap-1.5 text-sm flex-shrink-0">
+          <ChevronLeft class="w-4 h-4" /> 返回列表
+        </button>
+
         <div class="flex-1 min-w-72">
-          <div class="text-xs text-text-2 mb-1">作业指引 / 流程编号 {{ wf.flow.id }}</div>
+          <div class="text-xs text-text-2 mb-1">流程编号 {{ wf.flow.id }}</div>
           <h1 class="text-xl font-bold text-primary">{{ wf.flow.name }}</h1>
           <div class="text-sm text-text-2 mt-1 flex items-center gap-3">
             <span class="mono">{{ wf.flow.deviceModel }}</span>
@@ -66,6 +105,12 @@ const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps
                  :style="{ width: wf.progress * 100 + '%' }"></div>
           </div>
         </div>
+
+        <!-- 退出作业 -->
+        <button @click="exitWork"
+                class="h-9 px-3 rounded-btn border border-danger/30 text-danger hover:bg-danger/5 flex items-center gap-1.5 text-sm flex-shrink-0">
+          <X class="w-4 h-4" /> 退出作业
+        </button>
       </div>
     </header>
 
@@ -113,6 +158,9 @@ const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps
               生成检修报告
             </button>
           </div>
+          <button @click="back" class="mt-4 text-sm text-text-2 hover:text-accent">
+            返回作业列表
+          </button>
         </div>
 
         <div v-else-if="wf.currentStep" class="industrial-card p-6">
@@ -173,7 +221,7 @@ const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps
             <BookOpen class="w-4 h-4 text-ai" /> 关联手册
           </h4>
           <ul class="space-y-2 text-sm">
-            <li class="text-accent hover:underline cursor-pointer">YKK630-4 异步电机检修手册 v3.2</li>
+            <li class="text-accent hover:underline cursor-pointer">{{ wf.flow.deviceModel }} 检修手册 v3.2</li>
             <li class="text-accent hover:underline cursor-pointer">轴承拆卸安全规程 §2.1</li>
             <li class="text-accent hover:underline cursor-pointer">润滑脂使用标准 v1.4</li>
           </ul>

@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getFlow, submitReport } from '@/api/workflow'
 import MobileWorkflowStep from '@/components/mobile/MobileWorkflowStep.vue'
-import { ChevronLeft, ArrowRight, CheckCircle2 } from 'lucide-vue-next'
-import { showToast } from 'vant'
+import { ChevronLeft, ArrowRight, CheckCircle2, X, MoreVertical } from 'lucide-vue-next'
+import { showToast, showConfirmDialog } from 'vant'
+import { ref } from 'vue'
 
 const wf = useWorkflowStore()
+const route = useRoute()
+const router = useRouter()
 
-onMounted(async () => {
-  const f = await getFlow()
+const showMore = ref(false)
+
+const loadFlow = async () => {
+  const id = (route.params.id as string) || undefined
+  const f = await getFlow(id)
   wf.setFlow(f)
-})
+}
+onMounted(loadFlow)
+watch(() => route.params.id, loadFlow)
 
 const remainingMinFmt = computed(() => {
   const m = wf.remainingMin
@@ -37,24 +46,67 @@ const onNext = () => {
 }
 
 const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps > 0)
+
+const back = () => router.push('/workflow')
+
+const exitWork = async () => {
+  showMore.value = false
+  if (wf.currentIdx > 0 && !completed.value) {
+    try {
+      await showConfirmDialog({
+        title: '退出当前作业?',
+        message: '检修流程未完成,退出后已勾选的校验点会保留。',
+        confirmButtonText: '退出',
+        cancelButtonText: '继续'
+      })
+    } catch { return }
+  }
+  back()
+}
 </script>
 
 <template>
   <div v-if="wf.flow" class="h-full flex flex-col">
-    <!-- 顶部进度 -->
-    <header class="flex-shrink-0 bg-card border-b border-border px-4 py-2">
-      <div class="flex items-center justify-between text-xs text-text-2 mb-1.5">
-        <span class="font-semibold text-text">{{ wf.flow.name }}</span>
-        <span class="mono">{{ wf.currentIdx }}/{{ wf.totalSteps }} · 剩 {{ remainingMinFmt }}</span>
+    <!-- 顶部:返回 + 标题 + 进度 -->
+    <header class="flex-shrink-0 bg-card border-b border-border">
+      <div class="h-12 flex items-center px-2 relative">
+        <button @click="back" class="w-10 h-10 flex items-center justify-center" aria-label="返回">
+          <ChevronLeft class="w-5 h-5" />
+        </button>
+        <div class="flex-1 min-w-0 px-1 text-center">
+          <div class="text-[11px] text-text-2 leading-tight">作业指引 · {{ wf.flow.deviceModel }}</div>
+          <div class="text-sm font-semibold truncate">{{ wf.flow.name }}</div>
+        </div>
+        <button @click="showMore = !showMore" class="w-10 h-10 flex items-center justify-center" aria-label="更多">
+          <MoreVertical class="w-5 h-5" />
+        </button>
+        <transition name="fade">
+          <div v-if="showMore"
+               class="absolute right-2 top-12 z-30 w-44 bg-card border border-border rounded-btn shadow-float overflow-hidden">
+            <button @click="back" class="w-full h-11 px-3 flex items-center gap-2 active:bg-bg text-sm">
+              <ChevronLeft class="w-4 h-4" /> 返回作业列表
+            </button>
+            <button @click="exitWork" class="w-full h-11 px-3 flex items-center gap-2 active:bg-bg text-sm text-danger border-t border-border">
+              <X class="w-4 h-4" /> 退出作业
+            </button>
+          </div>
+        </transition>
       </div>
-      <div class="h-1.5 bg-border rounded-full overflow-hidden">
-        <div class="h-full bg-accent transition-all duration-500"
-             :style="{ width: wf.progress * 100 + '%' }"></div>
+
+      <div class="px-4 pb-2">
+        <div class="flex items-center justify-between text-xs text-text-2 mb-1">
+          <span>{{ wf.currentIdx }}/{{ wf.totalSteps }} 步 · 剩 {{ remainingMinFmt }}</span>
+          <span class="mono text-accent font-semibold">{{ Math.round(wf.progress * 100) }}%</span>
+        </div>
+        <div class="h-1.5 bg-border rounded-full overflow-hidden">
+          <div class="h-full bg-accent transition-all duration-500"
+               :style="{ width: wf.progress * 100 + '%' }"></div>
+        </div>
       </div>
     </header>
 
     <!-- 滚动主体 -->
-    <main class="flex-1 overflow-auto">
+    <main class="flex-1 overflow-auto" @click="showMore = false">
       <div v-if="completed" class="p-6 text-center">
         <div class="w-16 h-16 rounded-full bg-success/10 text-success flex items-center justify-center mx-auto mb-3">
           <CheckCircle2 class="w-8 h-8" />
@@ -62,6 +114,7 @@ const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps
         <h2 class="text-xl font-bold">流程已完成</h2>
         <p class="text-sm text-text-2 mt-1">请上传现场照片并填写异常</p>
         <button class="mt-5 h-12 px-6 rounded-btn bg-accent text-white font-semibold">生成检修报告</button>
+        <button @click="back" class="block mx-auto mt-3 text-sm text-text-2 hover:text-accent">返回作业列表</button>
       </div>
       <MobileWorkflowStep v-else-if="wf.currentStep"
                           :step="wf.currentStep"
@@ -86,3 +139,8 @@ const completed = computed(() => wf.currentIdx >= wf.totalSteps && wf.totalSteps
   </div>
   <div v-else class="p-12 text-center text-text-2">流程加载中…</div>
 </template>
+
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity .15s, transform .15s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-4px); }
+</style>

@@ -19,9 +19,13 @@ export const useUserStore = defineStore('user', () => {
 
   const isLoggedIn = computed(() => !!token.value)
   const role = computed<Role>(() => info.value?.role || 'guest')
+  const isAdmin = computed(() => role.value === 'admin')
+  const isAuditor = computed(() => role.value === 'auditor' || role.value === 'admin')
+  const isWorker = computed(() => role.value === 'frontline')
+  const isGuest = computed(() => role.value === 'guest')
 
-  const login = async (username: string, password: string, remember = false) => {
-    const res = await authApi.login({ username, password, remember })
+  const login = async (username: string, password: string, remember = false, roleHint?: Role) => {
+    const res = await authApi.login({ username, password, remember, role: roleHint })
     token.value = res.token
     info.value = res.user
     storage.set(TOKEN_STORAGE_KEY, res.token)
@@ -37,5 +41,5 @@ export const useUserStore = defineStore('user', () => {
     storage.remove('app:user')
   }
 
-  return { token, info, isLoggedIn, role, login, logout }
+  return { token, info, isLoggedIn, role, isAdmin, isAuditor, isWorker, isGuest, login, logout }
 })

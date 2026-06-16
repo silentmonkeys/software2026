@@ -9,6 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/search',    component: () => import('@/views/search/index.vue'),    meta: { layout: 'app', title: '多模态检索' } },
   { path: '/search/:id',component: () => import('@/views/search/Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
   { path: '/workflow',  component: () => import('@/views/workflow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
+  { path: '/workflow/:id', component: () => import('@/views/workflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情' } },
   { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '知识上传' } },
   { path: '/audit',     component: () => import('@/views/audit/index.vue'),     meta: { layout: 'app', title: '案例审核', roles: ['auditor', 'admin'] } },
   { path: '/kg',        component: () => import('@/views/kg/index.vue'),        meta: { layout: 'app', title: '知识图谱' } },

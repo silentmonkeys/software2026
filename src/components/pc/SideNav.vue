@@ -3,25 +3,27 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, ChevronRight } from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
+import { getVisibleMenuItems } from '@/utils/permission'
 
 const route = useRoute()
 const router = useRouter()
 const user = useUserStore()
 
-const items = computed(() => {
-  const base = [
-    { path: '/dashboard', icon: LayoutDashboard, label: '工作台' },
-    { path: '/search',    icon: Search,           label: '多模态检索', highlight: true },
-    { path: '/workflow',  icon: ListChecks,       label: '作业指引' },
-    { path: '/knowledge/upload', icon: BookOpen,  label: '知识上传' },
-    { path: '/audit',     icon: ShieldCheck,      label: '案例审核', badge: 5, roles: ['auditor', 'admin'] },
-    { path: '/kg',        icon: Network,          label: '知识图谱' },
-    { path: '/history',   icon: History,          label: '历史与收藏' },
-    { path: '/profile',   icon: User,             label: '个人中心' },
-    { path: '/admin',     icon: Cog,              label: '系统管理', roles: ['admin'] }
-  ]
-  return base.filter(i => !i.roles || i.roles.includes(user.role))
-})
+const ICONS: Record<string, any> = {
+  '/dashboard':        LayoutDashboard,
+  '/search':           Search,
+  '/workflow':         ListChecks,
+  '/knowledge/upload': BookOpen,
+  '/audit':            ShieldCheck,
+  '/kg':               Network,
+  '/history':          History,
+  '/profile':          User,
+  '/admin':            Cog
+}
+
+const items = computed(() =>
+  getVisibleMenuItems(user.role).map(it => ({ ...it, icon: ICONS[it.path] }))
+)
 
 const isActive = (p: string) => route.path === p || route.path.startsWith(p + '/')
 </script>
@@ -39,9 +41,9 @@ const isActive = (p: string) => route.path === p || route.path.startsWith(p + '/
               ]">
         <component :is="it.icon" class="w-4 h-4" :class="isActive(it.path) ? '' : 'text-text-2 group-hover:text-text'" />
         <span class="flex-1 text-left">{{ it.label }}</span>
-        <span v-if="(it as any).badge"
+        <span v-if="it.badge"
               class="px-1.5 h-5 min-w-5 rounded-full bg-accent text-white text-xs font-semibold flex items-center justify-center mono">
-          {{ (it as any).badge }}
+          {{ it.badge }}
         </span>
         <ChevronRight v-if="isActive(it.path)" class="w-3.5 h-3.5" />
       </button>

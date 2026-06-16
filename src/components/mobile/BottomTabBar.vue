@@ -1,19 +1,41 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Home, Search, ListChecks, User } from 'lucide-vue-next'
+import { Home, Search, ListChecks, ShieldCheck, Cog, User } from 'lucide-vue-next'
+import { useUserStore } from '@/stores/user'
+import { hasPermission } from '@/utils/permission'
 
 const route = useRoute()
 const router = useRouter()
+const user = useUserStore()
 
-const tabs = [
-  { path: '/dashboard', icon: Home,      label: '首页' },
-  { path: '/search',    icon: Search,    label: '检索' },
-  { path: '/workflow',  icon: ListChecks,label: '指引', badge: 1 },
-  { path: '/profile',   icon: User,      label: '我的' }
-]
+/**
+ * 移动端底部导航与 PC 保持一致的权限规则。
+ * - 一线检修员/访客:首页 / 检索 / 指引 / 我的
+ * - 审核员:首页 / 检索 / 审核 / 指引 / 我的
+ * - 管理员:首页 / 检索 / 审核 / 系统 / 我的
+ *
+ * 移动端最多显示 5 个 Tab,其余功能通过侧边抽屉访问。
+ */
+const tabs = computed(() => {
+  const role = user.role
+  const all = [
+    { path: '/dashboard', icon: Home,        label: '首页', roles: undefined },
+    { path: '/search',    icon: Search,      label: '检索', roles: undefined },
+    { path: '/audit',     icon: ShieldCheck, label: '审核', badge: 5, roles: ['auditor', 'admin'] as const },
+    { path: '/admin',     icon: Cog,         label: '系统',  roles: ['admin'] as const },
+    { path: '/workflow',  icon: ListChecks,  label: '指引', badge: 1, roles: undefined },
+    { path: '/profile',   icon: User,        label: '我的', roles: undefined }
+  ]
+  // 过滤可见
+  const visible = all.filter(t => hasPermission(role, t.roles as any))
+  // 仅取前 5 个,保证最后一项是"我的"
+  if (visible.length <= 5) return visible
+  return [...visible.filter(t => t.path !== '/profile').slice(0, 4),
+          visible.find(t => t.path === '/profile')!]
+})
 
-const active = computed(() => tabs.findIndex(t => route.path.startsWith(t.path)))
+const active = computed(() => tabs.value.findIndex(t => route.path.startsWith(t.path)))
 </script>
 
 <template>

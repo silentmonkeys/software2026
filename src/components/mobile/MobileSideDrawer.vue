@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useTheme } from '@/composables/useTheme'
-import { ROLE_LABEL } from '@/utils/permission'
-import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, Moon, Sun, LogOut } from 'lucide-vue-next'
+import { ROLE_LABEL, getVisibleMenuItems } from '@/utils/permission'
+import {
+  LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User,
+  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Sparkles
+} from 'lucide-vue-next'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
@@ -11,19 +15,28 @@ const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
 const route = useRoute()
 const router = useRouter()
 const user = useUserStore()
-const { theme, toggleDark } = useTheme()
+const {
+  theme, fontSize, glove,
+  toggleDark, toggleContrast, toggleGlove,
+  increaseFontSize, decreaseFontSize, resetFontSize,
+  fontSizeLabel
+} = useTheme()
 
-const items = [
-  { path: '/dashboard', icon: LayoutDashboard, label: '工作台' },
-  { path: '/search',    icon: Search, label: '多模态检索' },
-  { path: '/workflow',  icon: ListChecks, label: '作业指引' },
-  { path: '/knowledge/upload', icon: BookOpen, label: '知识上传' },
-  { path: '/audit',     icon: ShieldCheck, label: '案例审核' },
-  { path: '/kg',        icon: Network, label: '知识图谱' },
-  { path: '/history',   icon: History, label: '历史与收藏' },
-  { path: '/profile',   icon: User, label: '个人中心' },
-  { path: '/admin',     icon: Cog, label: '系统管理' }
-]
+const ICONS: Record<string, any> = {
+  '/dashboard':        LayoutDashboard,
+  '/search':           Search,
+  '/workflow':         ListChecks,
+  '/knowledge/upload': BookOpen,
+  '/audit':            ShieldCheck,
+  '/kg':               Network,
+  '/history':          History,
+  '/profile':          User,
+  '/admin':            Cog
+}
+
+const items = computed(() =>
+  getVisibleMenuItems(user.role).map(it => ({ ...it, icon: ICONS[it.path] }))
+)
 
 const go = (p: string) => { router.push(p); emit('update:open', false) }
 const onLogout = async () => { await user.logout(); router.push('/login') }
@@ -54,16 +67,59 @@ const onLogout = async () => { await user.logout(); router.push('/login') }
                   class="w-full h-12 px-3 rounded-btn flex items-center gap-3 text-base"
                   :class="route.path.startsWith(it.path) ? 'bg-accent/10 text-accent font-semibold' : 'text-text'">
             <component :is="it.icon" class="w-5 h-5" />
-            <span>{{ it.label }}</span>
+            <span class="flex-1 text-left">{{ it.label }}</span>
+            <span v-if="it.badge"
+                  class="px-1.5 h-5 min-w-5 rounded-full bg-accent text-white text-[11px] font-semibold flex items-center justify-center mono">
+              {{ it.badge }}
+            </span>
           </button>
+
+          <!-- ======= 显示设置 ======= -->
+          <div class="mt-3 px-3 pt-3 border-t border-border">
+            <div class="text-xs text-text-2 mb-2 px-1">显示设置</div>
+
+            <!-- 字号调节 -->
+            <div class="flex items-center justify-between p-3 rounded-btn bg-bg mb-2">
+              <div class="flex items-center gap-2 text-sm">
+                <Type class="w-4 h-4 text-text-2" />
+                <span>字号</span>
+                <span class="text-xs text-text-2 mono">{{ fontSizeLabel }}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button class="w-8 h-8 rounded-btn border border-border flex items-center justify-center active:bg-bg" @click="decreaseFontSize">
+                  <Minus class="w-4 h-4" />
+                </button>
+                <button class="w-8 h-8 rounded-btn border border-border flex items-center justify-center active:bg-bg" @click="resetFontSize" title="重置">
+                  <RotateCcw class="w-3.5 h-3.5" />
+                </button>
+                <button class="w-8 h-8 rounded-btn border border-border flex items-center justify-center active:bg-bg" @click="increaseFontSize">
+                  <Plus class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg" @click="toggleDark">
+              <Moon v-if="theme === 'light'" class="w-5 h-5" />
+              <Sun v-else class="w-5 h-5" />
+              <span class="flex-1 text-left text-sm">深色模式</span>
+              <span class="text-xs text-text-2">{{ theme === 'dark' ? '已开启' : '关闭' }}</span>
+            </button>
+
+            <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg" @click="toggleContrast">
+              <Sparkles class="w-5 h-5" />
+              <span class="flex-1 text-left text-sm">高对比度</span>
+              <span class="text-xs text-text-2">{{ theme === 'contrast' ? '已开启' : '关闭' }}</span>
+            </button>
+
+            <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg" @click="toggleGlove">
+              <HardHat class="w-5 h-5" />
+              <span class="flex-1 text-left text-sm">手套模式</span>
+              <span class="text-xs text-text-2">{{ glove === 'on' ? '已开启' : '关闭' }}</span>
+            </button>
+          </div>
         </nav>
 
         <div class="border-t border-border p-2 safe-bottom">
-          <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg" @click="toggleDark">
-            <Moon v-if="theme === 'light'" class="w-5 h-5" />
-            <Sun v-else class="w-5 h-5" />
-            <span>{{ theme === 'dark' ? '浅色模式' : '深色模式' }}</span>
-          </button>
           <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg text-danger" @click="onLogout">
             <LogOut class="w-5 h-5" /> 退出登录
           </button>

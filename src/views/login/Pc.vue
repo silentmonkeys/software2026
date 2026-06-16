@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Lock, User, Loader, Cog } from 'lucide-vue-next'
+import { Lock, User, Loader, Cog, ChevronDown } from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
 import { showToast } from 'vant'
+import { ROLE_LABEL, DEMO_ACCOUNTS, type Role } from '@/utils/permission'
 
 const router = useRouter()
 const user = useUserStore()
@@ -12,15 +13,27 @@ const username = ref('lishifu')
 const password = ref('demo123')
 const remember = ref(true)
 const loading = ref(false)
+const role = ref<Role>('frontline')
+const showRoleMenu = ref(false)
+
+const roles: Role[] = ['frontline', 'auditor', 'admin', 'guest']
+
+const currentDemo = computed(() => DEMO_ACCOUNTS[role.value])
 
 const onLogin = async () => {
   if (!username.value || !password.value) { showToast('请填写账号和密码'); return }
   loading.value = true
   try {
-    await user.login(username.value, password.value, remember.value)
-    showToast({ type: 'success', message: '登录成功' })
+    await user.login(username.value, password.value, remember.value, role.value)
+    showToast({ type: 'success', message: '登录成功 · ' + ROLE_LABEL[role.value] })
     router.push('/dashboard')
   } finally { loading.value = false }
+}
+
+const pickRole = (r: Role) => {
+  role.value = r
+  username.value = r          // 同步用户名,与 mock 匹配
+  showRoleMenu.value = false
 }
 </script>
 
@@ -59,6 +72,44 @@ const onLogin = async () => {
       </div>
 
       <form @submit.prevent="onLogin" class="space-y-4">
+        <!-- 演示角色选择 -->
+        <div>
+          <div class="text-xs text-text-2 mb-1.5 flex items-center gap-1">
+            <span>演示角色</span>
+            <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai text-[10px] mono">MOCK</span>
+          </div>
+          <div class="relative">
+            <button type="button" @click="showRoleMenu = !showRoleMenu"
+                    class="w-full h-11 px-3 rounded-btn border border-border bg-bg text-left flex items-center gap-2 hover:border-accent transition">
+              <span class="w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
+                {{ ROLE_LABEL[role].slice(0,1) }}
+              </span>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium">{{ ROLE_LABEL[role] }}</div>
+                <div class="text-[11px] text-text-2 truncate">{{ currentDemo.workshop }}</div>
+              </div>
+              <ChevronDown class="w-4 h-4 text-text-2" :class="{ 'rotate-180': showRoleMenu }" />
+            </button>
+            <transition name="fade">
+              <div v-if="showRoleMenu"
+                   class="absolute z-20 left-0 right-0 mt-1 industrial-card shadow-float overflow-hidden">
+                <button v-for="r in roles" :key="r" type="button"
+                        @click="pickRole(r)"
+                        class="w-full h-11 px-3 flex items-center gap-2 text-left hover:bg-bg"
+                        :class="r === role ? 'bg-accent/5 text-accent' : ''">
+                  <span class="w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
+                    {{ ROLE_LABEL[r].slice(0,1) }}
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium">{{ ROLE_LABEL[r] }}</div>
+                    <div class="text-[11px] text-text-2 truncate">{{ DEMO_ACCOUNTS[r].workshop }}</div>
+                  </div>
+                </button>
+              </div>
+            </transition>
+          </div>
+        </div>
+
         <div class="relative">
           <User class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-2" />
           <input v-model="username" type="text" placeholder="工号 / 用户名"
@@ -89,8 +140,11 @@ const onLogin = async () => {
       </div>
 
       <div class="mt-6 px-3 py-2 bg-bg rounded-btn text-xs text-text-2">
-        <div class="font-medium text-text mb-1">演示账号</div>
-        <div class="mono">lishifu / demo123 (任意均可)</div>
+        <div class="font-medium text-text mb-1">演示模式</div>
+        <div>选择角色后,输入任意用户名和密码即可登录;不同角色看到的菜单不同</div>
+        <div class="mt-1 mono text-[11px] opacity-70">
+          admin / auditor / worker / guest · 任意密码
+        </div>
       </div>
     </div>
 
@@ -100,3 +154,9 @@ const onLogin = async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity .15s, transform .15s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-4px); }
+.rotate-180 { transform: rotate(180deg); }
+</style>
