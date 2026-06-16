@@ -4,6 +4,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Depends
 from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.config import settings
+from app.core.security import get_current_user
 from app.services.llm import vl_describe
 from app.services.rag import rag_answer
 from app.models import QALog
@@ -16,6 +17,7 @@ async def query(
     question: str = Form(...),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
+    _=Depends(get_current_user),
 ):
     img_desc = ""
     if image is not None:

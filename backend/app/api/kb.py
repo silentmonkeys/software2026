@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.config import settings
+from app.core.security import get_current_user
 from app.models import Document
 from app.services.parser import read_any
 from app.services.rag import ingest_document
@@ -13,7 +14,7 @@ os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
 
 @router.post("/upload")
-async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), _=Depends(get_current_user)):
     if not file.filename.lower().endswith((".pdf", ".docx", ".txt", ".md")):
         raise HTTPException(400, "仅支持 PDF / DOCX / TXT / MD")
     path = os.path.join(settings.UPLOAD_DIR, file.filename)
@@ -27,7 +28,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
 
 @router.get("/list")
-def list_docs(db: Session = Depends(get_db)):
+def list_docs(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return [
         {"id": d.id, "title": d.title, "type": d.type, "status": d.status, "created_at": d.created_at}
         for d in db.query(Document).order_by(Document.id.desc()).all()
@@ -35,7 +36,7 @@ def list_docs(db: Session = Depends(get_db)):
 
 
 @router.delete("/{doc_id}")
-def delete_doc(doc_id: int, db: Session = Depends(get_db)):
+def delete_doc(doc_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     d = db.query(Document).get(doc_id)
     if not d: raise HTTPException(404)
     db.delete(d); db.commit()

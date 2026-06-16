@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.db import get_db
+from app.core.security import get_current_user
 from app.models import Ticket
 from app.services.llm import chat_text
 
@@ -18,22 +19,22 @@ class TicketIn(BaseModel):
 
 
 @router.post("")
-def create(body: TicketIn, db: Session = Depends(get_db)):
+def create(body: TicketIn, db: Session = Depends(get_db), _=Depends(get_current_user)):
     sys = "你是检修作业指引专家。请按【风险预检/工具准备/检修步骤/验收标准】四段输出，使用 JSON 数组返回 steps。"
     prompt = f"设备：{body.device}\n故障：{body.fault}\n请生成标准化检修步骤。"
     steps_text = chat_text(sys, prompt)
-    t = Ticket(device=body.device, fault=body.fault, steps={"raw": steps_text})
+    t = Ticket(device=body.device, fault=body.fault, steps={"raw": steps_text}, owner_id=_.id)
     db.add(t); db.commit(); db.refresh(t)
     return {"id": t.id, "steps": t.steps}
 
 
 @router.get("")
-def list_(db: Session = Depends(get_db)):
+def list_(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return [{"id": t.id, "device": t.device, "fault": t.fault, "status": t.status} for t in db.query(Ticket).all()]
 
 
 @router.patch("/{tid}")
-def update(tid: int, body: TicketStatusIn, db: Session = Depends(get_db)):
+def update(tid: int, body: TicketStatusIn, db: Session = Depends(get_db), _=Depends(get_current_user)):
     t = db.query(Ticket).get(tid)
     if not t: raise HTTPException(404)
     t.status = body.status; db.commit()
@@ -41,7 +42,7 @@ def update(tid: int, body: TicketStatusIn, db: Session = Depends(get_db)):
 
 
 @router.get("/{tid}")
-def detail(tid: int, db: Session = Depends(get_db)):
+def detail(tid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     t = db.query(Ticket).get(tid)
     if not t: raise HTTPException(404, detail="工单不存在")
     return {"id": t.id, "device": t.device, "fault": t.fault, "steps": t.steps, "status": t.status, "created_at": t.created_at.isoformat()}
