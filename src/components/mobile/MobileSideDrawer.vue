@@ -1,0 +1,81 @@
+<script setup lang="ts">
+import { useRoute, useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/user'
+import { useTheme } from '@/composables/useTheme'
+import { ROLE_LABEL } from '@/utils/permission'
+import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, Moon, Sun, LogOut } from 'lucide-vue-next'
+
+defineProps<{ open: boolean }>()
+const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
+
+const route = useRoute()
+const router = useRouter()
+const user = useUserStore()
+const { theme, toggleDark } = useTheme()
+
+const items = [
+  { path: '/dashboard', icon: LayoutDashboard, label: '工作台' },
+  { path: '/search',    icon: Search, label: '多模态检索' },
+  { path: '/workflow',  icon: ListChecks, label: '作业指引' },
+  { path: '/knowledge/upload', icon: BookOpen, label: '知识上传' },
+  { path: '/audit',     icon: ShieldCheck, label: '案例审核' },
+  { path: '/kg',        icon: Network, label: '知识图谱' },
+  { path: '/history',   icon: History, label: '历史与收藏' },
+  { path: '/profile',   icon: User, label: '个人中心' },
+  { path: '/admin',     icon: Cog, label: '系统管理' }
+]
+
+const go = (p: string) => { router.push(p); emit('update:open', false) }
+const onLogout = async () => { await user.logout(); router.push('/login') }
+</script>
+
+<template>
+  <transition name="drawer">
+    <div v-if="open" class="fixed inset-0 z-50 flex" @click.self="emit('update:open', false)">
+      <div class="absolute inset-0 bg-black/45"></div>
+      <div class="relative w-[80%] max-w-xs h-full bg-card flex flex-col shadow-float">
+        <!-- 用户头 -->
+        <div class="bg-primary text-on-dark p-4 safe-top">
+          <div class="flex items-center gap-3 mt-2">
+            <div class="w-12 h-12 rounded-full bg-accent flex items-center justify-center text-lg font-bold">
+              {{ (user.info?.name || '游').slice(0, 1) }}
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-semibold truncate">{{ user.info?.name || '访客' }}</div>
+              <div class="text-xs opacity-70 truncate">{{ ROLE_LABEL[user.role] }} · {{ user.info?.workshop || '-' }}</div>
+            </div>
+          </div>
+          <span class="xinchuang-badge mt-3"><span class="dot"></span>LoongArch | 银河麒麟 V11</span>
+        </div>
+
+        <nav class="flex-1 overflow-auto p-2">
+          <button v-for="it in items" :key="it.path"
+                  @click="go(it.path)"
+                  class="w-full h-12 px-3 rounded-btn flex items-center gap-3 text-base"
+                  :class="route.path.startsWith(it.path) ? 'bg-accent/10 text-accent font-semibold' : 'text-text'">
+            <component :is="it.icon" class="w-5 h-5" />
+            <span>{{ it.label }}</span>
+          </button>
+        </nav>
+
+        <div class="border-t border-border p-2 safe-bottom">
+          <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg" @click="toggleDark">
+            <Moon v-if="theme === 'light'" class="w-5 h-5" />
+            <Sun v-else class="w-5 h-5" />
+            <span>{{ theme === 'dark' ? '浅色模式' : '深色模式' }}</span>
+          </button>
+          <button class="w-full h-12 px-3 flex items-center gap-3 rounded-btn hover:bg-bg text-danger" @click="onLogout">
+            <LogOut class="w-5 h-5" /> 退出登录
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+</template>
+
+<style scoped>
+.drawer-enter-active, .drawer-leave-active { transition: opacity .25s; }
+.drawer-enter-active .relative, .drawer-leave-active .relative { transition: transform .28s ease; }
+.drawer-enter-from, .drawer-leave-to { opacity: 0; }
+.drawer-enter-from .relative, .drawer-leave-to .relative { transform: translateX(-100%); }
+</style>
