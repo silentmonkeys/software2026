@@ -8,6 +8,10 @@ from app.services.llm import chat_text
 router = APIRouter(prefix="/api/ticket", tags=["ticket"])
 
 
+class TicketStatusIn(BaseModel):
+    status: str
+
+
 class TicketIn(BaseModel):
     device: str
     fault: str
@@ -29,8 +33,15 @@ def list_(db: Session = Depends(get_db)):
 
 
 @router.patch("/{tid}")
-def update(tid: int, status: str, db: Session = Depends(get_db)):
+def update(tid: int, body: TicketStatusIn, db: Session = Depends(get_db)):
     t = db.query(Ticket).get(tid)
     if not t: raise HTTPException(404)
-    t.status = status; db.commit()
-    return {"ok": True}
+    t.status = body.status; db.commit()
+    return {"ok": True, "status": t.status}
+
+
+@router.get("/{tid}")
+def detail(tid: int, db: Session = Depends(get_db)):
+    t = db.query(Ticket).get(tid)
+    if not t: raise HTTPException(404, detail="工单不存在")
+    return {"id": t.id, "device": t.device, "fault": t.fault, "steps": t.steps, "status": t.status, "created_at": t.created_at.isoformat()}
