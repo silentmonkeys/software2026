@@ -11,6 +11,16 @@ export interface ToolItem {
   imageUrl?: string
 }
 
+/**
+ * 子步骤（FIX4 第 2 项）—— 大步骤内必须按顺序完成的最小执行单元
+ *  - 后端 SOP_SYSTEM 约束 LLM 输出 { id, content }
+ *  - 前端按顺序渲染为 checkbox；只有前一项打钩，后一项才可用
+ */
+export interface SubStep {
+  id: string
+  content: string
+}
+
 export interface SopStep {
   id: string
   index?: number          // 1-based
@@ -25,6 +35,8 @@ export interface SopStep {
   manualRef?: string
   acceptance?: string
   checkPoints: string[]
+  /** FIX4 第 2 项：大步骤下面的有序子步骤 */
+  subSteps?: SubStep[]
 }
 
 export interface SopFlow {
@@ -100,21 +112,32 @@ const SECTION_HEADERS = ['风险预检', '工具准备', '检修步骤', '验收
 function parseTicketSteps(raw: unknown): SopStep[] {
   if (!raw) return []
   if (Array.isArray(raw)) {
-    return raw.map((s: any, i: number) => ({
-      id: 's' + (i + 1),
-      index: i + 1,
-      name: s.name || s.title || SECTION_HEADERS[i] || `步骤 ${i + 1}`,
-      desc: typeof s === 'string' ? s : (s.desc || s.description || s.content || JSON.stringify(s)),
-      estMinutes: Number(s.estMinutes || s.minutes || 15),
-      hazardous: s.hazardous,
-      safetyNote: s.safetyNote || s.safety_note,
-      tools: s.tools || [],
-      toolItems: s.toolItems || s.tool_items,
-      materials: s.materials || [],
-      manualRef: s.manualRef || s.ref,
-      acceptance: s.acceptance,
-      checkPoints: s.checkPoints || s.checks || []
-    }))
+    return raw.map((s: any, i: number) => {
+      // FIX4 第 2 项：标准化 subSteps，支持后端 [{id, content}] 或 [{ id, title, ... }] 多种字段
+      const rawSubs = s.subSteps || s.sub_steps || s.substeps
+      const subSteps: SubStep[] | undefined = Array.isArray(rawSubs) && rawSubs.length
+        ? rawSubs.map((ss: any, j: number) => ({
+            id: String(ss.id || `sub-${i + 1}-${j + 1}`),
+            content: String(ss.content || ss.text || ss.title || ss.desc || ss.description || ss)
+          })).filter((ss: SubStep) => ss.content && ss.content !== 'undefined')
+        : undefined
+      return {
+        id: String(s.id || 's' + (i + 1)),
+        index: i + 1,
+        name: s.name || s.title || SECTION_HEADERS[i] || `步骤 ${i + 1}`,
+        desc: typeof s === 'string' ? s : (s.desc || s.description || s.content || ''),
+        estMinutes: Number(s.estMinutes || s.minutes || 15),
+        hazardous: s.hazardous,
+        safetyNote: s.safetyNote || s.safety_note,
+        tools: s.tools || [],
+        toolItems: s.toolItems || s.tool_items,
+        materials: s.materials || [],
+        manualRef: s.manualRef || s.ref,
+        acceptance: s.acceptance,
+        checkPoints: s.checkPoints || s.checks || [],
+        subSteps
+      }
+    })
   }
 
   if (typeof raw === 'string') {

@@ -23,6 +23,7 @@ export const MENU_ITEMS: MenuItem[] = [
   { path: '/audit/knowledge',  label: '知识审查', roles: ['auditor', 'admin'] },
   { path: '/audit',            label: '案例审核', roles: ['auditor', 'admin'] },
   { path: '/admin/knowledge',  label: '知识库管理', roles: ['admin'] },
+  { path: '/admin/user',       label: '用户管理',   roles: ['admin'] },
   { path: '/kg',               label: '知识图谱' },
   { path: '/history',          label: '历史与收藏' },
   { path: '/profile',          label: '个人中心' },

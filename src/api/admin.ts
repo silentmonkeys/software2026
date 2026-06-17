@@ -1,35 +1,62 @@
-import { get, post, safeCall } from './request'
+import { request, rawCall, safeCall, get, post } from './request'
+import type { Role } from '@/utils/permission'
 
-export interface SysUser { id: string; name: string; role: string; workshop: string; status: 'active' | 'disabled'; createdAt: string }
+/**
+ * 后端用户角色（与数据库一致）
+ *  - worker / leader / auditor / admin
+ */
+export type BackendRole = 'worker' | 'leader' | 'auditor' | 'admin'
+
+export interface SysUser {
+  id: number
+  username: string
+  role: BackendRole
+  createdAt: string | null
+}
+
+/** 前端 Role → 后端角色（提交时用） */
+export function frontendRoleToBackend(r: Role): BackendRole {
+  switch (r) {
+    case 'admin':     return 'admin'
+    case 'auditor':   return 'auditor'
+    case 'frontline': return 'worker'
+    case 'guest':     return 'worker'
+  }
+}
+
+/** 后端 → 前端角色（展示时用） */
+export function backendRoleToFrontend(r: string): Role {
+  switch ((r || '').toLowerCase()) {
+    case 'admin':   return 'admin'
+    case 'auditor': return 'auditor'
+    case 'leader':  return 'auditor'
+    default:        return 'frontline'
+  }
+}
+
+/**
+ * GET /api/admin/users（仅 admin）
+ *  - 后端 401/403/网络错误 → rawCall 兜底为空数组（UI 自行渲染空态）
+ *  - 不再返回任何业务 mock 数据
+ */
+export const listUsers = async (): Promise<SysUser[]> => {
+  return rawCall<SysUser[]>(() => request.get<SysUser[]>('/admin/users'), [])
+}
+
+/**
+ * PUT /api/admin/users/{userId}/role
+ *  - body: { role: 'worker' | 'auditor' | 'admin' | 'leader' }
+ */
+export const updateUserRole = (userId: number, role: BackendRole) =>
+  request.put<{ ok: boolean; id: number; role: BackendRole }>(
+    `/admin/users/${userId}/role`,
+    { role }
+  ).then(r => r.data)
+
+/* ===== 兼容旧接口（设备库 / SOP 模板 占位）===== */
 export interface DeviceModel { id: string; model: string; vendor: string; category: string; updatedAt: string }
 export interface SopTpl { id: string; name: string; deviceModel: string; level: number; steps: number; updatedAt: string }
 
-const USERS: SysUser[] = Array.from({ length: 15 }).map((_, i) => ({
-  id: 'u-' + (1000 + i),
-  name: ['李师傅', '王工程师', '张组长', '赵主管', '钱审核'][i % 5],
-  role: ['frontline', 'auditor', 'admin', 'frontline', 'frontline'][i % 5],
-  workshop: ['一号车间·热轧线', '二号车间·冷轧线', '三号车间·镀锌线'][i % 3],
-  status: i % 7 === 0 ? 'disabled' : 'active',
-  createdAt: new Date(Date.now() - i * 86400000).toISOString()
-}))
-
-export const listUsers = () => safeCall<SysUser[]>(() => get('/admin/users'), USERS)
-export const listDevices = () => safeCall<DeviceModel[]>(() => get('/admin/devices'),
-  Array.from({ length: 8 }).map((_, i) => ({
-    id: 'd-' + i,
-    model: ['YKK630-4', 'CT-2400', 'HP-180', 'INV-5500'][i % 4] + '-' + i,
-    vendor: ['上海电气', '西门子', 'ABB'][i % 3],
-    category: ['电机', '泵类', '变频器'][i % 3],
-    updatedAt: new Date().toISOString()
-  })))
-export const listSops = () => safeCall<SopTpl[]>(() => get('/admin/sops'),
-  Array.from({ length: 6 }).map((_, i) => ({
-    id: 's-' + i,
-    name: ['主电机检修', '冷却泵检修', '减速机润滑'][i % 3] + ` 模板 v${(i % 3) + 1}.0`,
-    deviceModel: ['YKK630-4', 'CT-2400', 'HP-180'][i % 3],
-    level: ((i % 3) + 1),
-    steps: 5 + i,
-    updatedAt: new Date().toISOString()
-  })))
-
-export const saveSop = (p: object) => safeCall(() => post('/admin/sop', p), { ok: true })
+export const listDevices = () => safeCall<DeviceModel[]>(() => get('/admin/devices'), [])
+export const listSops    = () => safeCall<SopTpl[]>(() => get('/admin/sops'),       [])
+export const saveSop     = (p: object) => safeCall(() => post('/admin/sop', p), { ok: true })
