@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, ListChecks, ShieldCheck, Cog, User, LayoutDashboard } from 'lucide-vue-next'
+import { Search, ListChecks, ShieldCheck, Cog, User, BookOpen } from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
 import { hasPermission } from '@/utils/permission'
 
@@ -10,17 +10,17 @@ const router = useRouter()
 const user = useUserStore()
 
 /**
- * 移动端底部导航 —— FIX2 第 6 项：检索为首位 Tab，工作台降级为次级入口。
+ * 移动端底部导航 —— FIX3 第 1 项：删除"工作台"入口；保留检索/指引/审核（仅审核员/管理员）/我的。
  */
 const tabs = computed(() => {
   const role = user.role
   const all = [
-    { path: '/search',    icon: Search,         label: '检索', roles: undefined },
-    { path: '/workflow',  icon: ListChecks,     label: '指引', badge: 1, roles: undefined },
-    { path: '/audit',     icon: ShieldCheck,    label: '审核', badge: 5, roles: ['auditor', 'admin'] as const },
-    { path: '/admin',     icon: Cog,            label: '系统', roles: ['admin'] as const },
-    { path: '/workspace', icon: LayoutDashboard, label: '工作台', roles: undefined },
-    { path: '/profile',   icon: User,           label: '我的', roles: undefined }
+    { path: '/search',          icon: Search,      label: '检索',  roles: undefined },
+    { path: '/workflow',        icon: ListChecks,  label: '指引',  roles: undefined },
+    { path: '/knowledge/upload', icon: BookOpen,   label: '上传',  roles: undefined },
+    { path: '/audit/knowledge', icon: ShieldCheck, label: '审查',  roles: ['auditor', 'admin'] as const },
+    { path: '/admin',           icon: Cog,         label: '系统',  roles: ['admin'] as const },
+    { path: '/profile',         icon: User,        label: '我的',  roles: undefined }
   ]
   // 过滤可见
   const visible = all.filter(t => hasPermission(role, t.roles as any))
@@ -41,10 +41,6 @@ const active = computed(() => tabs.value.findIndex(t => route.path.startsWith(t.
             :class="active === i ? 'text-accent' : 'text-text-2'">
       <component :is="t.icon" class="w-5 h-5" :stroke-width="active === i ? 2.4 : 1.8" />
       <span class="text-[11px]" :class="active === i ? 'font-semibold' : ''">{{ t.label }}</span>
-      <span v-if="t.badge && active !== i"
-            class="absolute top-1.5 right-1/4 px-1 h-4 min-w-4 rounded-full bg-accent text-white text-[10px] font-semibold mono flex items-center justify-center">
-        {{ t.badge }}
-      </span>
     </button>
   </nav>
 </template>

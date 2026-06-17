@@ -20,10 +20,10 @@ export const MENU_ITEMS: MenuItem[] = [
   { path: '/search',           label: '多模态检索', highlight: true },
   { path: '/workflow',         label: '作业指引' },
   { path: '/knowledge/upload', label: '知识上传' },
-  { path: '/audit',            label: '案例审核', badge: 5, roles: ['auditor', 'admin'] },
+  { path: '/audit/knowledge',  label: '知识审查', roles: ['auditor', 'admin'] },
+  { path: '/audit',            label: '案例审核', roles: ['auditor', 'admin'] },
   { path: '/admin/knowledge',  label: '知识库管理', roles: ['admin'] },
   { path: '/kg',               label: '知识图谱' },
-  { path: '/workspace',        label: '工作台' },
   { path: '/history',          label: '历史与收藏' },
   { path: '/profile',          label: '个人中心' },
   { path: '/admin',            label: '系统管理', roles: ['admin'] }

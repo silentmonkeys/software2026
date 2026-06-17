@@ -44,6 +44,11 @@ export const useUserStore = defineStore('user', () => {
     info.value = null
     storage.remove(TOKEN_STORAGE_KEY)
     storage.remove('app:user')
+    // FIX3 第 3.4 项：清空本会话内存中的检索/历史缓存（不删别的用户的本地数据）
+    try {
+      const { useChatHistoryStore } = await import('@/stores/chatHistory')
+      useChatHistoryStore().reset()
+    } catch {}
   }
 
   return { token, info, isLoggedIn, role, isAdmin, isAuditor, isWorker, isGuest, login, register, logout }

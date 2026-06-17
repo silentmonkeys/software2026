@@ -1,8 +1,14 @@
 <script setup lang="ts">
+/**
+ * 知识图谱 · PC（FIX3 第 5 项）
+ * - 数据来源：已审入库的文档 → /api/kg/graph?doc_ids=...
+ * - 严禁硬编码 mock 节点；图谱为空时显示空态
+ * - 节点详情面板拉取真实原文片段（GET /api/kb/{docId}/chunk/{chunkId}）
+ */
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
-import { getGraph } from '@/api/kg'
-import type { KGGraph, KGNode, KGType } from '@/api/kg'
-import { Search, Maximize2, RotateCcw, Download, Box } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { getGraph, getChunk, type KGGraph, type KGNode, type KGType, type ChunkContent } from '@/api/kg'
+import { Search, RotateCcw, Download, Box, ExternalLink, Loader, AlertTriangle } from 'lucide-vue-next'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
@@ -10,8 +16,15 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([GraphChart, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
+const router = useRouter()
+
 const graph = ref<KGGraph | null>(null)
+const loading = ref(false)
+const errorMsg = ref('')
 const selected = ref<KGNode | null>(null)
+const chunkLoading = ref(false)
+const chunk = ref<ChunkContent | null>(null)
+
 const filterType = ref<'all' | KGType>('all')
 const q = ref('')
 const chartRef = ref<HTMLDivElement>()
@@ -48,37 +61,27 @@ const visibleEdges = computed(() => {
 const renderChart = () => {
   if (!inst || !graph.value) return
   const cats = (Object.keys(TYPE_META) as KGType[])
+  const isLarge = filteredNodes.value.length > 200
   const nodes = filteredNodes.value.map(n => ({
     id: n.id,
     name: n.label,
     value: n.weight,
-    symbolSize: 30 + Math.min(n.weight, 30),
+    symbolSize: 28 + Math.min(n.weight, 30),
     symbol: TYPE_META[n.type].symbol,
     category: cats.indexOf(n.type),
     itemStyle: { color: TYPE_META[n.type].color },
-    label: {
-      show: true,
-      position: 'right',
-      color: '#1F2937',
-      fontSize: 12
-    },
+    label: { show: !isLarge, position: 'right', color: '#1F2937', fontSize: 12 },
     raw: n
   }))
-
   const links = visibleEdges.value.map(e => ({
-    source: e.source,
-    target: e.target,
-    value: e.rel,
+    source: e.source, target: e.target, value: e.rel,
     label: { show: false, formatter: e.rel, fontSize: 10, color: '#6B7280' },
     lineStyle: { color: '#C2C9D6', curveness: 0.1 }
   }))
-
   inst.setOption({
     tooltip: {
       formatter: (p: any) => {
-        if (p.dataType === 'edge') {
-          return `<div style="font-weight:600">${p.data.value}</div>`
-        }
+        if (p.dataType === 'edge') return `<div style="font-weight:600">${p.data.value}</div>`
         const n: KGNode = p.data.raw
         const lines = [
           `<div style="font-weight:600;margin-bottom:4px">${n.label}</div>`,
@@ -89,11 +92,7 @@ const renderChart = () => {
         return lines.join('')
       }
     },
-    legend: [{
-      data: CATEGORIES.map(c => c.name),
-      bottom: 12,
-      icon: 'circle'
-    }],
+    legend: [{ data: CATEGORIES.map(c => c.name), bottom: 12, icon: 'circle' }],
     series: [{
       type: 'graph',
       layout: 'force',
@@ -102,25 +101,31 @@ const renderChart = () => {
       categories: CATEGORIES,
       roam: true,
       draggable: true,
+      large: isLarge,
       focusNodeAdjacency: true,
       force: { repulsion: 240, edgeLength: 110, gravity: 0.08 },
-      emphasis: {
-        focus: 'adjacency',
-        lineStyle: { width: 3, color: '#F26B1F' },
-        label: { show: true, fontWeight: 700 }
-      },
-      lineStyle: { width: 1.2, opacity: 0.7 },
-      label: { show: true, position: 'right' }
+      emphasis: { focus: 'adjacency', lineStyle: { width: 3, color: '#F26B1F' }, label: { show: true, fontWeight: 700 } },
+      lineStyle: { width: 1.2, opacity: 0.7 }
     }]
   })
 }
 
 const setup = () => {
   if (!chartRef.value) return
-  if (inst) { inst.dispose(); inst = null }
-  inst = echarts.init(chartRef.value)
+  const reused = echarts.getInstanceByDom(chartRef.value)
+  inst = reused || echarts.init(chartRef.value)
+  inst.off('click')
   inst.on('click', (p: any) => {
-    if (p.dataType === 'node') selected.value = p.data.raw as KGNode
+    if (p.dataType !== 'node') return
+    const n = p.data.raw as KGNode
+    selected.value = n
+    chunk.value = null
+    if (n.docId && n.chunkId) {
+      chunkLoading.value = true
+      getChunk(n.docId, n.chunkId)
+        .then(c => { chunk.value = c })
+        .finally(() => { chunkLoading.value = false })
+    }
   })
   renderChart()
 }
@@ -129,6 +134,7 @@ const resetView = () => {
   filterType.value = 'all'
   q.value = ''
   selected.value = null
+  chunk.value = null
   nextTick(() => { inst?.dispatchAction({ type: 'restore' }); renderChart() })
 }
 
@@ -141,30 +147,35 @@ const exportImg = () => {
   a.click()
 }
 
-onMounted(async () => {
-  graph.value = await getGraph()
+const reload = async () => {
+  loading.value = true
+  errorMsg.value = ''
+  try {
+    const g = await getGraph()
+    graph.value = g
+    if (!g.nodes.length) {
+      errorMsg.value = '暂无可视化的图谱数据。请先在「知识上传」补充已审通过的文档，或确认后端 /api/kg/graph 已实现。'
+    }
+  } catch (e: any) {
+    graph.value = { nodes: [], edges: [] }
+    errorMsg.value = e?.message || '加载失败'
+  } finally {
+    loading.value = false
+  }
   await nextTick()
   setup()
+}
+
+onMounted(async () => {
+  await reload()
   window.addEventListener('resize', () => inst?.resize())
 })
 
 watch([filterType, q], () => renderChart())
-
-// 关联节点
-const relatedOf = (n: KGNode) => {
-  if (!graph.value) return [] as KGNode[]
-  const ids = new Set<string>()
-  graph.value.edges.forEach(e => {
-    if (e.source === n.id) ids.add(e.target)
-    if (e.target === n.id) ids.add(e.source)
-  })
-  return graph.value.nodes.filter(x => ids.has(x.id))
-}
 </script>
 
 <template>
   <div class="h-full flex flex-col">
-    <!-- 工具栏 -->
     <header class="flex-shrink-0 px-6 py-3 bg-card border-b border-border flex items-center gap-3">
       <div class="relative flex-1 max-w-md">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-2" />
@@ -196,21 +207,36 @@ const relatedOf = (n: KGNode) => {
       </div>
     </header>
 
-    <!-- 画布 + 详情 -->
     <div class="flex-1 grid grid-cols-12 overflow-hidden">
       <main class="col-span-9 relative bg-bg overflow-hidden">
         <div ref="chartRef" class="w-full h-full"></div>
+
+        <!-- 加载/空态遮罩 -->
+        <div v-if="loading"
+             class="absolute inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
+          <div class="text-text-2">
+            <Loader class="w-8 h-8 mx-auto animate-spin text-accent" />
+            <div class="mt-2 text-sm">加载图谱数据…</div>
+          </div>
+        </div>
+        <div v-else-if="!graph?.nodes.length"
+             class="absolute inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
+          <div class="industrial-card p-8 text-center max-w-md">
+            <AlertTriangle class="w-10 h-10 mx-auto text-warning opacity-70" />
+            <div class="mt-3 text-sm font-semibold">暂无可视化的图谱数据</div>
+            <div class="mt-2 text-xs text-text-2">{{ errorMsg }}</div>
+          </div>
+        </div>
+
         <div class="absolute top-3 left-3 industrial-card px-3 py-2 text-xs space-y-1">
           <div class="font-semibold mb-1">操作提示</div>
           <div class="text-text-2">· 拖拽 / 滚轮缩放</div>
-          <div class="text-text-2">· 点击节点查看详情</div>
-          <div class="text-text-2">· 悬停高亮关联</div>
+          <div class="text-text-2">· 点击节点查看原文片段</div>
         </div>
       </main>
 
-      <!-- 详情 -->
-      <aside class="col-span-3 border-l border-border bg-card p-4 overflow-auto">
-        <div v-if="selected">
+      <aside class="col-span-3 border-l border-border bg-card overflow-auto">
+        <div v-if="selected" class="p-4">
           <div class="text-xs uppercase mono px-2 py-0.5 inline-block rounded text-white"
                :style="{ background: TYPE_META[selected.type].color }">
             {{ TYPE_META[selected.type].name }}
@@ -218,33 +244,31 @@ const relatedOf = (n: KGNode) => {
           <h3 class="text-lg font-bold mt-2">{{ selected.label }}</h3>
           <div class="text-xs text-text-2 mt-1">关联 <span class="mono">{{ selected.weight }}</span> 条</div>
           <p v-if="selected.desc" class="text-sm mt-3 text-text-2 leading-relaxed">{{ selected.desc }}</p>
-          <div v-if="selected.status" class="mt-2 text-xs">
-            状态: <span class="font-medium">{{ selected.status }}</span>
-          </div>
-          <div v-if="selected.manualRef" class="mt-1 text-xs text-accent">
-            参考: {{ selected.manualRef }}
-          </div>
 
-          <hr class="my-3 border-border" />
-          <div class="text-sm font-semibold mb-2">关联实体 ({{ relatedOf(selected).length }})</div>
-          <ul class="space-y-2 text-sm">
-            <li v-for="r in relatedOf(selected)" :key="r.id"
-                class="industrial-card p-2 cursor-pointer hover:border-accent flex items-center gap-2"
-                @click="selected = r">
-              <span class="w-2 h-2 rounded-full flex-shrink-0" :style="{ background: TYPE_META[r.type].color }"></span>
-              <div class="flex-1 min-w-0">
-                <div class="font-medium truncate">{{ r.label }}</div>
-                <div class="text-xs text-text-2 mt-0.5">{{ TYPE_META[r.type].name }}</div>
-              </div>
-            </li>
-          </ul>
-          <button class="mt-4 w-full h-9 rounded-btn bg-accent text-white text-sm font-semibold">
-            生成子图
-          </button>
+          <div v-if="selected.docId" class="mt-4">
+            <div class="text-xs font-semibold mb-2 text-text">原文片段</div>
+            <div v-if="chunkLoading" class="text-xs text-text-2 flex items-center gap-1.5">
+              <Loader class="w-3.5 h-3.5 animate-spin" /> 加载中…
+            </div>
+            <div v-else-if="chunk" class="bg-bg rounded-btn border border-border p-3 text-xs leading-relaxed text-text-2 max-h-72 overflow-auto">
+              <div v-if="chunk.title" class="font-semibold text-text mb-1">{{ chunk.title }}</div>
+              <div v-if="chunk.page" class="mono text-[10px] mb-1">页码 {{ chunk.page }}</div>
+              <div class="whitespace-pre-wrap">{{ chunk.text }}</div>
+            </div>
+            <div v-else class="text-xs text-text-2 italic">
+              后端未提供 /api/kb/{docId}/chunk/{chunkId} 或该节点无对应片段。
+            </div>
+
+            <button class="mt-3 w-full h-9 rounded-btn border border-border text-sm flex items-center justify-center gap-1 hover:border-accent hover:text-accent"
+                    @click="router.push(`/kb/preview/${selected.docId}`)">
+              <ExternalLink class="w-4 h-4" /> 跳到文档详情
+            </button>
+          </div>
         </div>
-        <div v-else class="text-center text-text-2 text-sm py-8">
+        <div v-else class="text-center text-text-2 text-sm py-12 px-4">
           <Box class="w-10 h-10 mx-auto mb-2 opacity-50" />
-          点击节点查看详情
+          <div>点击节点查看详情</div>
+          <div class="mt-1 text-xs">详情面板会展示节点对应的真实原文片段</div>
         </div>
       </aside>
     </div>

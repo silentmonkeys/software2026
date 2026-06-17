@@ -12,19 +12,27 @@ const routes: RouteRecordRaw[] = [
   { path: '/search',    component: () => import('@/views/search/index.vue'),    meta: { layout: 'app', title: '多模态检索' } },
   { path: '/search/:id',component: () => import('@/views/search/Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
 
+  // 历史详情（FIX3 第 2 项 —— 完整渲染原消息流）
+  { path: '/history/:id', component: () => import('@/views/history/Detail.vue'), meta: { layout: 'app', title: '历史详情' } },
+
   // 工单 / 作业指引
   { path: '/workflow',  component: () => import('@/views/workflow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
   { path: '/workflow/:id', component: () => import('@/views/workflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情' } },
 
   // 知识库
   { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '知识上传' } },
+  { path: '/kb/preview/:docId', component: () => import('@/views/knowledge/Preview.vue'), meta: { layout: 'app', title: '文档预览' } },
 
   // 管理员-知识库管理（FIX2 第 4 项）
   { path: '/admin/knowledge', component: () => import('@/views/admin/KnowledgeAdmin.vue'),
     meta: { layout: 'app', title: '知识库管理', roles: ['admin'] } },
 
-  // 审核
+  // 案例审核
   { path: '/audit',     component: () => import('@/views/audit/index.vue'),     meta: { layout: 'app', title: '案例审核', roles: ['auditor', 'admin'] } },
+
+  // 知识审查（FIX3 第 7 项）—— 上传文档审批
+  { path: '/audit/knowledge', component: () => import('@/views/audit/KnowledgeReview.vue'),
+    meta: { layout: 'app', title: '知识审查', roles: ['auditor', 'admin'] } },
 
   // 知识图谱
   { path: '/kg',        component: () => import('@/views/kg/index.vue'),        meta: { layout: 'app', title: '知识图谱' } },
@@ -33,10 +41,9 @@ const routes: RouteRecordRaw[] = [
   { path: '/history',   component: () => import('@/views/history/index.vue'),   meta: { layout: 'app', title: '历史与收藏' } },
   { path: '/profile',   component: () => import('@/views/profile/index.vue'),   meta: { layout: 'app', title: '用户中心' } },
 
-  // 旧"工作台"降级为次级入口（FIX2 第 6 项）
-  { path: '/workspace', component: () => import('@/views/dashboard/index.vue'), meta: { layout: 'app', title: '工作台' } },
-  // 兼容旧 /dashboard 链接
-  { path: '/dashboard', redirect: '/workspace' },
+  // 工作台已下线（FIX3 第 1 项）—— 一律 301 到首页
+  { path: '/workspace', redirect: '/search' },
+  { path: '/dashboard', redirect: '/search' },
 
   // 系统管理
   { path: '/admin/:sub?', component: () => import('@/views/admin/index.vue'),   meta: { layout: 'app', title: '系统管理', roles: ['admin'], mobileReadonly: true } },

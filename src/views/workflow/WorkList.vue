@@ -1,11 +1,17 @@
 <script setup lang="ts">
+/**
+ * 工单列表（FIX3 第 8 项）
+ * - 状态简化为 待办 / 已完成
+ * - 默认筛选：待办；已完成进入折叠区
+ * - 支持新建 AI 工单
+ */
 import { onMounted, ref, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { listFlows, createTicket, type WorkItem } from '@/api/workflow'
 import { useDevice } from '@/composables/useDevice'
 import { showToast, showFailToast } from 'vant'
 import {
-  ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, Filter,
+  ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, ChevronDown,
   Plus, Loader, X, Sparkles, WifiOff, Inbox
 } from 'lucide-vue-next'
 
@@ -15,8 +21,8 @@ const { isPC } = useDevice()
 const list = ref<WorkItem[]>([])
 const offline = ref(false)
 const loaded = ref(false)
-const status = ref<'all' | '未开始' | '进行中' | '已完成'>('all')
 const q = ref('')
+const showDone = ref(false)
 
 const refresh = async () => {
   const res = await listFlows()
@@ -26,14 +32,18 @@ const refresh = async () => {
 }
 onMounted(refresh)
 
-const filtered = computed(() => list.value.filter(it =>
-  (status.value === 'all' || it.status === status.value) &&
-  (!q.value || it.name.includes(q.value) || it.deviceModel.includes(q.value))
-))
+const matchKeyword = (it: WorkItem) =>
+  !q.value || it.name.includes(q.value) || it.deviceModel.includes(q.value)
+
+const pendingList = computed(() =>
+  list.value.filter(it => it.status === '待办' && matchKeyword(it))
+)
+const doneList = computed(() =>
+  list.value.filter(it => it.status === '已完成' && matchKeyword(it))
+)
 
 const open = (it: WorkItem) => router.push(`/workflow/${it.id}`)
 
-/* —— 新建工单（POST /api/ticket，AI 同步生成检修步骤） —— */
 const showCreate = ref(false)
 const creating = ref(false)
 const draft = reactive({ device: '', fault: '' })
@@ -50,7 +60,7 @@ const submitCreate = async () => {
     showCreate.value = false
     await refresh()
     router.push(`/workflow/t-${res.id}`)
-  } catch (e) {
+  } catch {
     showFailToast('创建失败：请确认后端已启动并已登录')
   } finally {
     creating.value = false
@@ -58,8 +68,7 @@ const submitCreate = async () => {
 }
 
 const STATUS_CLS: Record<string, string> = {
-  '未开始': 'bg-bg text-text-2 border-border',
-  '进行中': 'bg-accent/10 text-accent border-accent/30',
+  '待办':   'bg-accent/10 text-accent border-accent/30',
   '已完成': 'bg-success/10 text-success border-success/30'
 }
 
@@ -70,13 +79,13 @@ const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)}
 </script>
 
 <template>
-  <!-- ==================== PC 列表 ==================== -->
+  <!-- ==================== PC ==================== -->
   <div v-if="isPC" class="p-6 max-w-[1400px] mx-auto">
     <header class="mb-4 flex items-end justify-between gap-4">
       <div>
         <div class="text-xs text-text-2">作业指引 / 列表</div>
         <h1 class="text-2xl font-bold text-primary mt-1">作业指引</h1>
-        <div class="text-sm text-text-2 mt-1">选择一个作业开始标准化检修流程</div>
+        <div class="text-sm text-text-2 mt-1">默认仅显示「待办」工单，已完成的工单可在下方折叠区查看</div>
       </div>
       <button @click="openCreate"
               class="h-10 px-4 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold flex items-center gap-2 ai-shine">
@@ -84,95 +93,117 @@ const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)}
       </button>
     </header>
 
-    <!-- 离线模式提示（FIX2 第 2 项） -->
     <div v-if="offline" class="mb-4 px-4 py-2 rounded-btn bg-warning/10 border border-warning/30 text-warning text-sm flex items-center gap-2">
       <WifiOff class="w-4 h-4" />
       <span>当前为离线模式，展示示例数据。请确认后端已启动并已登录。</span>
     </div>
 
-    <!-- 过滤区 -->
     <div class="industrial-card p-3 flex items-center gap-3 mb-4">
       <div class="relative flex-1 max-w-md">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-2" />
         <input v-model="q" placeholder="搜索作业名称或设备型号"
                class="w-full h-9 pl-10 pr-3 rounded-btn border border-border bg-bg outline-none focus:border-accent" />
       </div>
-      <div class="flex p-0.5 bg-bg rounded-btn border border-border text-xs">
-        <button v-for="s in [{k:'all',l:'全部'},{k:'未开始',l:'未开始'},{k:'进行中',l:'进行中'},{k:'已完成',l:'已完成'}]"
-                :key="s.k" @click="status = s.k as any"
-                :class="['px-3 h-7 rounded font-medium', status === s.k ? 'bg-card shadow-card text-accent' : 'text-text-2']">
-          {{ s.l }}
+      <div class="ml-auto text-sm text-text-2">
+        待办 <span class="font-semibold text-text">{{ pendingList.length }}</span>
+        · 已完成 <span class="font-semibold text-text">{{ doneList.length }}</span>
+      </div>
+    </div>
+
+    <!-- 待办 -->
+    <section>
+      <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <button v-for="it in pendingList" :key="it.id"
+                @click="open(it)"
+                class="industrial-card p-5 text-left hover:shadow-float hover:-translate-y-0.5 transition group">
+          <div class="flex items-start gap-3">
+            <div class="w-11 h-11 rounded-card flex-shrink-0 flex items-center justify-center"
+                 :class="it.hazardous ? 'bg-warning/10 text-warning' : 'bg-accent/10 text-accent'">
+              <AlertTriangle v-if="it.hazardous" class="w-5 h-5" />
+              <ListChecks v-else class="w-5 h-5" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-base font-semibold leading-snug group-hover:text-accent transition">{{ it.name }}</div>
+              <div class="text-xs text-text-2 mt-1 mono">
+                {{ it.id }}
+                <span v-if="it.demo" class="ml-1 px-1 py-0.5 rounded bg-warning/10 text-warning border border-warning/30 text-[10px]">示例</span>
+              </div>
+            </div>
+            <span class="px-2 py-0.5 rounded-pill text-xs border whitespace-nowrap" :class="STATUS_CLS[it.status]">
+              {{ it.status }}
+            </span>
+          </div>
+
+          <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <div class="flex items-center gap-1.5 text-text-2">
+              <Cpu class="w-3.5 h-3.5" /> <span class="mono">{{ it.deviceModel }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-text-2">
+              <Clock class="w-3.5 h-3.5" /> {{ formatMin(it.estimatedMinutes) }}
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span :class="LEVEL_CLS[it.level]">{{ LEVEL_LABEL[it.level] }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-text-2">
+              难度 <span class="font-medium text-text">{{ it.difficulty }}</span>
+            </div>
+          </div>
+
+          <div class="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-text-2">
+            <span class="truncate">{{ it.workshop || '—' }}</span>
+            <span class="text-accent group-hover:translate-x-0.5 transition flex items-center gap-1">
+              进入 <ChevronRight class="w-3.5 h-3.5" />
+            </span>
+          </div>
         </button>
       </div>
-      <div class="ml-auto text-sm text-text-2">共 {{ filtered.length }} / {{ list.length }} 条</div>
-    </div>
 
-    <!-- 卡片网格 -->
-    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
-      <button v-for="it in filtered" :key="it.id"
-              @click="open(it)"
-              class="industrial-card p-5 text-left hover:shadow-float hover:-translate-y-0.5 transition group">
-        <div class="flex items-start gap-3">
-          <div class="w-11 h-11 rounded-card flex-shrink-0 flex items-center justify-center"
-               :class="it.hazardous ? 'bg-warning/10 text-warning' : 'bg-accent/10 text-accent'">
-            <AlertTriangle v-if="it.hazardous" class="w-5 h-5" />
-            <ListChecks v-else class="w-5 h-5" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-base font-semibold leading-snug group-hover:text-accent transition">{{ it.name }}</div>
-            <div class="text-xs text-text-2 mt-1 mono">{{ it.id }}</div>
-          </div>
-          <span class="px-2 py-0.5 rounded-pill text-xs border whitespace-nowrap" :class="STATUS_CLS[it.status]">
-            {{ it.status }}
-          </span>
-        </div>
+      <div v-if="loaded && pendingList.length === 0 && !offline"
+           class="industrial-card p-12 text-center mt-2">
+        <Inbox class="w-12 h-12 mx-auto text-text-2 opacity-60" />
+        <div class="mt-3 text-base font-semibold">暂无待办工单</div>
+        <div class="mt-1 text-sm text-text-2">点击右上角"新建 AI 工单"，让大模型生成检修方案</div>
+      </div>
+    </section>
 
-        <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
-          <div class="flex items-center gap-1.5 text-text-2">
-            <Cpu class="w-3.5 h-3.5" /> <span class="mono">{{ it.deviceModel }}</span>
-          </div>
-          <div class="flex items-center gap-1.5 text-text-2">
-            <Clock class="w-3.5 h-3.5" /> {{ formatMin(it.estimatedMinutes) }}
-          </div>
-          <div class="flex items-center gap-1.5">
-            <Filter class="w-3.5 h-3.5 text-text-2" />
-            <span :class="LEVEL_CLS[it.level]">{{ LEVEL_LABEL[it.level] }}</span>
-          </div>
-          <div class="flex items-center gap-1.5 text-text-2">
-            难度 <span class="font-medium text-text">{{ it.difficulty }}</span>
-          </div>
-        </div>
-
-        <div class="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-text-2">
-          <span class="truncate">{{ it.workshop || '—' }}</span>
-          <span class="text-accent group-hover:translate-x-0.5 transition flex items-center gap-1">
-            进入 <ChevronRight class="w-3.5 h-3.5" />
-          </span>
-        </div>
+    <!-- 已完成（折叠） -->
+    <section v-if="doneList.length" class="mt-6">
+      <button class="w-full h-11 px-4 rounded-card border border-border bg-card hover:bg-bg flex items-center gap-2 transition"
+              @click="showDone = !showDone">
+        <ChevronDown class="w-4 h-4 text-text-2 transition-transform"
+                     :class="showDone ? 'rotate-180' : ''" />
+        <span class="text-sm font-semibold">已完成（{{ doneList.length }}）</span>
+        <span class="ml-auto text-xs text-text-2">{{ showDone ? '点击收起' : '点击展开查看' }}</span>
       </button>
-    </div>
-
-    <div v-if="loaded && list.length === 0 && !offline"
-         class="industrial-card p-12 text-center">
-      <Inbox class="w-12 h-12 mx-auto text-text-2 opacity-60" />
-      <div class="mt-3 text-base font-semibold">暂无工单</div>
-      <div class="mt-1 text-sm text-text-2">点击右上角"新建 AI 工单"，让大模型为您生成检修方案</div>
-      <button @click="openCreate"
-              class="mt-5 h-10 px-5 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold inline-flex items-center gap-2 ai-shine">
-        <Plus class="w-4 h-4" /> 新建 AI 工单
-      </button>
-    </div>
-    <div v-else-if="filtered.length === 0" class="industrial-card p-12 text-center text-text-2">
-      暂无符合条件的作业
-    </div>
+      <div v-if="showDone" class="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
+        <button v-for="it in doneList" :key="it.id"
+                @click="open(it)"
+                class="industrial-card p-5 text-left opacity-80 hover:opacity-100 hover:shadow-float transition">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-card flex-shrink-0 bg-success/10 text-success flex items-center justify-center">
+              <ListChecks class="w-5 h-5" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold leading-snug">{{ it.name }}</div>
+              <div class="text-[11px] text-text-2 mt-1 mono">{{ it.id }} · {{ it.deviceModel }}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded-pill text-xs border whitespace-nowrap" :class="STATUS_CLS[it.status]">
+              {{ it.status }}
+            </span>
+          </div>
+        </button>
+      </div>
+    </section>
   </div>
 
-  <!-- ==================== 移动端列表 ==================== -->
+  <!-- ==================== 移动端 ==================== -->
   <div v-else class="p-3 space-y-3">
     <header class="industrial-card p-4 flex items-center gap-3">
       <div class="flex-1 min-w-0">
         <h1 class="text-lg font-bold text-primary">作业指引</h1>
-        <div class="text-xs text-text-2 mt-1">共 {{ list.length }} 个作业 · 点击进入</div>
+        <div class="text-xs text-text-2 mt-1">
+          待办 {{ pendingList.length }} · 已完成 {{ doneList.length }}
+        </div>
       </div>
       <button @click="openCreate"
               class="h-9 px-3 rounded-btn bg-accent text-white text-sm font-semibold flex items-center gap-1 flex-shrink-0">
@@ -180,32 +211,19 @@ const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)}
       </button>
     </header>
 
-    <!-- 离线模式提示（移动端） -->
     <div v-if="offline" class="px-3 py-2 rounded-btn bg-warning/10 border border-warning/30 text-warning text-xs flex items-center gap-1.5">
       <WifiOff class="w-3.5 h-3.5" />
       离线模式 · 当前为示例数据
     </div>
 
-    <!-- 过滤 -->
-    <div class="space-y-2">
-      <div class="relative">
-        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-2" />
-        <input v-model="q" placeholder="搜索作业 / 设备型号"
-               class="w-full h-11 pl-10 pr-3 rounded-btn border border-border bg-card text-base" />
-      </div>
-      <div class="flex gap-2 overflow-x-auto hide-scrollbar">
-        <button v-for="s in [{k:'all',l:'全部'},{k:'未开始',l:'未开始'},{k:'进行中',l:'进行中'},{k:'已完成',l:'已完成'}]"
-                :key="s.k" @click="status = s.k as any"
-                :class="['px-4 h-8 rounded-pill text-sm flex-shrink-0',
-                         status === s.k ? 'bg-accent text-white' : 'bg-card border border-border text-text-2']">
-          {{ s.l }}
-        </button>
-      </div>
+    <div class="relative">
+      <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-2" />
+      <input v-model="q" placeholder="搜索作业 / 设备型号"
+             class="w-full h-11 pl-10 pr-3 rounded-btn border border-border bg-card text-base" />
     </div>
 
-    <!-- 列表 -->
     <ul class="space-y-3">
-      <li v-for="it in filtered" :key="it.id"
+      <li v-for="it in pendingList" :key="it.id"
           class="industrial-card p-4 active:bg-bg" @click="open(it)">
         <div class="flex items-start gap-3">
           <div class="w-10 h-10 rounded-card flex-shrink-0 flex items-center justify-center"
@@ -219,6 +237,7 @@ const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)}
               <span class="mono">{{ it.deviceModel }}</span>
               <span :class="LEVEL_CLS[it.level]">{{ LEVEL_LABEL[it.level] }}</span>
               <span>{{ formatMin(it.estimatedMinutes) }}</span>
+              <span v-if="it.demo" class="px-1 py-0.5 rounded bg-warning/10 text-warning border border-warning/30 text-[10px]">示例</span>
             </div>
           </div>
           <span class="px-2 py-0.5 rounded-pill text-[11px] border whitespace-nowrap flex-shrink-0" :class="STATUS_CLS[it.status]">
@@ -226,15 +245,39 @@ const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)}
           </span>
         </div>
       </li>
-      <li v-if="loaded && list.length === 0 && !offline" class="industrial-card p-8 text-center">
+      <li v-if="loaded && pendingList.length === 0 && !offline" class="industrial-card p-8 text-center">
         <Inbox class="w-10 h-10 mx-auto text-text-2 opacity-60" />
-        <div class="mt-2 text-sm font-semibold">暂无工单</div>
+        <div class="mt-2 text-sm font-semibold">暂无待办工单</div>
         <div class="mt-1 text-xs text-text-2">点击上方"新建"，AI 会为您生成检修方案</div>
       </li>
-      <li v-else-if="filtered.length === 0" class="industrial-card p-8 text-center text-text-2 text-sm">
-        暂无符合条件的作业
-      </li>
     </ul>
+
+    <!-- 已完成（折叠） -->
+    <div v-if="doneList.length">
+      <button class="w-full h-11 px-3 rounded-card border border-border bg-card flex items-center gap-2"
+              @click="showDone = !showDone">
+        <ChevronDown class="w-4 h-4 text-text-2 transition-transform"
+                     :class="showDone ? 'rotate-180' : ''" />
+        <span class="text-sm font-semibold">已完成（{{ doneList.length }}）</span>
+      </button>
+      <ul v-if="showDone" class="space-y-2 mt-2">
+        <li v-for="it in doneList" :key="it.id"
+            class="industrial-card p-3 opacity-80 active:bg-bg" @click="open(it)">
+          <div class="flex items-start gap-2">
+            <div class="w-8 h-8 rounded-card flex-shrink-0 bg-success/10 text-success flex items-center justify-center">
+              <ListChecks class="w-4 h-4" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium">{{ it.name }}</div>
+              <div class="text-[11px] text-text-2 mt-0.5 mono">{{ it.deviceModel }}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded-pill text-[10px] border whitespace-nowrap" :class="STATUS_CLS[it.status]">
+              已完成
+            </span>
+          </div>
+        </li>
+      </ul>
+    </div>
   </div>
 
   <!-- ==================== 新建工单弹窗 ==================== -->

@@ -1,24 +1,26 @@
 <script setup lang="ts">
 /**
- * 知识上传 · 单页拖拽（FIX2 第 7 项）
- * - 顶部：拖拽上传区 + 待上传队列（实时进度）
- * - 中部：手动录入文本（保存为 .txt 走 /api/kb/upload）
- * - 底部：已入库文档列表（来自 /api/kb/list，可删除）
+ * 知识上传（FIX3 第 7 项）
  *
- * 不再使用 4 步向导。所有用户都能用；管理员还可以在 /admin/knowledge 做更细的管理。
+ * - worker：上传组件 + 仅显示本人记录（不可自行删除）
+ * - auditor / admin：跳到 /audit/knowledge 做审核（这里依然展示本人上传，方便提交+追踪）
+ *
+ * 状态机：worker 上传 → pending；审核通过后才进入 RAG / 图谱
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import {
-  ChevronLeft, FileText, Trash2, Loader, Upload, Search,
-  Sparkles, Edit3, Send, X, Check, AlertTriangle, Database
+  ChevronLeft, FileText, Loader, Upload, Search,
+  Sparkles, Edit3, Send, X, Check, AlertTriangle, Database, ShieldCheck, RefreshCw
 } from 'lucide-vue-next'
-import { showToast, showFailToast, showConfirmDialog } from 'vant'
-import { uploadDoc, listDocs, deleteDoc, type KbDoc } from '@/api/kb'
+import { showToast, showFailToast } from 'vant'
+import { uploadDoc, listDocs, type KbDoc, STATUS_LABEL, isApprovedStatus } from '@/api/kb'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const { isPC } = useDevice()
+const user = useUserStore()
 
 const ALLOWED = ['pdf', 'docx', 'txt', 'md']
 
@@ -32,7 +34,6 @@ const q = ref('')
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
 
-// —— 手动录入 ——
 const showManual = ref(false)
 const manualTitle = ref('')
 const manualBody = ref('')
@@ -41,7 +42,8 @@ const manualSubmitting = ref(false)
 const refresh = async () => {
   loading.value = true
   try {
-    docs.value = await listDocs()
+    // FIX3 第 7.3 项：员工端只看本人上传记录
+    docs.value = await listDocs({ uploader: 'me' })
     offline.value = false
   } catch {
     docs.value = []
@@ -55,6 +57,13 @@ onMounted(refresh)
 const filtered = computed(() =>
   docs.value.filter(d => !q.value || d.title.toLowerCase().includes(q.value.toLowerCase()))
 )
+
+const stats = computed(() => ({
+  total: docs.value.length,
+  pending: docs.value.filter(d => d.status === 'pending').length,
+  approved: docs.value.filter(d => isApprovedStatus(d.status)).length,
+  rejected: docs.value.filter(d => d.status === 'rejected').length
+}))
 
 const fmtSize = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 
@@ -75,7 +84,7 @@ const handleFiles = async (files: FileList | File[] | null) => {
       item.docId = res.doc_id
       item.chunks = res.chunks
       item.status = 'done'
-      showToast({ type: 'success', message: `${f.name} 已入库（${res.chunks} chunks）` })
+      showToast({ type: 'success', message: `${f.name} 已提交，等待审核` })
     } catch {
       item.status = 'failed'
       showFailToast(`${f.name} 上传失败`)
@@ -94,49 +103,45 @@ const onDrop = (e: DragEvent) => {
   handleFiles(e.dataTransfer?.files || null)
 }
 
-const removeDoc = async (d: KbDoc) => {
-  try {
-    await showConfirmDialog({
-      title: '删除文档',
-      message: `确认删除「${d.title}」？删除后向量索引也会一并清理。`
-    })
-  } catch { return }
-  try {
-    await deleteDoc(d.id)
-    showToast({ type: 'success', message: '已删除' })
-    await refresh()
-  } catch {
-    showFailToast('删除失败')
-  }
-}
-
 const submitManual = async () => {
   const title = manualTitle.value.trim() || `手动录入_${new Date().toISOString().slice(0,16).replace('T','_').replace(':','')}`
   const body = manualBody.value.trim()
   if (!body) { showFailToast('请输入知识内容'); return }
   manualSubmitting.value = true
   try {
-    // 把文本封装成 .txt 文件后走真实上传接口（FIX2 第 7.3 项）
     const blob = new Blob([body], { type: 'text/plain;charset=utf-8' })
     const file = new File([blob], `${title}.txt`, { type: 'text/plain' })
     const res = await uploadDoc(file)
-    showToast({ type: 'success', message: `已入库（${res.chunks} chunks）` })
+    showToast({ type: 'success', message: `已提交（${res.chunks} chunks），等待审核` })
     showManual.value = false
     manualTitle.value = ''
     manualBody.value = ''
     await refresh()
   } catch {
-    showFailToast('入库失败，请稍后重试')
+    showFailToast('提交失败，请稍后重试')
   } finally {
     manualSubmitting.value = false
   }
 }
 
 const STATUS_CLS: Record<string, string> = {
-  ready:   'bg-success/10 text-success border-success/30',
-  parsing: 'bg-warning/10 text-warning border-warning/30',
-  failed:  'bg-danger/10 text-danger border-danger/30'
+  pending:    'bg-warning/10 text-warning border-warning/30',
+  approved:   'bg-success/10 text-success border-success/30',
+  ready:      'bg-success/10 text-success border-success/30',
+  rejected:   'bg-danger/10 text-danger border-danger/30',
+  taken_down: 'bg-text-2/10 text-text-2 border-border',
+  parsing:    'bg-warning/10 text-warning border-warning/30',
+  failed:     'bg-danger/10 text-danger border-danger/30'
 }
+
+/** 重新提交（驳回后） */
+const resubmit = (d: KbDoc) => {
+  manualTitle.value = `${d.title}（重提）`
+  manualBody.value = ''
+  showManual.value = true
+}
+
+const goReview = () => router.push('/audit/knowledge')
 </script>
 
 <template>
@@ -145,7 +150,10 @@ const STATUS_CLS: Record<string, string> = {
     <header v-if="!isPC" class="flex-shrink-0 h-12 bg-card border-b border-border flex items-center px-2">
       <button @click="router.back()" class="w-10 h-10 flex items-center justify-center"><ChevronLeft class="w-5 h-5" /></button>
       <span class="flex-1 text-center font-semibold">添加知识</span>
-      <span class="w-10"></span>
+      <button v-if="user.isAuditor" @click="goReview" class="w-10 h-10 flex items-center justify-center text-accent" title="审查">
+        <ShieldCheck class="w-5 h-5" />
+      </button>
+      <span v-else class="w-10"></span>
     </header>
 
     <!-- PC 标题栏 -->
@@ -155,19 +163,50 @@ const STATUS_CLS: Record<string, string> = {
         <h1 class="text-2xl font-bold text-primary mt-1 flex items-center gap-2">
           <Upload class="w-6 h-6 text-accent" /> 添加知识
         </h1>
-        <div class="text-sm text-text-2 mt-1">拖拽文件即时入库，或手动录入文本知识</div>
+        <div class="text-sm text-text-2 mt-1">
+          上传后默认进入「待审」状态，审核通过后会自动加入知识检索与图谱
+        </div>
       </div>
-      <button @click="showManual = true"
-              class="h-10 px-4 rounded-btn border border-border bg-card hover:border-accent hover:text-accent flex items-center gap-2">
-        <Edit3 class="w-4 h-4" /> 手动录入
-      </button>
+      <div class="flex items-center gap-2">
+        <button v-if="user.isAuditor" @click="goReview"
+                class="h-10 px-4 rounded-btn border border-accent text-accent hover:bg-accent/10 flex items-center gap-2">
+          <ShieldCheck class="w-4 h-4" /> 进入知识审查
+        </button>
+        <button @click="showManual = true"
+                class="h-10 px-4 rounded-btn border border-border bg-card hover:border-accent hover:text-accent flex items-center gap-2">
+          <Edit3 class="w-4 h-4" /> 手动录入
+        </button>
+        <button @click="refresh" :disabled="loading"
+                class="h-10 w-10 rounded-btn border border-border bg-card flex items-center justify-center hover:border-accent text-text-2 hover:text-accent">
+          <RefreshCw class="w-4 h-4" :class="loading ? 'animate-spin' : ''" />
+        </button>
+      </div>
     </header>
 
     <div :class="isPC ? '' : 'flex-1 overflow-auto p-3 space-y-3'">
-      <!-- 离线提示 -->
       <div v-if="offline" class="px-4 py-2 rounded-btn bg-warning/10 border border-warning/30 text-warning text-sm flex items-center gap-2">
         <AlertTriangle class="w-4 h-4" />
-        后端不可达，无法加载知识库列表。请确认服务已启动。
+        后端不可达，无法加载本人上传记录。
+      </div>
+
+      <!-- 概览统计 -->
+      <div class="grid grid-cols-4 gap-2 text-center">
+        <div class="industrial-card p-3">
+          <div class="text-[11px] text-text-2">已提交</div>
+          <div class="text-lg font-bold mt-1 mono">{{ stats.total }}</div>
+        </div>
+        <div class="industrial-card p-3">
+          <div class="text-[11px] text-text-2">待审</div>
+          <div class="text-lg font-bold mt-1 mono text-warning">{{ stats.pending }}</div>
+        </div>
+        <div class="industrial-card p-3">
+          <div class="text-[11px] text-text-2">通过</div>
+          <div class="text-lg font-bold mt-1 mono text-success">{{ stats.approved }}</div>
+        </div>
+        <div class="industrial-card p-3">
+          <div class="text-[11px] text-text-2">驳回</div>
+          <div class="text-lg font-bold mt-1 mono text-danger">{{ stats.rejected }}</div>
+        </div>
       </div>
 
       <!-- 拖拽上传区 -->
@@ -194,7 +233,6 @@ const STATUS_CLS: Record<string, string> = {
           </button>
         </div>
 
-        <!-- 上传队列 -->
         <ul v-if="uploads.length" class="mt-3 space-y-1.5">
           <li v-for="(u, i) in uploads" :key="i"
               class="flex items-center gap-2 px-3 py-2 rounded-btn border border-border bg-bg text-sm">
@@ -204,17 +242,17 @@ const STATUS_CLS: Record<string, string> = {
             <span class="flex-1 truncate">{{ u.name }}</span>
             <span class="text-xs text-text-2 mono">{{ fmtSize(u.size) }}</span>
             <span v-if="u.status === 'uploading'" class="text-xs text-text-2">上传中…</span>
-            <span v-else-if="u.status === 'done'" class="text-xs text-success mono">#{{ u.docId }} · {{ u.chunks }} chunks</span>
+            <span v-else-if="u.status === 'done'" class="text-xs text-warning mono">#{{ u.docId }} · 待审</span>
             <span v-else class="text-xs text-danger">失败</span>
           </li>
         </ul>
       </section>
 
-      <!-- 已入库列表 -->
+      <!-- 我的上传记录 -->
       <section class="industrial-card overflow-hidden">
         <header class="px-5 py-3 border-b border-border flex items-center gap-3">
           <div class="text-sm font-semibold flex items-center gap-2">
-            <Database class="w-4 h-4 text-accent" /> 已入库文档
+            <Database class="w-4 h-4 text-accent" /> 我的上传记录
             <span class="text-xs text-text-2 font-normal mono">{{ filtered.length }} / {{ docs.length }}</span>
           </div>
           <div class="ml-auto relative">
@@ -231,31 +269,37 @@ const STATUS_CLS: Record<string, string> = {
         </div>
         <div v-else-if="!filtered.length" class="py-10 text-center text-text-2">
           <Database class="w-8 h-8 mx-auto opacity-50" />
-          <div class="mt-2 text-sm">{{ docs.length === 0 ? '知识库为空，先上传一份文档吧' : '没有匹配的文档' }}</div>
+          <div class="mt-2 text-sm">{{ docs.length === 0 ? '尚未提交过任何文档' : '没有匹配的文档' }}</div>
+          <div class="mt-1 text-xs">提交后审核员会进行审核，通过后才会被检索引用</div>
         </div>
         <ul v-else class="divide-y divide-border max-h-[480px] overflow-auto">
           <li v-for="d in filtered" :key="d.id"
-              class="px-5 py-3 flex items-center gap-3 hover:bg-bg/60">
-            <FileText class="w-4 h-4 text-text-2 flex-shrink-0" />
+              class="px-5 py-3 flex items-start gap-3 hover:bg-bg/60">
+            <FileText class="w-4 h-4 text-text-2 flex-shrink-0 mt-0.5" />
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium truncate">{{ d.title }}</div>
               <div class="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-2 flex-wrap">
                 <span class="mono">#{{ d.id }}</span>
                 <span class="px-1.5 py-0.5 rounded mono uppercase bg-bg border border-border">{{ d.type }}</span>
-                <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[d.status] || 'bg-bg border-border'">{{ d.status }}</span>
+                <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[d.status] || 'bg-bg border-border'">
+                  {{ STATUS_LABEL[d.status] || d.status }}
+                </span>
                 <span class="mono opacity-70 hidden sm:inline">{{ d.created_at }}</span>
               </div>
+              <div v-if="d.status === 'rejected' && d.reason" class="mt-1 text-xs text-danger">
+                驳回原因：{{ d.reason }}
+              </div>
             </div>
-            <button @click="removeDoc(d)"
-                    class="w-8 h-8 rounded hover:bg-danger/10 flex items-center justify-center text-text-2 hover:text-danger flex-shrink-0">
-              <Trash2 class="w-4 h-4" />
+            <button v-if="d.status === 'rejected'" @click="resubmit(d)"
+                    class="h-7 px-2 rounded-btn border border-accent text-accent hover:bg-accent/10 text-xs flex items-center gap-1 flex-shrink-0">
+              <RefreshCw class="w-3 h-3" /> 重提
             </button>
           </li>
         </ul>
       </section>
 
       <div class="text-[11px] text-text-2 text-center pt-2">
-        <Sparkles class="w-3 h-3 inline -mt-0.5" /> 上传后自动向量化，约 5 ~ 30 秒入库
+        <Sparkles class="w-3 h-3 inline -mt-0.5" /> 一旦提交不可自行删除，如需下架请联系审核员
       </div>
     </div>
 
@@ -272,7 +316,7 @@ const STATUS_CLS: Record<string, string> = {
         </header>
         <div class="p-5 space-y-3 overflow-auto">
           <div>
-            <div class="text-sm text-text-2 mb-1">标题（可选，留空将自动生成）</div>
+            <div class="text-sm text-text-2 mb-1">标题（可选）</div>
             <input v-model="manualTitle" placeholder="如：常见故障速查 / 操作要点速记"
                    :disabled="manualSubmitting"
                    class="w-full h-10 px-3 rounded-btn border border-border bg-bg outline-none focus:border-accent focus:bg-card" />
@@ -284,7 +328,7 @@ const STATUS_CLS: Record<string, string> = {
                       :disabled="manualSubmitting"
                       class="w-full px-3 py-2 rounded-btn border border-border bg-bg outline-none focus:border-accent focus:bg-card text-sm leading-relaxed"></textarea>
             <div class="text-[11px] text-text-2 mt-1">
-              文本会被打包成 .txt 文件后走 /api/kb/upload 入库
+              提交后状态为「待审」，由审核员通过后才进入检索 / 图谱
             </div>
           </div>
         </div>
@@ -294,7 +338,7 @@ const STATUS_CLS: Record<string, string> = {
                   :disabled="manualSubmitting" @click="submitManual">
             <Loader v-if="manualSubmitting" class="w-4 h-4 animate-spin" />
             <Send v-else class="w-4 h-4" />
-            {{ manualSubmitting ? '入库中…' : '提交入库' }}
+            {{ manualSubmitting ? '提交中…' : '提交审核' }}
           </button>
         </footer>
       </div>

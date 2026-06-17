@@ -34,39 +34,28 @@ export interface SearchResult {
   imageObservation?: string
 }
 
-/** 后端 /api/chat/query 返回结构 */
+/** 后端 /api/chat/query 返回结构（FIX3 第 3.2 项：sources 与回答强绑定） */
 interface BackendChatResp {
   answer: string
   image_observation: string
-  sources: { title: string; snippet: string }[]
+  sources: { id?: string; doc_id?: string | number; title: string; snippet: string; page?: number; score?: number }[]
 }
 
 const FALLBACK: SearchResult = {
-  summary: '初步判断为电机轴承润滑不足导致异响,建议立即停机检查。',
-  causes: [
-    { name: '轴承润滑不足或老化', confidence: 0.86 },
-    { name: '联轴器对中偏差', confidence: 0.62 },
-    { name: '电机定子气隙异常', confidence: 0.41 }
-  ],
-  hits: [
-    { id: 'h1', type: 'case', title: '热轧主电机异响处理案例 #2024-031', snippet: '检修员发现主电机驱动端轴承温度异常上升至 78℃,伴随金属摩擦声。',
-      similarity: 0.92, source: '王师傅提交 · 2024-03-15', highlights: ['轴承', '异响'] },
-    { id: 'h2', type: 'manual', title: 'YKK630-4 异步电机检修手册 §4.3 轴承润滑', snippet: '当出现持续金属摩擦声且温度高于 65℃ 时,应立即停机并按 §4.3.2 拆解检查滚动体。',
-      similarity: 0.81, source: '电机检修手册 v3.2 · P127', highlights: ['润滑', '滚动体'] },
-    { id: 'h3', type: 'graph', title: '故障实体: 电机异响 → 轴承磨损',
-      snippet: '关联 32 个历史案例 / 8 个标准化处理流程 / 4 类备件需求',
-      similarity: 0.74, source: '知识图谱 · 故障节点', highlights: ['磨损'] }
-  ]
+  summary: '',
+  causes: [],
+  hits: [],
+  imageObservation: ''
 }
+void FALLBACK
 
 /**
  * 多模态检索：实际调用 /api/chat/query。
  * - question 取自 text + deviceModel 拼接
  * - image 字段取 imageFile（前端图片管理保留 File 引用，URL 只用于预览）
- * - sources → hits（type 默认 manual，相似度按顺序衰减）
- * - causes 后端未返回，沿用前端兜底（也可以传空数组）
+ * - sources → hits（带 docId/page 元数据，确保和回答强绑定）
  *
- * 调用方继续兼容旧签名（不传 imageFile 时纯文字问答）。
+ * FIX3 第 2.4 项：后端不可达时**抛错**，由 UI 展示失败态、不写入历史。
  */
 export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> => {
   const question = [p.text || '', p.deviceModel ? `设备型号：${p.deviceModel}` : '']
@@ -74,37 +63,35 @@ export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> 
     .join('\n')
     .trim()
 
-  if (!question && !p.imageFile) return FALLBACK
+  if (!question && !p.imageFile) {
+    throw new Error('请输入问题或上传图片')
+  }
 
   const form = new FormData()
   form.append('question', question || '请描述设备图片中的故障')
   if (p.imageFile) form.append('image', p.imageFile)
 
-  try {
-    const data = await rawCall<BackendChatResp>(() =>
-      request.post<BackendChatResp>('/chat/query', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 90_000
-      })
-    )
-    const hits: SearchHit[] = (data.sources || []).map((s, i) => ({
-      id: 'src-' + i,
-      type: 'manual',
-      title: s.title || `引用 ${i + 1}`,
-      snippet: s.snippet || '',
-      similarity: Math.max(0.55, 0.92 - i * 0.07),
-      source: '知识库 · ' + (s.title || ''),
-      highlights: []
-    }))
-    return {
-      summary: data.answer || '',
-      causes: [],
-      hits,
-      imageObservation: data.image_observation || ''
-    }
-  } catch (e) {
-    if (import.meta.env.DEV) console.warn('[search.multimodalSearch] fallback:', e)
-    return FALLBACK
+  const data = await rawCall<BackendChatResp>(() =>
+    request.post<BackendChatResp>('/chat/query', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 90_000
+    })
+  )
+  const hits: SearchHit[] = (data.sources || []).map((s, i) => ({
+    id: String(s.id ?? 'src-' + i),
+    type: 'manual',
+    title: s.title || `引用 ${i + 1}`,
+    snippet: s.snippet || '',
+    similarity: typeof s.score === 'number' ? Math.max(0, Math.min(1, s.score)) : Math.max(0.55, 0.92 - i * 0.07),
+    source: '知识库 · ' + (s.title || ''),
+    highlights: [],
+    meta: { docId: s.doc_id != null ? String(s.doc_id) : undefined, page: s.page }
+  }))
+  return {
+    summary: data.answer || '',
+    causes: [],
+    hits,
+    imageObservation: data.image_observation || ''
   }
 }
 
