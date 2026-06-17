@@ -33,6 +33,11 @@ export const useUserStore = defineStore('user', () => {
     return res
   }
 
+  /** 注册：成功后只保存账号回显，不自动登录（按 FIX2 要求注册成功 → 跳回登录） */
+  const register = async (username: string, password: string, _role?: Role) => {
+    return authApi.register({ username, password })
+  }
+
   const logout = async () => {
     try { await authApi.logout() } catch {}
     token.value = ''
@@ -41,5 +46,5 @@ export const useUserStore = defineStore('user', () => {
     storage.remove('app:user')
   }
 
-  return { token, info, isLoggedIn, role, isAdmin, isAuditor, isWorker, isGuest, login, logout }
+  return { token, info, isLoggedIn, role, isAdmin, isAuditor, isWorker, isGuest, login, register, logout }
 })

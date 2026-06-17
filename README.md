@@ -211,3 +211,6 @@ PWA / 离线包等加分项可按需启用 `vite-plugin-pwa`。
 ## License
 
 仅用于评审与演示。© 2026
+
+前端：npm run dev
+后端：uvicorn app.main:app --reload

@@ -1,4 +1,5 @@
-import { get, post, safeCall } from './request'
+import { post, safeCall } from './request'
+import { listTickets, getTicket, type TicketSummary, type TicketDetail, type TicketStatus } from './ticket'
 
 export interface SopStep {
   id: string
@@ -111,27 +112,174 @@ const FLOW_003: SopFlow = {
 const FLOWS: Record<string, SopFlow> = {
   'sop-001': FALLBACK_FLOW,
   'sop-002': FLOW_002,
-  'sop-003': FLOW_003
+  'sop-003': FLOW_003,
+  'sop-demo': FALLBACK_FLOW
 }
 
-/** Mock 作业列表 */
+/** Mock 作业列表（演示态保留） */
+/**
+ * 离线兜底用的示例工单。仅当后端不可达时展示，并由 UI 标注"示例·离线模式"。
+ * （FIX2 第 2.2 项：删掉虚构测试条目，只保留 1 条带"示例"标记的兜底数据）
+ */
 const MOCK_LIST: WorkItem[] = [
-  { id: 'sop-001', name: '热轧主电机异响二级检修', deviceModel: 'YKK630-4',  difficulty: '中级', estimatedMinutes: 128, status: '进行中', level: 2, hazardous: true, updatedAt: Date.now() - 30 * 60_000, workshop: '一号车间·热轧线' },
-  { id: 'sop-002', name: '冷却塔风机轴承更换',     deviceModel: 'CT-1500',   difficulty: '初级', estimatedMinutes: 85,  status: '未开始', level: 1, updatedAt: Date.now() - 2 * 3600_000, workshop: '动力车间' },
-  { id: 'sop-003', name: '液压站系统压力波动检修', deviceModel: 'PRESS-500', difficulty: '高级', estimatedMinutes: 70,  status: '未开始', level: 3, hazardous: true, updatedAt: Date.now() - 4 * 3600_000, workshop: '冲压车间' },
-  { id: 'sop-004', name: '空压机出口温度异常排查', deviceModel: 'AC-220',    difficulty: '中级', estimatedMinutes: 60,  status: '未开始', level: 2, updatedAt: Date.now() - 1 * 86400_000, workshop: '动力车间' },
-  { id: 'sop-005', name: '行车制动器年度检修',     deviceModel: 'CRANE-50T', difficulty: '高级', estimatedMinutes: 180, status: '已完成', level: 2, hazardous: true, updatedAt: Date.now() - 2 * 86400_000, workshop: '装配车间' },
-  { id: 'sop-006', name: '减速机润滑油更换',       deviceModel: 'GR-160',    difficulty: '初级', estimatedMinutes: 40,  status: '已完成', level: 1, updatedAt: Date.now() - 3 * 86400_000, workshop: '一号车间' }
+  { id: 'sop-demo', name: '示例·热轧主电机异响二级检修', deviceModel: 'YKK630-4', difficulty: '中级', estimatedMinutes: 128, status: '进行中', level: 2, hazardous: true, updatedAt: Date.now() - 30 * 60_000, workshop: '一号车间·热轧线' }
 ]
 
-export const listFlows = () =>
-  safeCall<WorkItem[]>(() => get('/workflow/list'), MOCK_LIST)
+const TICKET_STATUS_MAP: Record<TicketStatus, WorkItem['status']> = {
+  open: '未开始',
+  doing: '进行中',
+  done: '已完成'
+}
 
-export const getFlow = (id?: string) =>
-  safeCall<SopFlow>(() => get('/workflow/flow', { id }), FLOWS[id || 'sop-001'] || FALLBACK_FLOW)
+/** 真实工单 → WorkItem（缺失字段用合理默认补齐，方便沿用现有 UI） */
+function ticketToWorkItem(t: TicketSummary): WorkItem {
+  return {
+    id: 't-' + t.id,
+    name: t.fault || `工单 #${t.id}`,
+    deviceModel: t.device || '未指定',
+    difficulty: '中级',
+    estimatedMinutes: 60,
+    status: TICKET_STATUS_MAP[t.status] || '未开始',
+    level: 2,
+    updatedAt: Date.now(),
+    workshop: 'AI 工单'
+  }
+}
+
+const SECTION_HEADERS = ['风险预检', '工具准备', '检修步骤', '验收标准']
+
+/** 把后端 raw 文本拆成尽可能合理的 SopStep 数组 */
+function parseTicketSteps(raw: unknown): SopStep[] {
+  if (!raw) return []
+  // 1) 如果直接是数组
+  if (Array.isArray(raw)) {
+    return raw.map((s: any, i: number) => ({
+      id: 's' + (i + 1),
+      name: s.name || s.title || SECTION_HEADERS[i] || `步骤 ${i + 1}`,
+      desc: typeof s === 'string' ? s : (s.desc || s.description || s.content || JSON.stringify(s)),
+      estMinutes: Number(s.estMinutes || s.minutes || 15),
+      tools: s.tools || [],
+      materials: s.materials || [],
+      manualRef: s.manualRef || s.ref,
+      checkPoints: s.checkPoints || s.checks || []
+    }))
+  }
+
+  // 2) raw 是字符串 —— 先尝试 JSON 解析
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) return parseTicketSteps(parsed)
+    } catch { /* 不是 JSON 就继续按文本切分 */ }
+
+    // 3) 按四段表头切分
+    const segments: { name: string; body: string }[] = []
+    const headerRe = new RegExp(`(?:【|\\[|\\d+[\\.、])?\\s*(${SECTION_HEADERS.join('|')})\\s*(?:】|\\])?[:：\\s]*`, 'g')
+    let lastIdx = 0
+    let lastName = ''
+    let m: RegExpExecArray | null
+    while ((m = headerRe.exec(trimmed))) {
+      if (lastName) {
+        segments.push({ name: lastName, body: trimmed.slice(lastIdx, m.index).trim() })
+      }
+      lastName = m[1]
+      lastIdx = headerRe.lastIndex
+    }
+    if (lastName) segments.push({ name: lastName, body: trimmed.slice(lastIdx).trim() })
+
+    if (segments.length) {
+      return segments.map((seg, i) => ({
+        id: 's' + (i + 1),
+        name: seg.name,
+        desc: seg.body || '（暂无内容）',
+        estMinutes: 15,
+        hazardous: seg.name === '风险预检',
+        tools: [],
+        materials: [],
+        checkPoints: seg.body
+          .split(/\n|[；;]/)
+          .map(s => s.replace(/^[\s\-•·\d\.、]+/, '').trim())
+          .filter(s => s.length >= 4)
+          .slice(0, 5)
+      }))
+    }
+
+    // 4) 无法切分时整体作为一步
+    return [{
+      id: 's1', name: 'AI 生成的检修方案',
+      desc: trimmed, estMinutes: 30,
+      tools: [], materials: [],
+      checkPoints: ['人工复核 AI 输出', '按方案完成检修', '记录处理结果']
+    }]
+  }
+
+  // 5) 对象（含 raw 字段或其他形态）
+  if (typeof raw === 'object') {
+    const r = raw as any
+    if (typeof r.raw === 'string') return parseTicketSteps(r.raw)
+    if (Array.isArray(r.steps)) return parseTicketSteps(r.steps)
+  }
+  return []
+}
+
+function ticketToFlow(t: TicketDetail): SopFlow {
+  return {
+    id: 't-' + t.id,
+    name: t.fault || `工单 #${t.id}`,
+    deviceModel: t.device || '未指定',
+    level: 2,
+    steps: parseTicketSteps(t.steps)
+  }
+}
+
+/** 列表返回包：UI 据此判断"真实空" vs "离线模式"。 */
+export interface FlowsResult {
+  items: WorkItem[]
+  /** true = 后端不可达，items 为示例 mock；false = 真实数据（可能为空数组） */
+  offline: boolean
+}
+
+/**
+ * 列表加载策略（FIX2 第 2 项）：
+ * - 后端可用且有工单 → 仅展示真实工单
+ * - 后端可用但无工单 → 真实空数组 + offline=false（UI 自行展示空态）
+ * - 后端不可用（网络/401） → 退回 1 条示例 mock + offline=true
+ *
+ * 不再混合展示 mock 与真实数据。
+ */
+export const listFlows = async (): Promise<FlowsResult> => {
+  try {
+    const tickets = await listTickets()
+    return { items: tickets.map(ticketToWorkItem), offline: false }
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn('[workflow.listFlows] backend unavailable, fallback to demo:', e)
+    return { items: MOCK_LIST.slice(0, 1), offline: true }
+  }
+}
+
+/**
+ * 详情：t- 前缀走真实工单接口，其它走本地 mock。
+ * 真实工单失败时给一个占位 SopFlow，避免 UI 卡死。
+ */
+export const getFlow = async (id?: string): Promise<SopFlow> => {
+  if (id && id.startsWith('t-')) {
+    const tid = id.slice(2)
+    const detail = await getTicket(tid)
+    if (detail) return ticketToFlow(detail)
+    return {
+      id, name: '工单加载失败', deviceModel: '—', level: 2,
+      steps: [{ id: 's1', name: '加载失败', desc: '无法获取工单详情，请稍后重试。', estMinutes: 0, checkPoints: [] }]
+    }
+  }
+  return FLOWS[id || 'sop-001'] || FALLBACK_FLOW
+}
 
 export const reportStep = (flowId: string, stepId: string, payload: object) =>
   safeCall(() => post('/workflow/step', { flowId, stepId, ...payload }), { ok: true })
 
 export const submitReport = (payload: object) =>
   safeCall(() => post('/workflow/report', payload), { reportId: 'R-' + Date.now() })
+
+/** 重新导出，方便页面直接调用创建工单 */
+export { createTicket, updateTicketStatus } from './ticket'

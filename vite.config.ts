@@ -11,6 +11,13 @@ export default defineConfig({
   },
   server: {
     host: true,
-    port: 5173
+    port: 5173,
+    proxy: {
+      // 后端 FastAPI 路由本身就以 /api 开头，这里直接整段转发，不重写路径
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      }
+    }
   }
 })

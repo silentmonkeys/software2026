@@ -25,9 +25,13 @@ request.interceptors.response.use(
   res => res,
   err => {
     const status = err?.response?.status
-    if (status === 401) {
+    const url = String(err?.config?.url || '')
+    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/register')
+    if (status === 401 && !isAuthEndpoint) {
       storage.remove(TOKEN_KEY)
-      if (location.pathname !== '/login') location.href = '/login'
+      // 注意：路由是 hash 模式，必须改 hash 而不是 pathname
+      const onLogin = location.hash.startsWith('#/login')
+      if (!onLogin) location.hash = '#/login'
     }
     // 仅在网络错误时静默；业务错误由调用方处理
     if (!err?.response) {
@@ -49,6 +53,27 @@ export async function safeCall<T>(
   } catch (e) {
     if (import.meta.env.DEV) console.warn('[api] fallback used:', e)
     return fallback
+  }
+}
+
+/**
+ * 真实后端调用：FastAPI 直接返回 JSON 体本身（不裹 {code,msg,data}）。
+ * 第二参数 fallback 用于网络/后端不可用时的演示降级。
+ * 失败时若没有 fallback 会向上抛错，调用方自行 try/catch。
+ */
+export async function rawCall<T>(
+  fn: () => Promise<{ data: T }>,
+  fallback?: T
+): Promise<T> {
+  try {
+    const { data } = await fn()
+    return data as T
+  } catch (e) {
+    if (fallback !== undefined) {
+      if (import.meta.env.DEV) console.warn('[api] raw fallback used:', e)
+      return fallback
+    }
+    throw e
   }
 }
 

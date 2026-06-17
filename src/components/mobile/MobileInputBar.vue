@@ -7,6 +7,7 @@ const props = defineProps<{ modelValue: string; images: string[] }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
   (e: 'update:images', v: string[]): void
+  (e: 'pick', files: File[]): void
   (e: 'send'): void
   (e: 'voice', text: string): void
 }>()
@@ -17,11 +18,13 @@ const onPick = (ev: Event) => {
   const files = (ev.target as HTMLInputElement).files
   if (!files) return
   const next = [...props.images]
+  const picked: File[] = []
   Array.from(files).forEach(f => {
-    const url = URL.createObjectURL(f)
-    next.push(url)
+    next.push(URL.createObjectURL(f))
+    picked.push(f)
   })
   emit('update:images', next)
+  if (picked.length) emit('pick', picked)
 }
 const removeImg = (i: number) => {
   const n = [...props.images]; n.splice(i, 1); emit('update:images', n)

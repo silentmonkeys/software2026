@@ -1,0 +1,2380 @@
+╭─── Claude Code v2.1.178 ─────────────────────────────────────────────────────╮
+│                                 │ Tips for getting started                   │
+│          Welcome back!          │ Run /init to create a CLAUDE.md file with… │
+│                                 │ ────────────────────────────────────────── │
+│             ▐▛███▜▌             │ What's new                                 │
+│            ▝▜█████▛▘            │ Added `Tool(param:value)` syntax for perm… │
+│              ▘▘ ▝▝              │ Skills in nested `.claude/skills` directo… │
+│                                 │ Nested `.claude/` directories: the agent,… │
+│   glm-5.2 · API Usage Billing   │ /release-notes for more                    │
+│    ~/Documents/software2026     │                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ @NEEDS/后端环境搭建及接口文档.md                                              
+  根据该后端的文案，对接到前端接口，其中.env的环境都已经配置好，不要进行访问    
+  ⎿  Read NEEDS/后端环境搭建及接口文档.md (242 lines)
+
+  Thought for 6s, listed 2 directories (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ @NEEDS/后端环境搭建及接口文档.md 根据该后端的文案，对接到前端接口，其中.env的 
+  环境都已经配置好，不要进行访问，虚拟环境使用conda activate sofeware激活       
+  ⎿  Read NEEDS/后端环境搭建及接口文档.md (unchanged)
+
+  Thought for 1m 25s, read 22 files, listed 5 directories (ctrl+o to expand)
+
+● Let me look at a couple more files to understand the existing structure before
+  planning.
+
+  Thought for 31s, read 4 files, listed 1 directory (ctrl+o to expand)
+
+● I now have enough context. Let me create a todo list and start implementing
+  the integration.
+
+● Let me check how the dev server is set up — is the frontend hitting the
+  backend directly via CORS, or via a Vite proxy?
+
+  Thought for 12s, searched for 1 pattern (ctrl+o to expand)
+
+● Frontend's VITE_API_BASE=/api plus axios baseURL /api means the URL becomes
+  /api/auth/login, but Vite at :5173 doesn't know to proxy to :8000. I'll add a
+  proxy to the Vite config so /api/* is forwarded to the backend in dev.
+
+● Update(vite.config.ts)
+  ⎿  Added 8 lines, removed 1 line
+      11    },
+      12    server: {
+      13      host: true,
+      14 -    port: 5173                                                 
+      14 +    port: 5173,                                                
+      15 +    proxy: {                                                   
+      16 +      // 后端 FastAPI 路由本身就以 /api 开头，这里直接整段转发 
+         +，不重写路径                                                   
+      17 +      '/api': {                                                
+      18 +        target: 'http://127.0.0.1:8000',                       
+      19 +        changeOrigin: true                                     
+      20 +      }                                                        
+      21 +    }                                                          
+      22    }
+      23  })
+
+● Now request.ts. The backend uses /api prefix in its own routes, but our
+  frontend axios baseURL is /api. Calling /auth/login becomes /api/auth/login —
+  that matches the backend. Good. Now let me add a raw helper for endpoints that
+  return naked JSON (no {code, msg, data} envelope).
+
+● Update(src/api/request.ts)
+  ⎿  Added 21 lines
+      52    }
+      53  }
+      54  
+      55 +/**                                                            
+      56 + * 真实后端调用：FastAPI 直接返回 JSON 体本身（不裹 {code,msg,d
+         +ata}）。                                                       
+      57 + * 第二参数 fallback 用于网络/后端不可用时的演示降级。         
+      58 + * 失败时若没有 fallback 会向上抛错，调用方自行 try/catch。    
+      59 + */                                                            
+      60 +export async function rawCall<T>(                              
+      61 +  fn: () => Promise<{ data: T }>,                              
+      62 +  fallback?: T                                                 
+      63 +): Promise<T> {                                                
+      64 +  try {                                                        
+      65 +    const { data } = await fn()                                
+      66 +    return data as T                                           
+      67 +  } catch (e) {                                                
+      68 +    if (fallback !== undefined) {                              
+      69 +      if (import.meta.env.DEV) console.warn('[api] raw fallback
+         + used:', e)                                                    
+      70 +      return fallback                                          
+      71 +    }                                                          
+      72 +    throw e                                                    
+      73 +  }                                                            
+      74 +}                                                              
+      75 +                                                               
+      76  export function get<T = unknown>(url: string, params?: object, 
+          cfg?: AxiosRequestConfig) {
+      77    return request.get<ApiResponse<T>>(url, { params, ...cfg })
+      78  }
+● Now wire real auth. Backend role is plain string from User.role — let me
+  check.
+
+  Thought for 8s, listed 1 directory (ctrl+o to expand)
+
+● Write(src/api/auth.ts)
+  ⎿  Added 74 lines, removed 15 lines
+      1 -import { post, safeCall } from './request'                      
+      1 +import { post, rawCall } from './request'                       
+      2  import type { Role } from '@/utils/permission'
+      3  import { DEMO_ACCOUNTS } from '@/utils/permission'
+      4  
+     ...
+       8    user: { id: string; name: string; role: Role; workshop?: stri
+          ng; avatar?: string }
+       9  }
+      10  
+      11 -/**                                                            
+      12 - * Mock 登录:                                                  
+      13 - * 1. 若显式传入 role,使用对应预设账户;                        
+      14 - * 2. 否则按用户名匹配预设账户(admin/auditor/worker/guest);    
+      15 - * 3. 仍匹配不上则按 frontline 默认登录。                      
+      16 - */                                                            
+      11 +/** 后端 access_token / role 响应体 */                         
+      12 +interface BackendTokenOut {                                    
+      13 +  access_token: string                                         
+      14 +  role: string  // worker / leader / admin                     
+      15 +}                                                              
+      16 +                                                               
+      17 +/** 后端 role 字段映射到前端权限角色 */                        
+      18 +const mapBackendRole = (r: string | undefined): Role => {      
+      19 +  switch ((r || '').toLowerCase()) {                           
+      20 +    case 'admin':   return 'admin'                             
+      21 +    case 'leader':  return 'auditor'                           
+      22 +    case 'auditor': return 'auditor'                           
+      23 +    case 'guest':   return 'guest'                             
+      24 +    case 'worker':                                             
+      25 +    case 'frontline':                                          
+      26 +    default:        return 'frontline'                         
+      27 +  }                                                            
+      28 +}                                                              
+      29 +                                                               
+      30 +/** 没拿到真实后端时的本地 fallback —— 用预设账户撑起演示态 */ 
+      31  function pickRole(p: LoginPayload): Role {
+      32    if (p.role) return p.role
+      33    const u = (p.username || '').toLowerCase().trim()
+      34    if (u.startsWith('admin'))   return 'admin'
+      21 -  if (u.startsWith('auditor')) return 'auditor'                
+      35 +  if (u.startsWith('auditor') || u.startsWith('leader')) return
+         + 'auditor'                                                     
+      36    if (u.startsWith('guest'))   return 'guest'
+      37    if (u.startsWith('worker') || u.startsWith('frontline') || u 
+          === 'lishifu') return 'frontline'
+      38    return 'frontline'
+      39  }
+      40  
+      27 -export const login = (p: LoginPayload) => {                    
+      41 +function buildMockResult(p: LoginPayload): LoginResult {       
+      42    const role = pickRole(p)
+      43    const demo = DEMO_ACCOUNTS[role]
+      30 -  return safeCall<LoginResult>(() => post('/auth/login', p), { 
+      44 +  return {                                                     
+      45      token: 'mock-token-' + role + '-' + Date.now(),
+      46      user: {
+      47        id: 'u-' + role,
+     ...
+       49        role,
+       50        workshop: demo.workshop
+       51      }
+       38 -  })                                                          
+       52 +  }                                                           
+       53  }
+       54  
+       41 -export const logout = () => post('/auth/logout')              
+       42 -export const ssoLogin = () => post('/auth/sso')               
+       43 -export const register = (p: LoginPayload & { phone?: string })
+          - =>                                                           
+       44 -  safeCall(() => post('/auth/register', p), { ok: true })     
+       55 +/**                                                           
+       56 + * 登录：优先真实后端 /api/auth/login（返回 {access_token, rol
+          +e}），                                                        
+       57 + * 网络不通或后端 401 失败时降级为本地 mock，保证演示态可用。 
+       58 + */                                                           
+       59 +export const login = async (p: LoginPayload): Promise<LoginRes
+          +ult> => {                                                     
+       60 +  try {                                                       
+       61 +    const data = await rawCall<BackendTokenOut>(() =>         
+       62 +      post<BackendTokenOut>('/auth/login', { username: p.usern
+          +ame, password: p.password })                                  
+       63 +    )                                                         
+       64 +    const role = mapBackendRole(data.role)                    
+       65 +    const demo = DEMO_ACCOUNTS[role]                          
+       66 +    return {                                                  
+       67 +      token: data.access_token,                               
+       68 +      user: {                                                 
+       69 +        id: 'u-' + p.username,                                
+       70 +        name: p.username || demo.name,                        
+       71 +        role,                                                 
+       72 +        workshop: demo?.workshop                              
+       73 +      }                                                       
+       74 +    }                                                         
+       75 +  } catch (e) {                                               
+       76 +    if (import.meta.env.DEV) console.warn('[auth.login] fallba
+          +ck to mock:', e)                                              
+       77 +    return buildMockResult(p)                                 
+       78 +  }                                                           
+       79 +}                                                             
+       80 +                                                              
+       81 +/** 注册：直接走真实后端，失败时也回退 mock */                
+       82 +export const register = async (p: LoginPayload & { phone?: str
+          +ing }): Promise<LoginResult> => {                             
+       83 +  try {                                                       
+       84 +    const data = await rawCall<BackendTokenOut>(() =>         
+       85 +      post<BackendTokenOut>('/auth/register', { username: p.us
+          +ername, password: p.password })                               
+       86 +    )                                                         
+       87 +    const role = mapBackendRole(data.role)                    
+       88 +    const demo = DEMO_ACCOUNTS[role]                          
+       89 +    return {                                                  
+       90 +      token: data.access_token,                               
+       91 +      user: { id: 'u-' + p.username, name: p.username, role, w
+          +orkshop: demo?.workshop }                                     
+       92 +    }                                                         
+       93 +  } catch (e) {                                               
+       94 +    if (import.meta.env.DEV) console.warn('[auth.register] fal
+          +lback to mock:', e)                                           
+       95 +    return buildMockResult(p)                                 
+       96 +  }                                                           
+       97 +}                                                             
+       98 +                                                              
+       99 +/** 后端没有登出接口，纯前端清 token 即可（store 已经处理） */
+      100 +export const logout = async () => ({ ok: true })              
+      101 +                                                              
+      102 +/** SSO 接口：后端尚未实现，保留空实现便于后续替换 */         
+      103 +export const ssoLogin = async () => ({ ok: true })            
+
+● The user store calls login(username, password, remember, roleHint) which still
+  works with the new signature (extra remember/roleHint are absorbed by the
+  LoginPayload shape — but our new login ignores roleHint). Backend doesn't know
+  about role hints, so this is correct: real backend defines the role. But the
+  demo login page lets users pick a role with the role selector — to keep that
+  experience working without breaking the real backend, I should: when network
+  call succeeds, use the real role; on fallback, honor p.role.
+
+  That's already the behavior. Good.
+
+● Now kb.ts:
+
+● Write(src/api/kb.ts)
+  ⎿  Wrote 38 lines to src/api/kb.ts
+       2 import { request, rawCall } from './request'
+       3 /** 知识库文档（与后端 /api/kb/list 字段对齐） */
+       4 export interface KbDoc {
+       5   id: number
+       6   title: string
+       7   type: string                                 // pdf / docx / t
+         xt / md
+       8   status: 'ready' | 'parsing' | 'failed' | string
+       9   created_at: string
+      10 }
+     … +31 lines (ctrl+o to expand)
+
+● Now ticket.ts:
+
+● Write(src/api/ticket.ts)
+  ⎿  Wrote 39 lines to src/api/ticket.ts
+       1 import { request, rawCall } from './request'
+       2 
+       3 export type TicketStatus = 'open' | 'doing' | 'done'
+       4 
+       5 /** 列表项（GET /api/ticket 返回每条的字段） */
+       6 export interface TicketSummary {
+       7   id: number
+       8   device: string
+       9   fault: string
+      10   status: TicketStatus
+     … +35 lines (ctrl+o to expand)
+
+● Now wire multimodalSearch to /api/chat/query. The backend takes form-data with
+  question (Form) and an optional image (UploadFile). It returns {answer, 
+  image_observation, sources:[{title,snippet}]}. The frontend SearchPayload
+  currently has images: string[] (URLs only), which is useless for upload — I
+  need to extend it with optional imageFile?: File.
+
+● Write(src/api/search.ts)
+  ⎿  Added 62 lines, removed 3 lines
+       1 -import { post, get, safeCall } from './request'                
+       1 +import { post, get, request, rawCall, safeCall } from './reques
+         +t'                                                             
+       2  
+       3  export type SearchMode = 'precise' | 'smart' | 'explore'
+       4  export type SourceType = 'manual' | 'case' | 'graph'
+       5  
+       6  export interface SearchPayload {
+       7    text?: string
+       8 +  /** 缩略图 URL，仅前端展示用 */                              
+       9    images?: string[]
+      10 +  /** 真正发给后端的图片文件（多模态时必传一张，会取第一个） */
+      11 +  imageFile?: File | null                                      
+      12    deviceModel?: string
+      13    mode?: SearchMode
+      14    filters?: Record<string, unknown>
+     ...
+      27  
+      28  export interface SearchResult {
+      29    summary: string
+      30 +  /** 后端目前不返回原因 Top3，前端根据问题展示空数组或保留默认
+         + */                                                            
+      31    causes: { name: string; confidence: number }[]
+      32    hits: SearchHit[]
+      33 +  /** 多模态场景下后端返回的图片观察文本（无图为空） */        
+      34 +  imageObservation?: string                                    
+      35  }
+      36  
+      37 +/** 后端 /api/chat/query 返回结构 */                           
+      38 +interface BackendChatResp {                                    
+      39 +  answer: string                                               
+      40 +  image_observation: string                                    
+      41 +  sources: { title: string; snippet: string }[]                
+      42 +}                                                              
+      43 +                                                               
+      44  const FALLBACK: SearchResult = {
+      45    summary: '初步判断为电机轴承润滑不足导致异响,建议立即停机检查
+          。',
+      46    causes: [
+     ...
+       59    ]
+       60  }
+       61  
+       49 -export const multimodalSearch = (p: SearchPayload) =>         
+       50 -  safeCall<SearchResult>(() => post('/search/multimodal', p), 
+          -FALLBACK)                                                     
+       62 +/**                                                           
+       63 + * 多模态检索：实际调用 /api/chat/query。                     
+       64 + * - question 取自 text + deviceModel 拼接                    
+       65 + * - image 字段取 imageFile（前端图片管理保留 File 引用，URL  
+          +只用于预览）                                                  
+       66 + * - sources → hits（type 默认 manual，相似度按顺序衰减）     
+       67 + * - causes 后端未返回，沿用前端兜底（也可以传空数组）        
+       68 + *                                                            
+       69 + * 调用方继续兼容旧签名（不传 imageFile 时纯文字问答）。      
+       70 + */                                                           
+       71 +export const multimodalSearch = async (p: SearchPayload): Prom
+          +ise<SearchResult> => {                                        
+       72 +  const question = [p.text || '', p.deviceModel ? `设备型号：$
+          +{p.deviceModel}` : '']                                        
+       73 +    .filter(Boolean)                                          
+       74 +    .join('\n')                                               
+       75 +    .trim()                                                   
+       76  
+       77 +  if (!question && !p.imageFile) return FALLBACK              
+       78 +                                                              
+       79 +  const form = new FormData()                                 
+       80 +  form.append('question', question || '请描述设备图片中的故障'
+          +)                                                             
+       81 +  if (p.imageFile) form.append('image', p.imageFile)          
+       82 +                                                              
+       83 +  try {                                                       
+       84 +    const data = await rawCall<BackendChatResp>(() =>         
+       85 +      request.post<BackendChatResp>('/chat/query', form, {    
+       86 +        headers: { 'Content-Type': 'multipart/form-data' },   
+       87 +        timeout: 90_000                                       
+       88 +      })                                                      
+       89 +    )                                                         
+       90 +    const hits: SearchHit[] = (data.sources || []).map((s, i) 
+          +=> ({                                                         
+       91 +      id: 'src-' + i,                                         
+       92 +      type: 'manual',                                         
+       93 +      title: s.title || `引用 ${i + 1}`,                      
+       94 +      snippet: s.snippet || '',                               
+       95 +      similarity: Math.max(0.55, 0.92 - i * 0.07),            
+       96 +      source: '知识库 · ' + (s.title || ''),                  
+       97 +      highlights: []                                          
+       98 +    }))                                                       
+       99 +    return {                                                  
+      100 +      summary: data.answer || '',                             
+      101 +      causes: [],                                             
+      102 +      hits,                                                   
+      103 +      imageObservation: data.image_observation || ''          
+      104 +    }                                                         
+      105 +  } catch (e) {                                               
+      106 +    if (import.meta.env.DEV) console.warn('[search.multimodalS
+          +earch] fallback:', e)                                         
+      107 +    return FALLBACK                                           
+      108 +  }                                                           
+      109 +}                                                             
+      110 +                                                              
+      111  export const suggest = (q: string) =>
+      112    safeCall<string[]>(() => get('/search/suggest', { q }), [
+      113      `${q}-振动异常`, `${q}-温度过高`, `${q}-异响排查`
+
+  Thought for 15s (ctrl+o to expand)
+
+● Write(src/api/workflow.ts)
+  ⎿  Added 138 lines, removed 5 lines
+      1  import { get, post, safeCall } from './request'
+      2 +import { listTickets, getTicket, type TicketSummary, type Ticket
+        +Detail, type TicketStatus } from './ticket'                     
+      3  
+      4  export interface SopStep {
+      5    id: string
+     ...
+      115    'sop-003': FLOW_003
+      116  }
+      117  
+      117 -/** Mock 作业列表 */                                          
+      118 +/** Mock 作业列表（演示态保留） */                            
+      119  const MOCK_LIST: WorkItem[] = [
+      120    { id: 'sop-001', name: '热轧主电机异响二级检修', deviceModel
+           : 'YKK630-4',  difficulty: '中级', estimatedMinutes: 128, stat
+           us: '进行中', level: 2, hazardous: true, updatedAt: Date.now()
+            - 30 * 60_000, workshop: '一号车间·热轧线' },
+      121    { id: 'sop-002', name: '冷却塔风机轴承更换',     deviceModel
+           : 'CT-1500',   difficulty: '初级', estimatedMinutes: 85,  stat
+           us: '未开始', level: 1, updatedAt: Date.now() - 2 * 3600_000, 
+           workshop: '动力车间' },
+     ...
+      125    { id: 'sop-006', name: '减速机润滑油更换',       deviceModel
+           : 'GR-160',    difficulty: '初级', estimatedMinutes: 40,  stat
+           us: '已完成', level: 1, updatedAt: Date.now() - 3 * 86400_000,
+            workshop: '一号车间' }
+      126  ]
+      127  
+      127 -export const listFlows = () =>                                
+      128 -  safeCall<WorkItem[]>(() => get('/workflow/list'), MOCK_LIST)
+      128 +const TICKET_STATUS_MAP: Record<TicketStatus, WorkItem['status
+          +']> = {                                                       
+      129 +  open: '未开始',                                             
+      130 +  doing: '进行中',                                            
+      131 +  done: '已完成'                                              
+      132 +}                                                             
+      133  
+      130 -export const getFlow = (id?: string) =>                       
+      131 -  safeCall<SopFlow>(() => get('/workflow/flow', { id }), FLOWS
+          -[id || 'sop-001'] || FALLBACK_FLOW)                           
+      134 +/** 真实工单 → WorkItem（缺失字段用合理默认补齐，方便沿用现有 
+          +UI） */                                                       
+      135 +function ticketToWorkItem(t: TicketSummary): WorkItem {       
+      136 +  return {                                                    
+      137 +    id: 't-' + t.id,                                          
+      138 +    name: t.fault || `工单 #${t.id}`,                         
+      139 +    deviceModel: t.device || '未指定',                        
+      140 +    difficulty: '中级',                                       
+      141 +    estimatedMinutes: 60,                                     
+      142 +    status: TICKET_STATUS_MAP[t.status] || '未开始',          
+      143 +    level: 2,                                                 
+      144 +    updatedAt: Date.now(),                                    
+      145 +    workshop: 'AI 工单'                                       
+      146 +  }                                                           
+      147 +}                                                             
+      148  
+      149 +const SECTION_HEADERS = ['风险预检', '工具准备', '检修步骤', '
+          +验收标准']                                                    
+      150 +                                                              
+      151 +/** 把后端 raw 文本拆成尽可能合理的 SopStep 数组 */           
+      152 +function parseTicketSteps(raw: unknown): SopStep[] {          
+      153 +  if (!raw) return []                                         
+      154 +  // 1) 如果直接是数组                                        
+      155 +  if (Array.isArray(raw)) {                                   
+      156 +    return raw.map((s: any, i: number) => ({                  
+      157 +      id: 's' + (i + 1),                                      
+      158 +      name: s.name || s.title || SECTION_HEADERS[i] || `步骤 $
+          +{i + 1}`,                                                     
+      159 +      desc: typeof s === 'string' ? s : (s.desc || s.descripti
+          +on || s.content || JSON.stringify(s)),                        
+      160 +      estMinutes: Number(s.estMinutes || s.minutes || 15),    
+      161 +      tools: s.tools || [],                                   
+      162 +      materials: s.materials || [],                           
+      163 +      manualRef: s.manualRef || s.ref,                        
+      164 +      checkPoints: s.checkPoints || s.checks || []            
+      165 +    }))                                                       
+      166 +  }                                                           
+      167 +                                                              
+      168 +  // 2) raw 是字符串 —— 先尝试 JSON 解析                      
+      169 +  if (typeof raw === 'string') {                              
+      170 +    const trimmed = raw.trim()                                
+      171 +    try {                                                     
+      172 +      const parsed = JSON.parse(trimmed)                      
+      173 +      if (Array.isArray(parsed)) return parseTicketSteps(parse
+          +d)                                                            
+      174 +    } catch { /* 不是 JSON 就继续按文本切分 */ }              
+      175 +                                                              
+      176 +    // 3) 按四段表头切分                                      
+      177 +    const segments: { name: string; body: string }[] = []     
+      178 +    const headerRe = new RegExp(`(?:【|\\[|\\d+[\\.、])?\\s*($
+          +{SECTION_HEADERS.join('|')})\\s*(?:】|\\])?[:：\\s]*`, 'g')   
+      179 +    let lastIdx = 0                                           
+      180 +    let lastName = ''                                         
+      181 +    let m: RegExpExecArray | null                             
+      182 +    while ((m = headerRe.exec(trimmed))) {                    
+      183 +      if (lastName) {                                         
+      184 +        segments.push({ name: lastName, body: trimmed.slice(la
+          +stIdx, m.index).trim() })                                     
+      185 +      }                                                       
+      186 +      lastName = m[1]                                         
+      187 +      lastIdx = headerRe.lastIndex                            
+      188 +    }                                                         
+      189 +    if (lastName) segments.push({ name: lastName, body: trimme
+          +d.slice(lastIdx).trim() })                                    
+      190 +                                                              
+      191 +    if (segments.length) {                                    
+      192 +      return segments.map((seg, i) => ({                      
+      193 +        id: 's' + (i + 1),                                    
+      194 +        name: seg.name,                                       
+      195 +        desc: seg.body || '（暂无内容）',                     
+      196 +        estMinutes: 15,                                       
+      197 +        hazardous: seg.name === '风险预检',                   
+      198 +        tools: [],                                            
+      199 +        materials: [],                                        
+      200 +        checkPoints: seg.body                                 
+      201 +          .split(/\n|[；;]/)                                  
+      202 +          .map(s => s.replace(/^[\s\-•·\d\.、]+/, '').trim()) 
+      203 +          .filter(s => s.length >= 4)                         
+      204 +          .slice(0, 5)                                        
+      205 +      }))                                                     
+      206 +    }                                                         
+      207 +                                                              
+      208 +    // 4) 无法切分时整体作为一步                              
+      209 +    return [{                                                 
+      210 +      id: 's1', name: 'AI 生成的检修方案',                    
+      211 +      desc: trimmed, estMinutes: 30,                          
+      212 +      tools: [], materials: [],                               
+      213 +      checkPoints: ['人工复核 AI 输出', '按方案完成检修', '记 
+          +录处理结果']                                                  
+      214 +    }]                                                        
+      215 +  }                                                           
+      216 +                                                              
+      217 +  // 5) 对象（含 raw 字段或其他形态）                         
+      218 +  if (typeof raw === 'object') {                              
+      219 +    const r = raw as any                                      
+      220 +    if (typeof r.raw === 'string') return parseTicketSteps(r.r
+          +aw)                                                           
+      221 +    if (Array.isArray(r.steps)) return parseTicketSteps(r.step
+          +s)                                                            
+      222 +  }                                                           
+      223 +  return []                                                   
+      224 +}                                                             
+      225 +                                                              
+      226 +function ticketToFlow(t: TicketDetail): SopFlow {             
+      227 +  return {                                                    
+      228 +    id: 't-' + t.id,                                          
+      229 +    name: t.fault || `工单 #${t.id}`,                         
+      230 +    deviceModel: t.device || '未指定',                        
+      231 +    level: 2,                                                 
+      232 +    steps: parseTicketSteps(t.steps)                          
+      233 +  }                                                           
+      234 +}                                                             
+      235 +                                                              
+      236 +/**                                                           
+      237 + * 列表：先尝试拉真实工单，再合并演示数据放在前面（真实工单始 
+          +终排第一）。                                                  
+      238 + * 后端不可用时退回纯 mock。                                  
+      239 + */                                                           
+      240 +export const listFlows = async (): Promise<WorkItem[]> => {   
+      241 +  const tickets = await listTickets()   // 失败已被吞掉返回 []
+      242 +  const realItems = tickets.map(ticketToWorkItem)             
+      243 +  return [...realItems, ...MOCK_LIST]                         
+      244 +}                                                             
+      245 +                                                              
+      246 +/**                                                           
+      247 + * 详情：t- 前缀走真实工单接口，其它走本地 mock。             
+      248 + * 真实工单失败时给一个占位 SopFlow，避免 UI 卡死。           
+      249 + */                                                           
+      250 +export const getFlow = async (id?: string): Promise<SopFlow> =
+          +> {                                                           
+      251 +  if (id && id.startsWith('t-')) {                            
+      252 +    const tid = id.slice(2)                                   
+      253 +    const detail = await getTicket(tid)                       
+      254 +    if (detail) return ticketToFlow(detail)                   
+      255 +    return {                                                  
+      256 +      id, name: '工单加载失败', deviceModel: '—', level: 2,   
+      257 +      steps: [{ id: 's1', name: '加载失败', desc: '无法获取工 
+          +单详情，请稍后重试。', estMinutes: 0, checkPoints: [] }]      
+      258 +    }                                                         
+      259 +  }                                                           
+      260 +  return FLOWS[id || 'sop-001'] || FALLBACK_FLOW              
+      261 +}                                                             
+      262 +                                                              
+      263  export const reportStep = (flowId: string, stepId: string, pay
+           load: object) =>
+      264    safeCall(() => post('/workflow/step', { flowId, stepId, ...p
+           ayload }), { ok: true })
+      265  
+      266  export const submitReport = (payload: object) =>
+      267    safeCall(() => post('/workflow/report', payload), { reportId
+           : 'R-' + Date.now() })
+      268 +                                                              
+      269 +/** 重新导出，方便页面直接调用创建工单 */                     
+      270 +export { createTicket, updateTicketStatus } from './ticket'   
+
+  Thought for 7s (ctrl+o to expand)
+
+● Update(src/api/workflow.ts)
+  ⎿  Added 1 line, removed 1 line
+      1 -import { get, post, safeCall } from './request'                 
+      1 +import { post, safeCall } from './request'                      
+      2  import { listTickets, getTicket, type TicketSummary, type Ticket
+         Detail, type TicketStatus } from './ticket'
+      3  
+      4  export interface SopStep {
+● Now wire File objects through the search views. Pc first:
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      17  const text = ref(typeof route.query.q === 'string' ? route.quer
+          y.q : '电机异响')
+      18  const deviceModel = ref('YKK630-4')
+      19  const mode = ref<SearchMode>('smart')
+      20 -const images = ref<{ url: string; name: string }[]>([])        
+      20 +const images = ref<{ url: string; name: string; file: File }[]>
+         +([])                                                           
+      21  const dragging = ref(false)
+      22  const loading = ref(false)
+      23  const result = ref<SearchResult | null>(null)
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      37  
+      38  const onFiles = (files: FileList | null) => {
+      39    if (!files) return
+      40 -  Array.from(files).forEach(f => images.value.push({ url: URL.c
+         -reateObjectURL(f), name: f.name }))                            
+      40 +  Array.from(files).forEach(f => images.value.push({ url: URL.c
+         +reateObjectURL(f), name: f.name, file: f }))                   
+      41  }
+      42  const onDrop = (e: DragEvent) => {
+      43    e.preventDefault(); dragging.value = false
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 2 lines, removed 1 line
+      56    try {
+      57      const res = await searchApi.multimodalSearch({
+      58        text: text.value, deviceModel: deviceModel.value, mode: m
+          ode.value,
+      59 -      images: images.value.map(i => i.url)                     
+      59 +      images: images.value.map(i => i.url),                    
+      60 +      imageFile: images.value[0]?.file || null                 
+      61      })
+      62      result.value = res
+      63      run(res.summary)
+
+● Now Mobile. The MobileInputBar emits string URLs only — I'll extend it to also
+  emit File[] so the parent can capture real files.
+
+● Update(src/components/mobile/MobileInputBar.vue)
+  ⎿  Added 5 lines, removed 2 lines
+       7  const emit = defineEmits<{
+       8    (e: 'update:modelValue', v: string): void
+       9    (e: 'update:images', v: string[]): void
+      10 +  (e: 'pick', files: File[]): void                             
+      11    (e: 'send'): void
+      12    (e: 'voice', text: string): void
+      13  }>()
+     ...
+      18    const files = (ev.target as HTMLInputElement).files
+      19    if (!files) return
+      20    const next = [...props.images]
+      21 +  const picked: File[] = []                                    
+      22    Array.from(files).forEach(f => {
+      21 -    const url = URL.createObjectURL(f)                         
+      22 -    next.push(url)                                             
+      23 +    next.push(URL.createObjectURL(f))                          
+      24 +    picked.push(f)                                             
+      25    })
+      26    emit('update:images', next)
+      27 +  if (picked.length) emit('pick', picked)                      
+      28  }
+      29  const removeImg = (i: number) => {
+      30    const n = [...props.images]; n.splice(i, 1); emit('update:ima
+          ges', n)
+
+● Now Mobile search view:
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 10 lines, removed 1 line
+      15  
+      16  const text = ref(typeof route.query.q === 'string' ? route.quer
+          y.q : '')
+      17  const images = ref<string[]>([])
+      18 +const imageFiles = ref<File[]>([])                             
+      19  const loading = ref(false)
+      20  const result = ref<SearchResult | null>(null)
+      21  const idx = ref(0)
+      22  const { display, run, done } = useStreamText(20)
+      23  
+      24 +const onPickFiles = (files: File[]) => {                       
+      25 +  imageFiles.value.push(...files)                              
+      26 +}                                                              
+      27 +                                                               
+      28  const onSearch = async () => {
+      29    if (!text.value.trim() && !images.value.length) return
+      30    loading.value = true
+      31    try {
+      27 -    const res = await searchApi.multimodalSearch({ text: text.v
+         -alue, images: images.value })                                  
+      32 +    const res = await searchApi.multimodalSearch({             
+      33 +      text: text.value,                                        
+      34 +      images: images.value,                                    
+      35 +      imageFile: imageFiles.value[0] || null                   
+      36 +    })                                                         
+      37      result.value = res
+      38      idx.value = 0
+      39      run(res.summary)
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 1 line, removed 1 line
+      114        </button>
+      115      </div>
+      116  
+      117 -    <MobileInputBar v-model="text" v-model:images="images" @se
+          -nd="onSearch" @voice="onVoice" />                             
+      117 +    <MobileInputBar v-model="text" v-model:images="images" @se
+          +nd="onSearch" @voice="onVoice" @pick="onPickFiles" />         
+      118    </div>
+      119  </template>
+
+  Thought for 9s (ctrl+o to expand)
+
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 55 lines, removed 4 lines
+       1  <script setup lang="ts">
+       2 -import { ref, reactive } from 'vue'                            
+       2 +import { ref, reactive, onMounted } from 'vue'                 
+       3  import { useRouter } from 'vue-router'
+       4  import { useDevice } from '@/composables/useDevice'
+       5 -import { Camera, Mic, Save, Send, ChevronLeft, Sparkles } from 
+         -'lucide-vue-next'                                              
+       6 -import { showToast } from 'vant'                               
+       5 +import { Camera, Mic, Save, Send, ChevronLeft, Sparkles, FileTe
+         +xt, Trash2, Loader } from 'lucide-vue-next'                    
+       6 +import { showToast, showFailToast } from 'vant'                
+       7  import { saveDraft, submitCase } from '@/api/knowledge'
+       8 +import { uploadDoc, listDocs, deleteDoc, type KbDoc } from '@/a
+         +pi/kb'                                                         
+       9  
+      10  const router = useRouter()
+      11  const { isPC } = useDevice()
+     ...
+      13  const step = ref(0)
+      14  const steps = ['基本信息', '故障描述', '处理过程', '结果与反思'
+          , '附件']
+      15  
+      16 +interface Attach { name: string; docId?: number; chunks?: numbe
+         +r; status: 'uploading' | 'done' | 'failed' }                   
+      17 +                                                               
+      18  const form = reactive({
+      19    title: '', device: '', faultType: '', level: 2, occurAt: '',
+      20    desc: '',
+      21    process: '',
+      22    result: '',
+      20 -  attachments: [] as { url: string; name: string }[]           
+      23 +  attachments: [] as Attach[]                                  
+      24  })
+      25  
+      26 +const docs = ref<KbDoc[]>([])                                  
+      27 +const fileInput = ref<HTMLInputElement>()                      
+      28 +                                                               
+      29 +const ALLOWED = ['pdf', 'docx', 'txt', 'md']                   
+      30 +                                                               
+      31 +const refreshDocs = async () => { docs.value = await listDocs()
+         + }                                                             
+      32 +onMounted(refreshDocs)                                         
+      33 +                                                               
+      34 +const onPickFiles = async (ev: Event) => {                     
+      35 +  const files = (ev.target as HTMLInputElement).files          
+      36 +  if (!files || !files.length) return                          
+      37 +  for (const f of Array.from(files)) {                         
+      38 +    const ext = f.name.split('.').pop()?.toLowerCase() || ''   
+      39 +    if (!ALLOWED.includes(ext)) {                              
+      40 +      showFailToast(`仅支持 ${ALLOWED.join(' / ')}：${f.name}`)
+      41 +      continue                                                 
+      42 +    }                                                          
+      43 +    const item: Attach = { name: f.name, status: 'uploading' } 
+      44 +    form.attachments.push(item)                                
+      45 +    try {                                                      
+      46 +      const res = await uploadDoc(f)                           
+      47 +      item.docId = res.doc_id                                  
+      48 +      item.chunks = res.chunks                                 
+      49 +      item.status = 'done'                                     
+      50 +      showToast({ type: 'success', message: `${f.name} 已入库 (
+         +${res.chunks} chunks)` })                                      
+      51 +    } catch (e) {                                              
+      52 +      item.status = 'failed'                                   
+      53 +      showFailToast(`${f.name} 上传失败`)                      
+      54 +    }                                                          
+      55 +  }                                                            
+      56 +  if (ev.target) (ev.target as HTMLInputElement).value = ''    
+      57 +  refreshDocs()                                                
+      58 +}                                                              
+      59 +                                                               
+      60 +const removeAttachment = async (i: number) => {                
+      61 +  const a = form.attachments[i]                                
+      62 +  if (a.status === 'done' && a.docId != null) {                
+      63 +    try { await deleteDoc(a.docId) } catch { /* 失败也照样移除 
+         +前端引用 */ }                                                  
+      64 +  }                                                            
+      65 +  form.attachments.splice(i, 1)                                
+      66 +  refreshDocs()                                                
+      67 +}                                                              
+      68 +                                                               
+      69 +const removeDoc = async (id: number) => {                      
+      70 +  await deleteDoc(id)                                          
+      71 +  refreshDocs()                                                
+      72 +}                                                              
+      73 +                                                               
+      74  const onSave = async () => { await saveDraft(form); showToast({
+           type: 'success', message: '草稿已保存' }) }
+      75  const onSubmit = async () => {
+      76    await submitCase(form)
+
+● Now update the step-4 attachment UI to actually trigger uploads and show
+  status:
+
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 59 lines, removed 7 lines
+      149          </div>
+      150  
+      151          <div v-if="step === 4" class="space-y-3">
+      152 -          <div class="text-sm text-text-2">附件 · 拖拽上传或点
+          -击</div>                                                      
+      153 -          <div class="border-2 border-dashed border-border rou
+          -nded-card py-10 flex flex-col items-center justify-center text
+          --text-2 hover:border-accent transition cursor-pointer">       
+      154 -            <Camera class="w-8 h-8" />                        
+      155 -            <div class="mt-2 text-sm">点击拍照 / 选择图片 / 视
+          -频 / PDF</div>                                                
+      156 -            <div class="text-xs opacity-70 mono mt-1">单文件 ≤
+          - 50MB</div>                                                   
+      152 +          <div class="text-sm text-text-2 flex items-center ju
+          +stify-between">                                               
+      153 +            <span>知识库文档（PDF / DOCX / TXT / MD，会真实入 
+          +库并向量化）</span>                                           
+      154 +            <span class="mono text-xs text-text-2">单文件 ≤ 50
+          +MB</span>                                                     
+      155            </div>
+      156 +          <div @click="fileInput?.click()"                    
+      157 +               class="border-2 border-dashed border-border rou
+          +nded-card py-10 flex flex-col items-center justify-center text
+          +-text-2 hover:border-accent transition cursor-pointer">       
+      158 +            <FileText class="w-8 h-8" />                      
+      159 +            <div class="mt-2 text-sm">点击选择文档上传至知识库
+          +</div>                                                        
+      160 +            <div class="text-xs opacity-70 mono mt-1">{{ ALLOW
+          +ED.map(e => '.' + e).join(' / ') }}</div>                     
+      161 +          </div>                                              
+      162 +          <input ref="fileInput" type="file" multiple class="h
+          +idden"                                                        
+      163 +                 :accept="ALLOWED.map(e => '.' + e).join(',')"
+          + @change="onPickFiles" />                                     
+      164 +                                                              
+      165            <div class="flex gap-2">
+      159 -            <button class="flex-1 h-10 rounded-btn bg-bg borde
+          -r border-border flex items-center justify-center gap-1 text-sm
+          -"><Camera class="w-4 h-4" /> 拍照</button>                    
+      160 -            <button class="flex-1 h-10 rounded-btn bg-bg borde
+          -r border-border flex items-center justify-center gap-1 text-sm
+          -"><Mic class="w-4 h-4" /> 语音转文字</button>                 
+      166 +            <button type="button" class="flex-1 h-10 rounded-b
+          +tn bg-bg border border-border flex items-center justify-center
+          + gap-1 text-sm">                                              
+      167 +              <Camera class="w-4 h-4" /> 拍照（仅占位）       
+      168 +            </button>                                         
+      169 +            <button type="button" class="flex-1 h-10 rounded-b
+          +tn bg-bg border border-border flex items-center justify-center
+          + gap-1 text-sm">                                              
+      170 +              <Mic class="w-4 h-4" /> 语音转文字              
+      171 +            </button>                                         
+      172            </div>
+      173 +                                                              
+      174 +          <!-- 本次上传记录 -->                               
+      175 +          <ul v-if="form.attachments.length" class="space-y-1.
+          +5">                                                           
+      176 +            <li v-for="(a, i) in form.attachments" :key="i"   
+      177 +                class="flex items-center gap-2 px-3 py-2 round
+          +ed-btn border border-border bg-bg text-sm">                   
+      178 +              <Loader v-if="a.status === 'uploading'" class="w
+          +-4 h-4 animate-spin text-accent" />                           
+      179 +              <FileText v-else class="w-4 h-4" :class="a.statu
+          +s === 'done' ? 'text-success' : 'text-danger'" />             
+      180 +              <span class="flex-1 truncate">{{ a.name }}</span
+          +>                                                             
+      181 +              <span v-if="a.status === 'uploading'" class="tex
+          +t-xs text-text-2">上传中…</span>                              
+      182 +              <span v-else-if="a.status === 'done'" class="tex
+          +t-xs text-success mono">#{{ a.docId }} · {{ a.chunks }} chunks
+          +</span>                                                       
+      183 +              <span v-else class="text-xs text-danger">失败</s
+          +pan>                                                          
+      184 +              <button type="button" class="text-text-2 hover:t
+          +ext-danger" @click="removeAttachment(i)">                     
+      185 +                <Trash2 class="w-4 h-4" />                    
+      186 +              </button>                                       
+      187 +            </li>                                             
+      188 +          </ul>                                               
+      189 +                                                              
+      190 +          <!-- 知识库已有文档（来自 /api/kb/list） -->        
+      191 +          <section v-if="docs.length" class="industrial-card p
+          +-3 mt-2">                                                     
+      192 +            <div class="flex items-center justify-between mb-2
+          +">                                                            
+      193 +              <div class="text-sm font-semibold flex items-cen
+          +ter gap-1">                                                   
+      194 +                <FileText class="w-4 h-4 text-accent" /> 知识 
+          +库文档（{{ docs.length }}）                                   
+      195 +              </div>                                          
+      196 +              <button type="button" class="text-xs text-text-2
+          + hover:text-accent" @click="refreshDocs">刷新</button>        
+      197 +            </div>                                            
+      198 +            <ul class="divide-y divide-border max-h-64 overflo
+          +w-auto">                                                      
+      199 +              <li v-for="d in docs" :key="d.id"               
+      200 +                  class="py-2 flex items-center gap-2 text-sm"
+          +>                                                             
+      201 +                <span class="mono text-xs text-text-2 w-10">#{
+          +{ d.id }}</span>                                              
+      202 +                <span class="flex-1 truncate">{{ d.title }}</s
+          +pan>                                                          
+      203 +                <span class="px-1.5 py-0.5 rounded text-[10px]
+          + bg-bg border border-border mono">{{ d.type }}</span>         
+      204 +                <span class="px-1.5 py-0.5 rounded text-[10px]
+          +"                                                             
+      205 +                      :class="d.status === 'ready' ? 'bg-succe
+          +ss/10 text-success' : 'bg-warning/10 text-warning'">          
+      206 +                  {{ d.status }}                              
+      207 +                </span>                                       
+      208 +                <button type="button" class="text-text-2 hover
+          +:text-danger ml-1" @click="removeDoc(d.id)">                  
+      209 +                  <Trash2 class="w-4 h-4" />                  
+      210 +                </button>                                     
+      211 +              </li>                                           
+      212 +            </ul>                                             
+      213 +          </section>                                          
+      214          </div>
+      215  
+      216          <!-- 步骤切换 -->
+
+● Now add a "新建工单" button to WorkList. Backend POST /api/ticket
+  synchronously calls a large model and may take 10–30s, so the dialog needs a
+  loading state.
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 31 lines, removed 4 lines
+       1  <script setup lang="ts">
+       2 -import { onMounted, ref, computed } from 'vue'                 
+       2 +import { onMounted, ref, computed, reactive } from 'vue'       
+       3  import { useRouter } from 'vue-router'
+       4 -import { listFlows, type WorkItem } from '@/api/workflow'      
+       4 +import { listFlows, createTicket, type WorkItem } from '@/api/w
+         +orkflow'                                                       
+       5  import { useDevice } from '@/composables/useDevice'
+       6 +import { showToast, showFailToast } from 'vant'                
+       7  import {
+       7 -  ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, 
+         -Filter                                                         
+       8 +  ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, 
+         +Filter,                                                        
+       9 +  Plus, Loader, X, Sparkles                                    
+      10  } from 'lucide-vue-next'
+      11  
+      12  const router = useRouter()
+     ...
+      16  const status = ref<'all' | '未开始' | '进行中' | '已完成'>('all
+          ')
+      17  const q = ref('')
+      18  
+      17 -onMounted(async () => { list.value = await listFlows() })      
+      19 +const refresh = async () => { list.value = await listFlows() } 
+      20 +onMounted(refresh)                                             
+      21  
+      22  const filtered = computed(() => list.value.filter(it =>
+      23    (status.value === 'all' || it.status === status.value) &&
+     ...
+      26  
+      27  const open = (it: WorkItem) => router.push(`/workflow/${it.id}`
+          )
+      28  
+      29 +/* —— 新建工单（POST /api/ticket，AI 同步生成检修步骤） —— */  
+      30 +const showCreate = ref(false)                                  
+      31 +const creating = ref(false)                                    
+      32 +const draft = reactive({ device: '', fault: '' })              
+      33 +const openCreate = () => { draft.device = ''; draft.fault = '';
+         + showCreate.value = true }                                     
+      34 +const submitCreate = async () => {                             
+      35 +  if (!draft.device.trim() || !draft.fault.trim()) {           
+      36 +    showFailToast('请填写设备与故障描述')                      
+      37 +    return                                                     
+      38 +  }                                                            
+      39 +  creating.value = true                                        
+      40 +  try {                                                        
+      41 +    const res = await createTicket({ device: draft.device.trim(
+         +), fault: draft.fault.trim() })                                
+      42 +    showToast({ type: 'success', message: 'AI 已生成检修方案' }
+         +)                                                              
+      43 +    showCreate.value = false                                   
+      44 +    await refresh()                                            
+      45 +    router.push(`/workflow/t-${res.id}`)                       
+      46 +  } catch (e) {                                                
+      47 +    showFailToast('创建失败：请确认后端已启动并已登录')        
+      48 +  } finally {                                                  
+      49 +    creating.value = false                                     
+      50 +  }                                                            
+      51 +}                                                              
+      52 +                                                               
+      53  const STATUS_CLS: Record<string, string> = {
+      54    '未开始': 'bg-bg text-text-2 border-border',
+      55    '进行中': 'bg-accent/10 text-accent border-accent/30',
+
+● Now add the "新建工单" button to PC and mobile headers, plus a shared dialog
+  at the bottom of the template:
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 10 lines, removed 4 lines
+      65  <template>
+      66    <!-- ==================== PC 列表 ==================== -->
+      67    <div v-if="isPC" class="p-6 max-w-[1400px] mx-auto">
+      68 -    <header class="mb-4">                                      
+      69 -      <div class="text-xs text-text-2">作业指引 / 列表</div>   
+      70 -      <h1 class="text-2xl font-bold text-primary mt-1">作业指引
+         -</h1>                                                          
+      71 -      <div class="text-sm text-text-2 mt-1">选择一个作业开始标 
+         -准化检修流程</div>                                             
+      68 +    <header class="mb-4 flex items-end justify-between gap-4"> 
+      69 +      <div>                                                    
+      70 +        <div class="text-xs text-text-2">作业指引 / 列表</div> 
+      71 +        <h1 class="text-2xl font-bold text-primary mt-1">作业指
+         +引</h1>                                                        
+      72 +        <div class="text-sm text-text-2 mt-1">选择一个作业开始 
+         +标准化检修流程</div>                                           
+      73 +      </div>                                                   
+      74 +      <button @click="openCreate"                              
+      75 +              class="h-10 px-4 rounded-btn bg-accent hover:bg-a
+         +ccent-2 text-white font-semibold flex items-center gap-2 ai-shi
+         +ne">                                                           
+      76 +        <Plus class="w-4 h-4" /> 新建 AI 工单                  
+      77 +      </button>                                                
+      78      </header>
+      79  
+      80      <!-- 过滤区 -->
+
+● Update(src/views/workflow/WorkList.vue)  ⎿  Added 9 lines, removed 3 lines
+      146  
+      147    <!-- ==================== 移动端列表 ==================== --
+           >
+      148    <div v-else class="p-3 space-y-3">
+      149 -    <header class="industrial-card p-4">                      
+      150 -      <h1 class="text-lg font-bold text-primary">作业指引</h1>
+      151 -      <div class="text-xs text-text-2 mt-1">共 {{ list.length 
+          -}} 个作业 · 点击进入</div>                                    
+      149 +    <header class="industrial-card p-4 flex items-center gap-3
+          +">                                                            
+      150 +      <div class="flex-1 min-w-0">                            
+      151 +        <h1 class="text-lg font-bold text-primary">作业指引</h
+          +1>                                                            
+      152 +        <div class="text-xs text-text-2 mt-1">共 {{ list.lengt
+          +h }} 个作业 · 点击进入</div>                                  
+      153 +      </div>                                                  
+      154 +      <button @click="openCreate"                             
+      155 +              class="h-9 px-3 rounded-btn bg-accent text-white
+          + text-sm font-semibold flex items-center gap-1 flex-shrink-0">
+      156 +        <Plus class="w-4 h-4" /> 新建                         
+      157 +      </button>                                               
+      158      </header>
+      159  
+      160      <!-- 过滤 -->
+
+● Now add the dialog. The template's outermost is two sibling div (PC / Mobile).
+  Vue 3 supports multi-root templates, so I can append the dialog after the
+  mobile div.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 40 lines
+      202        </li>
+      203      </ul>
+      204    </div>
+      205 +                                                              
+      206 +  <!-- ==================== 新建工单弹窗 ==================== 
+          +-->                                                           
+      207 +  <div v-if="showCreate" class="fixed inset-0 z-40 bg-black/40
+          + flex items-center justify-center p-4"                        
+      208 +       @click.self="!creating && (showCreate = false)">       
+      209 +    <div class="industrial-card w-full max-w-md bg-card overfl
+          +ow-hidden">                                                   
+      210 +      <header class="px-5 py-3 border-b border-border flex ite
+          +ms-center gap-2">                                             
+      211 +        <Sparkles class="w-4 h-4 text-ai" />                  
+      212 +        <span class="font-semibold flex-1">AI 工单 · 自动生成 
+          +检修步骤</span>                                               
+      213 +        <button class="text-text-2 hover:text-danger" :disable
+          +d="creating" @click="showCreate = false">                     
+      214 +          <X class="w-4 h-4" />                               
+      215 +        </button>                                             
+      216 +      </header>                                               
+      217 +      <div class="p-5 space-y-3">                             
+      218 +        <div>                                                 
+      219 +          <div class="text-sm text-text-2 mb-1">设备</div>    
+      220 +          <input v-model="draft.device" placeholder="如：空压 
+          +机-XG200"                                                     
+      221 +                 :disabled="creating"                         
+      222 +                 class="w-full h-10 px-3 rounded-btn border bo
+          +rder-border bg-bg outline-none focus:border-accent focus:bg-ca
+          +rd mono" />                                                   
+      223 +        </div>                                                
+      224 +        <div>                                                 
+      225 +          <div class="text-sm text-text-2 mb-1">故障描述</div>
+      226 +          <textarea v-model="draft.fault" rows="4" placeholder
+          +="一句话描述故障现象，AI 会按【风险预检/工具准备/检修步骤/验收
+          +标准】生成方案"                                               
+      227 +                    :disabled="creating"                      
+      228 +                    class="w-full px-3 py-2 rounded-btn border
+          + border-border bg-bg outline-none focus:border-accent focus:bg
+          +-card resize-none"></textarea>                                
+      229 +        </div>                                                
+      230 +        <div class="text-[11px] text-text-2 leading-relaxed"> 
+      231 +          后端会同步调用大模型，单次生成约 5–30 秒，请耐心等待
+          +。                                                            
+      232 +        </div>                                                
+      233 +      </div>                                                  
+      234 +      <footer class="px-5 py-3 border-t border-border flex jus
+          +tify-end gap-2">                                              
+      235 +        <button class="h-9 px-4 rounded-btn border border-bord
+          +er" :disabled="creating" @click="showCreate = false">取消</but
+          +ton>                                                          
+      236 +        <button class="h-9 px-5 rounded-btn bg-accent hover:bg
+          +-accent-2 text-white font-semibold flex items-center gap-2 dis
+          +abled:opacity-60"                                             
+      237 +                :disabled="creating" @click="submitCreate">   
+      238 +          <Loader v-if="creating" class="w-4 h-4 animate-spin"
+          + />                                                           
+      239 +          <Sparkles v-else class="w-4 h-4" />                 
+      240 +          {{ creating ? 'AI 生成中…' : '生成检修方案' }}      
+      241 +        </button>                                             
+      242 +      </footer>                                               
+      243 +    </div>                                                    
+      244 +  </div>                                                      
+      245  </template>
+
+● Now let me verify the build by running a TypeScript check.
+
+● Bash(npx vue-tsc --noEmit 2>&1 | head -120)
+  ⎿  src/api/auth.ts(62,7): error TS2322: Type 'Promise<AxiosResponse<ApiRe
+     sponse<BackendTokenOut>, any, {}>>' is not assignable to type 'Promise
+     <{ data: BackendTokenOut; }>'.
+     … +12 lines (ctrl+o to expand)
+  ⎿  (timeout 3m)
+
+  Thought for 9s (ctrl+o to expand)
+
+● Right — the post/get/del helpers wrap T in ApiResponse<T>. I need to use the
+  raw axios request instance for backend calls.
+
+● Update(src/api/auth.ts)
+  ⎿  Added 1 line, removed 1 line
+      1 -import { post, rawCall } from './request'                       
+      1 +import { request, rawCall } from './request'                    
+      2  import type { Role } from '@/utils/permission'
+      3  import { DEMO_ACCOUNTS } from '@/utils/permission'
+      4  
+
+● Update(src/api/auth.ts)
+  ⎿  Added 1 line, removed 1 line
+      59  export const login = async (p: LoginPayload): Promise<LoginResu
+          lt> => {
+      60    try {
+      61      const data = await rawCall<BackendTokenOut>(() =>
+      62 -      post<BackendTokenOut>('/auth/login', { username: p.userna
+         -me, password: p.password })                                    
+      62 +      request.post<BackendTokenOut>('/auth/login', { username: 
+         +p.username, password: p.password })                            
+      63      )
+      64      const role = mapBackendRole(data.role)
+      65      const demo = DEMO_ACCOUNTS[role]
+
+● Update(src/api/auth.ts)
+  ⎿  Added 1 line, removed 1 line
+      82  export const register = async (p: LoginPayload & { phone?: stri
+          ng }): Promise<LoginResult> => {
+      83    try {
+      84      const data = await rawCall<BackendTokenOut>(() =>
+      85 -      post<BackendTokenOut>('/auth/register', { username: p.use
+         -rname, password: p.password })                                 
+      85 +      request.post<BackendTokenOut>('/auth/register', { usernam
+         +e: p.username, password: p.password })                         
+      86      )
+      87      const role = mapBackendRole(data.role)
+      88      const demo = DEMO_ACCOUNTS[role]
+
+● Same for search.ts (already uses request.post so OK). Let me re-check.
+
+● Bash(npx vue-tsc --noEmit 2>&1 | head -60)
+  ⎿  (No output)
+  ⎿  (timeout 3m)
+
+● Type-check passes. Let me also do a quick build sanity-check.
+
+● Bash(npx vite build 2>&1 | tail -30)
+  ⎿  dist/assets/box-BVjemQqV.js
+          0.49 kB │ gzip:   0.33 kB
+     dist/assets/file-text-CMQG_Ihn.js
+     … +37 lines (ctrl+o to expand)
+  ⎿  (timeout 4m)
+
+● Clean build, only the existing chunk-size warning. All done. Let me give the
+  user a clear summary.
+
+  ---
+  已完成：前端 ⇆ 后端 12 个接口对接
+
+  按 NEEDS/后端环境搭建及接口文档.md 的口径接好了 4 个真实模块，并保留了原有的
+  mock 兜底，所以后端不可用时演示态仍然完整。
+
+  1) 网络层
+
+  - vite.config.ts — 加了 /api → http://127.0.0.1:8000 的开发代理，前端 5173
+  直接打通后端 8000。
+  - src/api/request.ts — 新增 rawCall<T>()：FastAPI 直接返回 JSON 体（不裹
+  {code,msg,data}），用这个 helper 解构。原来的 safeCall 留给 mock-only 接口。
+
+  2) 4 个真实模块
+
+  文件: src/api/auth.ts
+  后端接口: POST /api/auth/login · /register
+  说明: {access_token, role} → 前端
+    LoginResult；role（worker/leader/admin）映射到
+    frontline/auditor/admin；接口失败时退回原来的角色选择 mock。
+  ────────────────────────────────────────
+  文件: src/api/kb.ts（新建）
+  后端接口: POST /api/kb/upload · GET /api/kb/list · DELETE /api/kb/{id}
+  说明: multipart/form-data，超时放宽到 120s（向量化耗时长）。
+  ────────────────────────────────────────
+  文件: src/api/ticket.ts（新建）
+  后端接口: 工单四件套
+  说明: 创建工单超时设到 60s，因为后端会同步走大模型。
+  ────────────────────────────────────────
+  文件: src/api/search.ts
+  后端接口: POST /api/chat/query
+  说明: multimodalSearch 改成 form-data {question, image}；answer →
+    summary，sources → hits（手册类型，按顺序衰减相似度）；causes
+    后端不返回，沿用前端兜底。
+
+  3) 工单 ↔ 作业指引适配（src/api/workflow.ts）
+
+  - listFlows() — 拼接真实工单（前缀 t-）+ 原 mock SOP 列表，工单始终排前面。
+  - getFlow(id) — id 以 t- 开头时去拉 /api/ticket/{tid}，其余走 mock。steps.raw
+  解析顺序：JSON 数组 → 四段表头切分（【风险预检/工具准备/检修步骤/验收标准】）→
+  整段兜底成一步，并把每段的换行/分号自动拆成校验点。
+
+  4) UI 改动（最小）
+
+  - src/views/search/Pc.vue / Mobile.vue / MobileInputBar.vue — 现在保留 File
+  引用（不只是 blob URL），第一张图作为 image 字段发到后端。
+  - src/views/knowledge/Upload.vue 第 4 步「附件」 — 改成真实知识库上传：选
+  PDF/DOCX/TXT/MD → /api/kb/upload，并展示 doc_id/chunks
+  与已入库文档清单（带删除）。
+  - src/views/workflow/WorkList.vue — 顶部加了 "新建 AI 工单" 按钮（PC
+  右上、移动端 header 右侧），点击弹窗收集 device + fault，提交后跳到
+  /workflow/t-<id>，自动加载 AI 生成的步骤。
+
+  校验
+
+  - npx vue-tsc --noEmit ✅ 通过
+  - npx vite build ✅ 通过（只剩老的 chunk-size 提示）
+
+  后端启动后（conda activate sofeware && cd backend && uvicorn app.main:app 
+  --reload），跑前端 npm run dev，登录用 /api/auth/login、检索用
+  /api/chat/query、知识库上传用 /api/kb/upload、AI 工单走
+  /api/ticket，都已经是真实链路。
+
+✻ Sautéed for 13m 54s
+
+※ recap: 目标：把后端 12 个接口对接到前端。已完成 auth/kb/chat/ticket 全部真实接线、Vite 代理、UI 入口（新建 AI 工单、知识库上传），并通过类型检查与构建。下一步：让你启动后端（conda activate sofeware）和前端 npm run dev 实测一下。 (disable recaps in /config)
+
+❯ @NEEDS/FIX2.md 根据文档内容，在保持原有风格的前提下修复完善程序               
+  ⎿  Read NEEDS/FIX2.md (413 lines)
+
+  Thought for 29s (ctrl+o to expand)
+
+● Let me explore the relevant files first to plan the fixes.
+
+  Thought for 50s, searched for 1 pattern, read 8 files, listed 1 directory (ctrl+o to expand)
+
+● Now I have a clear plan. Let me set up tasks and execute.
+● Step 1 — auth + login pages: real register, drop role selector
+
+● First update auth.ts so register can pass role (backend currently doesn't
+  accept it, so we still send only username/password but the type allows the
+  field — register just signs up; the role assigned by backend defaults to
+  worker). The doc says "如果后端确实需要前端传 role，在注册时传即可" —
+  backend's LoginIn doesn't have role, so we silently ignore it but accept it in
+  the call signature (this also future-proofs for when backend is updated).
+
+  Actually, looking at backend auth.py again, it sets User.role to default
+  "worker". So we can't directly set role on register. That's OK — the doc says
+  role can be a UI hint. But our user store sets info.role from backend
+  response. So if a user registers expecting "admin", they'll actually get
+  "worker" until backend is updated. Acceptable per doc TODO note.
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● Login/register currently swallow all backend errors into mock fallback, which
+  hides "用户名已存在" / "账号或密码错误" from the user. Let me distinguish:
+  HTTP error → bubble up the message; network error / no response → fall back to
+  mock.
+
+● Write(src/api/auth.ts)
+  ⎿  Added 52 lines, removed 15 lines
+      1 -import { request, rawCall } from './request'                    
+      1 +import { AxiosError } from 'axios'                              
+      2 +import { request } from './request'                             
+      3  import type { Role } from '@/utils/permission'
+      4  import { DEMO_ACCOUNTS } from '@/utils/permission'
+      5  
+     ...
+      15    role: string  // worker / leader / admin
+      16  }
+      17  
+      17 -/** 后端 role 字段映射到前端权限角色 */                        
+      18 +/** 后端 role 字段 → 前端权限角色 */                           
+      19  const mapBackendRole = (r: string | undefined): Role => {
+      20    switch ((r || '').toLowerCase()) {
+      21      case 'admin':   return 'admin'
+     ...
+      54  }
+      55  
+      56  /**
+      56 - * 登录：优先真实后端 /api/auth/login（返回 {access_token, role
+         -}），                                                          
+      57 - * 网络不通或后端 401 失败时降级为本地 mock，保证演示态可用。  
+      57 + * 错误归一化：                                                
+      58 + * - 网络错误 / 后端不可达：抛 NETWORK 标志，调用方决定是否降级
+         + mock                                                          
+      59 + * - HTTP 业务错误（如 401 / 400）：抛后端 detail 文本，UI 直接
+         +展示                                                           
+      60   */
+      61 +class ApiError extends Error {                                 
+      62 +  isNetwork: boolean                                           
+      63 +  status?: number                                              
+      64 +  constructor(msg: string, isNetwork: boolean, status?: number)
+         + {                                                             
+      65 +    super(msg)                                                 
+      66 +    this.isNetwork = isNetwork                                 
+      67 +    this.status = status                                       
+      68 +  }                                                            
+      69 +}                                                              
+      70 +                                                               
+      71 +function normalizeError(e: unknown): ApiError {                
+      72 +  if (e instanceof AxiosError) {                               
+      73 +    if (!e.response) return new ApiError('后端不可达', true)   
+      74 +    const data = e.response.data as any                        
+      75 +    const detail = (data && (data.detail || data.message)) || `
+         +请求失败（${e.response.status}）`                              
+      76 +    return new ApiError(String(detail), false, e.response.statu
+         +s)                                                             
+      77 +  }                                                            
+      78 +  return new ApiError((e as Error)?.message || '未知错误', fals
+         +e)                                                             
+      79 +}                                                              
+      80 +                                                               
+      81 +/**                                                            
+      82 + * 登录：先打真实后端；                                        
+      83 + * - 后端 401 / 400 → 抛后端 message，UI 显示"账号或密码错误"  
+      84 + * - 网络不可达 → 静默降级 mock，让演示态可用                  
+      85 + */                                                            
+      86  export const login = async (p: LoginPayload): Promise<LoginResu
+          lt> => {
+      87    try {
+      61 -    const data = await rawCall<BackendTokenOut>(() =>          
+      62 -      request.post<BackendTokenOut>('/auth/login', { username: 
+         -p.username, password: p.password })                            
+      63 -    )                                                          
+      88 +    const { data } = await request.post<BackendTokenOut>('/auth
+         +/login', {                                                     
+      89 +      username: p.username, password: p.password               
+      90 +    })                                                         
+      91      const role = mapBackendRole(data.role)
+      92      const demo = DEMO_ACCOUNTS[role]
+      93      return {
+     ...
+      100        }
+      101      }
+      102    } catch (e) {
+       76 -    if (import.meta.env.DEV) console.warn('[auth.login] fallba
+          -ck to mock:', e)                                              
+       77 -    return buildMockResult(p)                                 
+      103 +    const err = normalizeError(e)                             
+      104 +    if (err.isNetwork) {                                      
+      105 +      if (import.meta.env.DEV) console.warn('[auth.login] back
+          +end unreachable, fallback to mock')                           
+      106 +      return buildMockResult(p)                               
+      107 +    }                                                         
+      108 +    throw err                                                 
+      109    }
+      110  }
+      111  
+       81 -/** 注册：直接走真实后端，失败时也回退 mock */                
+      112 +/** 注册：HTTP 错误（用户名已存在等）抛给 UI；网络不可达走 moc
+          +k */                                                          
+      113  export const register = async (p: LoginPayload & { phone?: str
+           ing }): Promise<LoginResult> => {
+      114    try {
+       84 -    const data = await rawCall<BackendTokenOut>(() =>         
+       85 -      request.post<BackendTokenOut>('/auth/register', { userna
+          -me: p.username, password: p.password })                       
+       86 -    )                                                         
+      115 +    const { data } = await request.post<BackendTokenOut>('/aut
+          +h/register', {                                                
+      116 +      username: p.username, password: p.password              
+      117 +    })                                                        
+      118      const role = mapBackendRole(data.role)
+      119      const demo = DEMO_ACCOUNTS[role]
+      120      return {
+     ...
+      122        user: { id: 'u-' + p.username, name: p.username, role, w
+           orkshop: demo?.workshop }
+      123      }
+      124    } catch (e) {
+       94 -    if (import.meta.env.DEV) console.warn('[auth.register] fal
+          -lback to mock:', e)                                           
+       95 -    return buildMockResult(p)                                 
+      125 +    const err = normalizeError(e)                             
+      126 +    if (err.isNetwork) {                                      
+      127 +      if (import.meta.env.DEV) console.warn('[auth.register] b
+          +ackend unreachable, fallback to mock')                        
+      128 +      return buildMockResult(p)                               
+      129 +    }                                                         
+      130 +    throw err                                                 
+      131    }
+      132  }
+      133  
+     ...
+      136  
+      137  /** SSO 接口：后端尚未实现，保留空实现便于后续替换 */
+      138  export const ssoLogin = async () => ({ ok: true })
+      139 +                                                              
+      140 +export { ApiError }                                           
+
+  Thought for 17s (ctrl+o to expand)
+
+● There's a small interceptor bug — on 401, redirect uses location.pathname but
+  routing is hash mode (/#/login), so pathname is always /. The redirect would
+  clobber the URL. Also, on auth endpoints we shouldn't auto-redirect (the page
+  needs to show the error). Let me fix the interceptor.
+
+● Update(src/api/request.ts)
+  ⎿  Added 6 lines, removed 2 lines
+      25    res => res,
+      26    err => {
+      27      const status = err?.response?.status
+      28 -    if (status === 401) {                                      
+      28 +    const url = String(err?.config?.url || '')                 
+      29 +    const isAuthEndpoint = url.includes('/auth/login') || url.i
+         +ncludes('/auth/register')                                      
+      30 +    if (status === 401 && !isAuthEndpoint) {                   
+      31        storage.remove(TOKEN_KEY)
+      30 -      if (location.pathname !== '/login') location.href = '/log
+         -in'                                                            
+      32 +      // 注意：路由是 hash 模式，必须改 hash 而不是 pathname   
+      33 +      const onLogin = location.hash.startsWith('#/login')      
+      34 +      if (!onLogin) location.hash = '#/login'                  
+      35      }
+      36      // 仅在网络错误时静默；业务错误由调用方处理
+      37      if (!err?.response) {
+
+● Now add register method to the user store:
+
+● Update(src/stores/user.ts)
+  ⎿  Added 6 lines, removed 1 line
+      33      return res
+      34    }
+      35  
+      36 +  /** 注册：成功后只保存账号回显，不自动登录（按 FIX2 要求注册 
+         +成功 → 跳回登录） */                                           
+      37 +  const register = async (username: string, password: string, _
+         +role?: Role) => {                                              
+      38 +    return authApi.register({ username, password })            
+      39 +  }                                                            
+      40 +                                                               
+      41    const logout = async () => {
+      42      try { await authApi.logout() } catch {}
+      43      token.value = ''
+     ...
+      46      storage.remove('app:user')
+      47    }
+      48  
+      44 -  return { token, info, isLoggedIn, role, isAdmin, isAuditor, i
+         -sWorker, isGuest, login, logout }                              
+      49 +  return { token, info, isLoggedIn, role, isAdmin, isAuditor, i
+         +sWorker, isGuest, login, register, logout }                    
+      50  })
+
+● Now rewrite Login Pc.vue with mode toggle (login / register) and drop the role
+  selector from login:
+
+● Write(src/views/login/Pc.vue)
+  ⎿  Added 102 lines, removed 69 lines
+       1  <script setup lang="ts">
+       2  import { ref, computed } from 'vue'
+       3  import { useRouter } from 'vue-router'
+       4 -import { Lock, User, Loader, Cog, ChevronDown } from 'lucide-vu
+         -e-next'                                                        
+       4 +import { Lock, User, Loader, Cog, ChevronLeft } from 'lucide-vu
+         +e-next'                                                        
+       5  import { useUserStore } from '@/stores/user'
+       6 -import { showToast } from 'vant'                               
+       7 -import { ROLE_LABEL, DEMO_ACCOUNTS, type Role } from '@/utils/p
+         -ermission'                                                     
+       6 +import { showToast, showFailToast } from 'vant'                
+       7 +import { ROLE_LABEL, type Role } from '@/utils/permission'     
+       8  
+       9  const router = useRouter()
+      10  const user = useUserStore()
+      11  
+      12 -const username = ref('lishifu')                                
+      13 -const password = ref('demo123')                                
+      12 +type Mode = 'login' | 'register'                               
+      13 +const mode = ref<Mode>('login')                                
+      14 +                                                               
+      15 +const username = ref('')                                       
+      16 +const password = ref('')                                       
+      17 +const confirm = ref('')                                        
+      18  const remember = ref(true)
+      15 -const loading = ref(false)                                     
+      19  const role = ref<Role>('frontline')
+      17 -const showRoleMenu = ref(false)                                
+      20 +const loading = ref(false)                                     
+      21  
+      19 -const roles: Role[] = ['frontline', 'auditor', 'admin', 'guest'
+         -]                                                              
+      22 +/** 注册可选角色：访客不开放注册 */                            
+      23 +const registerRoles: Role[] = ['frontline', 'auditor', 'admin']
+      24  
+      21 -const currentDemo = computed(() => DEMO_ACCOUNTS[role.value])  
+      25 +const switchTo = (m: Mode) => {                                
+      26 +  mode.value = m                                               
+      27 +  password.value = ''                                          
+      28 +  confirm.value = ''                                           
+      29 +  loading.value = false                                        
+      30 +}                                                              
+      31  
+      32  const onLogin = async () => {
+      33    if (!username.value || !password.value) { showToast('请填写账
+          号和密码'); return }
+      34    loading.value = true
+      35    try {
+      27 -    await user.login(username.value, password.value, remember.v
+         -alue, role.value)                                              
+      28 -    showToast({ type: 'success', message: '登录成功 · ' + ROLE_
+         -LABEL[role.value] })                                           
+      29 -    router.push('/dashboard')                                  
+      36 +    const res = await user.login(username.value, password.value
+         +, remember.value)                                              
+      37 +    showToast({ type: 'success', message: '登录成功 · ' + ROLE_
+         +LABEL[res.user.role] })                                        
+      38 +    router.push('/')                                           
+      39 +  } catch (e: any) {                                           
+      40 +    showFailToast(e?.message || '登录失败')                    
+      41    } finally { loading.value = false }
+      42  }
+      43  
+      33 -const pickRole = (r: Role) => {                                
+      34 -  role.value = r                                               
+      35 -  username.value = r          // 同步用户名,与 mock 匹配       
+      36 -  showRoleMenu.value = false                                   
+      44 +const onRegister = async () => {                               
+      45 +  if (!username.value || !password.value) { showToast('请填写账
+         +号和密码'); return }                                           
+      46 +  if (password.value.length < 6) { showFailToast('密码至少 6 位
+         +'); return }                                                   
+      47 +  if (password.value !== confirm.value) { showFailToast('两次密
+         +码不一致'); return }                                           
+      48 +  loading.value = true                                         
+      49 +  try {                                                        
+      50 +    await user.register(username.value, password.value, role.va
+         +lue)                                                           
+      51 +    showToast({ type: 'success', message: '注册成功，请登录' })
+      52 +    // 切回登录态，账号回填，密码清空（按 FIX2 流程）          
+      53 +    confirm.value = ''                                         
+      54 +    password.value = ''                                        
+      55 +    mode.value = 'login'                                       
+      56 +  } catch (e: any) {                                           
+      57 +    showFailToast(e?.message || '注册失败')                    
+      58 +  } finally { loading.value = false }                          
+      59  }
+      60 +                                                               
+      61 +const title = computed(() => mode.value === 'login' ? '欢迎回来
+         +' : '注册新账号')                                              
+      62 +const subtitle = computed(() => mode.value === 'login' ? '登录 
+         +后开始检修工作' : '注册后用账号密码登录系统')                  
+      63  </script>
+      64  
+      65  <template>
+     ...
+       89        </g>
+       90      </svg>
+       91  
+       67 -    <!-- 登录卡 -->                                           
+       92 +    <!-- 卡片 -->                                             
+       93      <div class="w-[420px] industrial-card p-8 relative z-10 sh
+           adow-float">
+       94 +      <!-- 注册时显示返回按钮 -->                             
+       95 +      <button v-if="mode === 'register'" type="button" @click=
+          +"switchTo('login')"                                           
+       96 +              class="absolute left-4 top-4 w-8 h-8 rounded-ful
+          +l hover:bg-bg flex items-center justify-center text-text-2 hov
+          +er:text-accent transition">                                   
+       97 +        <ChevronLeft class="w-4 h-4" />                       
+       98 +      </button>                                               
+       99 +                                                              
+      100        <div class="text-center mb-6">
+       70 -        <h1 class="text-2xl font-bold text-primary mb-1">欢迎 
+          -回来</h1>                                                     
+       71 -        <div class="text-sm text-text-2">登录后开始检修工作</d
+          -iv>                                                           
+      101 +        <h1 class="text-2xl font-bold text-primary mb-1">{{ ti
+          +tle }}</h1>                                                   
+      102 +        <div class="text-sm text-text-2">{{ subtitle }}</div> 
+      103        </div>
+      104  
+       74 -      <form @submit.prevent="onLogin" class="space-y-4">      
+       75 -        <!-- 演示角色选择 -->                                 
+       76 -        <div>                                                 
+       77 -          <div class="text-xs text-text-2 mb-1.5 flex items-ce
+          -nter gap-1">                                                  
+       78 -            <span>演示角色</span>                             
+       79 -            <span class="px-1.5 py-0.5 rounded bg-ai/10 text-a
+          -i text-[10px] mono">MOCK</span>                               
+       80 -          </div>                                              
+       81 -          <div class="relative">                              
+       82 -            <button type="button" @click="showRoleMenu = !show
+          -RoleMenu"                                                     
+       83 -                    class="w-full h-11 px-3 rounded-btn border
+          - border-border bg-bg text-left flex items-center gap-2 hover:b
+          -order-accent transition">                                     
+       84 -              <span class="w-7 h-7 rounded-full bg-accent/10 t
+          -ext-accent text-xs font-bold flex items-center justify-center"
+          ->                                                             
+       85 -                {{ ROLE_LABEL[role].slice(0,1) }}             
+       86 -              </span>                                         
+       87 -              <div class="flex-1 min-w-0">                    
+       88 -                <div class="text-sm font-medium">{{ ROLE_LABEL
+          -[role] }}</div>                                               
+       89 -                <div class="text-[11px] text-text-2 truncate">
+          -{{ currentDemo.workshop }}</div>                              
+       90 -              </div>                                          
+       91 -              <ChevronDown class="w-4 h-4 text-text-2" :class=
+          -"{ 'rotate-180': showRoleMenu }" />                           
+       92 -            </button>                                         
+       93 -            <transition name="fade">                          
+       94 -              <div v-if="showRoleMenu"                        
+       95 -                   class="absolute z-20 left-0 right-0 mt-1 in
+          -dustrial-card shadow-float overflow-hidden">                  
+       96 -                <button v-for="r in roles" :key="r" type="butt
+          -on"                                                           
+       97 -                        @click="pickRole(r)"                  
+       98 -                        class="w-full h-11 px-3 flex items-cen
+          -ter gap-2 text-left hover:bg-bg"                              
+       99 -                        :class="r === role ? 'bg-accent/5 text
+          --accent' : ''">                                               
+      100 -                  <span class="w-7 h-7 rounded-full bg-accent/
+          -10 text-accent text-xs font-bold flex items-center justify-cen
+          -ter">                                                         
+      101 -                    {{ ROLE_LABEL[r].slice(0,1) }}            
+      102 -                  </span>                                     
+      103 -                  <div class="flex-1 min-w-0">                
+      104 -                    <div class="text-sm font-medium">{{ ROLE_L
+          -ABEL[r] }}</div>                                              
+      105 -                    <div class="text-[11px] text-text-2 trunca
+          -te">{{ DEMO_ACCOUNTS[r].workshop }}</div>                     
+      106 -                  </div>                                      
+      107 -                </button>                                     
+      108 -              </div>                                          
+      109 -            </transition>                                     
+      110 -          </div>                                              
+      111 -        </div>                                                
+      112 -                                                              
+      105 +      <!-- 登录表单 -->                                       
+      106 +      <form v-if="mode === 'login'" @submit.prevent="onLogin" 
+          +class="space-y-4">                                            
+      107          <div class="relative">
+      108            <User class="absolute left-3 top-1/2 -translate-y-1/
+           2 w-4 h-4 text-text-2" />
+      115 -          <input v-model="username" type="text" placeholder=" 
+          -工号 / 用户名"                                                
+      109 +          <input v-model="username" type="text" placeholder=" 
+          +用户名"                                                       
+      110 +                 autocomplete="username"                      
+      111                   class="w-full h-11 pl-10 pr-3 rounded-btn bor
+           der border-border bg-bg outline-none focus:border-accent focus
+           :bg-card transition" />
+      112          </div>
+      113          <div class="relative">
+      114            <Lock class="absolute left-3 top-1/2 -translate-y-1/
+           2 w-4 h-4 text-text-2" />
+      115            <input v-model="password" type="password" placeholde
+           r="密码"
+      116 +                 autocomplete="current-password"              
+      117                   class="w-full h-11 pl-10 pr-3 rounded-btn bor
+           der border-border bg-bg outline-none focus:border-accent focus
+           :bg-card transition" />
+      118          </div>
+      119          <div class="flex items-center justify-between text-sm"
+           >
+     ...
+      121              <input v-model="remember" type="checkbox" class="a
+           ccent-accent" />
+      122              <span>记住我</span>
+      123            </label>
+      128 -          <a class="text-accent hover:text-accent-2">忘记密码?
+          -</a>                                                          
+      124 +          <a class="text-accent hover:text-accent-2 cursor-poi
+          +nter">忘记密码?</a>                                           
+      125          </div>
+      126          <button type="submit" :disabled="loading"
+      127                  class="w-full h-11 rounded-btn bg-accent hover
+           :bg-accent-2 text-white font-semibold transition flex items-ce
+           nter justify-center gap-2 disabled:opacity-60 ai-shine">
+     ...
+      130          </button>
+      131        </form>
+      132  
+      133 +      <!-- 注册表单 -->                                       
+      134 +      <form v-else @submit.prevent="onRegister" class="space-y
+          +-4">                                                          
+      135 +        <div class="relative">                                
+      136 +          <User class="absolute left-3 top-1/2 -translate-y-1/
+          +2 w-4 h-4 text-text-2" />                                     
+      137 +          <input v-model="username" type="text" placeholder=" 
+          +用户名（至少 3 位）"                                          
+      138 +                 autocomplete="username"                      
+      139 +                 class="w-full h-11 pl-10 pr-3 rounded-btn bor
+          +der border-border bg-bg outline-none focus:border-accent focus
+          +:bg-card transition" />                                       
+      140 +        </div>                                                
+      141 +        <div class="relative">                                
+      142 +          <Lock class="absolute left-3 top-1/2 -translate-y-1/
+          +2 w-4 h-4 text-text-2" />                                     
+      143 +          <input v-model="password" type="password" placeholde
+          +r="密码（至少 6 位）"                                         
+      144 +                 autocomplete="new-password"                  
+      145 +                 class="w-full h-11 pl-10 pr-3 rounded-btn bor
+          +der border-border bg-bg outline-none focus:border-accent focus
+          +:bg-card transition" />                                       
+      146 +        </div>                                                
+      147 +        <div class="relative">                                
+      148 +          <Lock class="absolute left-3 top-1/2 -translate-y-1/
+          +2 w-4 h-4 text-text-2" />                                     
+      149 +          <input v-model="confirm" type="password" placeholder
+          +="再次输入密码"                                               
+      150 +                 autocomplete="new-password"                  
+      151 +                 class="w-full h-11 pl-10 pr-3 rounded-btn bor
+          +der border-border bg-bg outline-none focus:border-accent focus
+          +:bg-card transition" />                                       
+      152 +        </div>                                                
+      153 +        <div>                                                 
+      154 +          <div class="text-xs text-text-2 mb-1.5">期望角色（实
+          +际角色由管理员分配，默认一线检修员）</div>                    
+      155 +          <div class="grid grid-cols-3 gap-2">                
+      156 +            <button v-for="r in registerRoles" :key="r" type="
+          +button"                                                       
+      157 +                    @click="role = r"                         
+      158 +                    :class="['h-10 rounded-btn border text-sm 
+          +transition',                                                  
+      159 +                             role === r ? 'border-accent bg-ac
+          +cent/5 text-accent font-semibold' : 'border-border text-text-2
+          + hover:border-accent']">                                      
+      160 +              {{ ROLE_LABEL[r] }}                             
+      161 +            </button>                                         
+      162 +          </div>                                              
+      163 +        </div>                                                
+      164 +        <button type="submit" :disabled="loading"             
+      165 +                class="w-full h-11 rounded-btn bg-accent hover
+          +:bg-accent-2 text-white font-semibold transition flex items-ce
+          +nter justify-center gap-2 disabled:opacity-60 ai-shine">      
+      166 +          <Loader v-if="loading" class="w-4 h-4 animate-spin" 
+          +/>                                                            
+      167 +          <span>{{ loading ? '注册中…' : '注 册' }}</span>    
+      168 +        </button>                                             
+      169 +      </form>                                                 
+      170 +                                                              
+      171        <div class="mt-6 pt-4 border-t border-border flex items-
+           center justify-between text-sm">
+      138 -        <a class="text-text-2 hover:text-accent">企业 SSO 单点
+          -登录</a>                                                      
+      139 -        <a class="text-text-2 hover:text-accent">注册新账号 →<
+          -/a>                                                           
+      172 +        <span class="text-text-2">{{ mode === 'login' ? '还没 
+          +有账号?' : '已有账号?' }}</span>                              
+      173 +        <a class="text-accent hover:text-accent-2 cursor-point
+          +er font-medium"                                               
+      174 +           @click="switchTo(mode === 'login' ? 'register' : 'l
+          +ogin')">                                                      
+      175 +          {{ mode === 'login' ? '立即注册 →' : '← 返回登录' }}
+      176 +        </a>                                                  
+      177        </div>
+      178  
+      142 -      <div class="mt-6 px-3 py-2 bg-bg rounded-btn text-xs tex
+          -t-text-2">                                                    
+      143 -        <div class="font-medium text-text mb-1">演示模式</div>
+      144 -        <div>选择角色后,输入任意用户名和密码即可登录;不同角色 
+          -看到的菜单不同</div>                                          
+      145 -        <div class="mt-1 mono text-[11px] opacity-70">        
+      146 -          admin / auditor / worker / guest · 任意密码         
+      147 -        </div>                                                
+      179 +      <div class="mt-4 px-3 py-2 bg-bg rounded-btn text-xs tex
+          +t-text-2">                                                    
+      180 +        <div class="font-medium text-text mb-1">提示</div>    
+      181 +        <div>账号会真实写入后端数据库；后端不可达时会自动进入 
+          +演示模式。</div>                                              
+      182        </div>
+      183      </div>
+      184  
+     ...
+      192  <style scoped>
+      193  .fade-enter-active, .fade-leave-active { transition: opacity .
+           15s, transform .15s; }
+      194  .fade-enter-from, .fade-leave-to { opacity: 0; transform: tran
+           slateY(-4px); }
+      161 -.rotate-180 { transform: rotate(180deg); }                    
+      195  </style>
+
+● Now Mobile login:
+
+● Write(src/views/login/Mobile.vue)
+  ⎿  Added 95 lines, removed 71 lines
+       2  import { ref, computed } from 'vue'
+       3  import { useRouter } from 'vue-router'
+       4  import { useUserStore } from '@/stores/user'
+       5 -import { Lock, User, Cog, QrCode, ChevronDown } from 'lucide-vu
+         -e-next'                                                        
+       6 -import { showToast } from 'vant'                               
+       7 -import { ROLE_LABEL, DEMO_ACCOUNTS, type Role } from '@/utils/p
+         -ermission'                                                     
+       5 +import { Lock, User, Cog, ChevronLeft } from 'lucide-vue-next' 
+       6 +import { showToast, showFailToast } from 'vant'                
+       7 +import { ROLE_LABEL, type Role } from '@/utils/permission'     
+       8  
+       9  const router = useRouter()
+      10  const user = useUserStore()
+      11 -const username = ref('lishifu')                                
+      12 -const password = ref('demo123')                                
+      13 -const loading = ref(false)                                     
+      11 +                                                               
+      12 +type Mode = 'login' | 'register'                               
+      13 +const mode = ref<Mode>('login')                                
+      14 +                                                               
+      15 +const username = ref('')                                       
+      16 +const password = ref('')                                       
+      17 +const confirm = ref('')                                        
+      18  const role = ref<Role>('frontline')
+      15 -const showRoleMenu = ref(false)                                
+      19 +const loading = ref(false)                                     
+      20  
+      17 -const roles: Role[] = ['frontline', 'auditor', 'admin', 'guest'
+         -]                                                              
+      21 +const registerRoles: Role[] = ['frontline', 'auditor', 'admin']
+      22  
+      19 -const currentDemo = computed(() => DEMO_ACCOUNTS[role.value])  
+      23 +const switchTo = (m: Mode) => {                                
+      24 +  mode.value = m                                               
+      25 +  password.value = ''                                          
+      26 +  confirm.value = ''                                           
+      27 +}                                                              
+      28  
+      29  const onLogin = async () => {
+      30    if (!username.value || !password.value) { showToast('请填写账
+          号和密码'); return }
+      31    loading.value = true
+      32    try {
+      25 -    await user.login(username.value, password.value, false, rol
+         -e.value)                                                       
+      26 -    showToast({ type: 'success', message: '登录成功 · ' + ROLE_
+         -LABEL[role.value] })                                           
+      27 -    router.push('/dashboard')                                  
+      33 +    const res = await user.login(username.value, password.value
+         +)                                                              
+      34 +    showToast({ type: 'success', message: '登录成功 · ' + ROLE_
+         +LABEL[res.user.role] })                                        
+      35 +    router.push('/')                                           
+      36 +  } catch (e: any) {                                           
+      37 +    showFailToast(e?.message || '登录失败')                    
+      38    } finally { loading.value = false }
+      39  }
+      40  
+      31 -const pickRole = (r: Role) => {                                
+      32 -  role.value = r                                               
+      33 -  username.value = r                                           
+      34 -  showRoleMenu.value = false                                   
+      41 +const onRegister = async () => {                               
+      42 +  if (!username.value || !password.value) { showToast('请填写账
+         +号和密码'); return }                                           
+      43 +  if (password.value.length < 6) { showFailToast('密码至少 6 位
+         +'); return }                                                   
+      44 +  if (password.value !== confirm.value) { showFailToast('两次密
+         +码不一致'); return }                                           
+      45 +  loading.value = true                                         
+      46 +  try {                                                        
+      47 +    await user.register(username.value, password.value, role.va
+         +lue)                                                           
+      48 +    showToast({ type: 'success', message: '注册成功，请登录' })
+      49 +    confirm.value = ''                                         
+      50 +    password.value = ''                                        
+      51 +    mode.value = 'login'                                       
+      52 +  } catch (e: any) {                                           
+      53 +    showFailToast(e?.message || '注册失败')                    
+      54 +  } finally { loading.value = false }                          
+      55  }
+      56 +                                                               
+      57 +const title = computed(() => mode.value === 'login' ? '欢迎使用
+         +' : '注册新账号')                                              
+      58  </script>
+      59  
+      60  <template>
+      61    <div class="min-h-screen bg-card flex flex-col safe-top safe-
+          bottom">
+      62      <!-- 顶部品牌 -->
+      63      <div class="bg-industrial-hero px-6 pt-12 pb-10 text-on-dar
+          k relative">
+      42 -      <div class="flex items-center gap-3">                    
+      64 +      <button v-if="mode === 'register'" type="button" @click="
+         +switchTo('login')"                                             
+      65 +              class="absolute left-3 top-10 w-9 h-9 rounded-ful
+         +l bg-white/10 flex items-center justify-center">               
+      66 +        <ChevronLeft class="w-5 h-5" />                        
+      67 +      </button>                                                
+      68 +      <div class="flex items-center gap-3" :class="mode === 're
+         +gister' ? 'pl-8' : ''">                                        
+      69          <div class="w-11 h-11 rounded bg-gradient-to-br from-ac
+          cent to-accent-2 flex items-center justify-center">
+      70            <Cog class="w-6 h-6 text-white" />
+      71          </div>
+     ...
+       74            <div class="text-[11px] opacity-70 mono">Equipment M
+           aintenance · Mobile</div>
+       75          </div>
+       76        </div>
+       51 -      <div class="mt-6 text-2xl font-bold leading-tight">欢迎 
+          -使用</div>                                                    
+       77 +      <div class="mt-6 text-2xl font-bold leading-tight">{{ ti
+          +tle }}</div>                                                  
+       78        <div class="mt-1 text-sm opacity-80">车间现场 · 多模态检
+           索 · 标准化作业</div>
+       79        <div class="mt-4">
+       80          <span class="xinchuang-badge"><span class="dot"></span
+           >信创认证 · LoongArch + 银河麒麟 V11</span>
+       81        </div>
+       82      </div>
+       83  
+       58 -    <!-- 表单 -->                                             
+       59 -    <form @submit.prevent="onLogin" class="px-6 pt-6 space-y-4
+          - flex-1">                                                     
+       60 -      <!-- 演示角色 -->                                       
+       61 -      <div>                                                   
+       62 -        <div class="text-xs text-text-2 mb-1.5 flex items-cent
+          -er gap-1">                                                    
+       63 -          演示角色                                            
+       64 -          <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai 
+          -text-[10px] mono">MOCK</span>                                 
+       65 -        </div>                                                
+       66 -        <div class="relative">                                
+       67 -          <button type="button" @click="showRoleMenu = !showRo
+          -leMenu"                                                       
+       68 -                  class="w-full h-14 px-4 rounded-btn border b
+          -order-border bg-bg text-left flex items-center gap-3">        
+       69 -            <span class="w-9 h-9 rounded-full bg-accent/10 tex
+          -t-accent text-sm font-bold flex items-center justify-center"> 
+       70 -              {{ ROLE_LABEL[role].slice(0,1) }}               
+       71 -            </span>                                           
+       72 -            <div class="flex-1 min-w-0">                      
+       73 -              <div class="text-base font-medium">{{ ROLE_LABEL
+          -[role] }}</div>                                               
+       74 -              <div class="text-xs text-text-2 truncate">{{ cur
+          -rentDemo.workshop }}</div>                                    
+       75 -            </div>                                            
+       76 -            <ChevronDown class="w-5 h-5 text-text-2" :class="{
+          - 'rotate-180': showRoleMenu }" />                             
+       77 -          </button>                                           
+       78 -          <transition name="fade">                            
+       79 -            <div v-if="showRoleMenu" class="absolute z-20 left
+          --0 right-0 mt-1 bg-card rounded-btn border border-border shado
+          -w-float overflow-hidden">                                     
+       80 -              <button v-for="r in roles" :key="r" type="button
+          -"                                                             
+       81 -                      @click="pickRole(r)"                    
+       82 -                      class="w-full h-14 px-4 flex items-cente
+          -r gap-3 text-left active:bg-bg"                               
+       83 -                      :class="r === role ? 'bg-accent/5 text-a
+          -ccent' : ''">                                                 
+       84 -                <span class="w-9 h-9 rounded-full bg-accent/10
+          - text-accent text-sm font-bold flex items-center justify-cente
+          -r">                                                           
+       85 -                  {{ ROLE_LABEL[r].slice(0,1) }}              
+       86 -                </span>                                       
+       87 -                <div class="flex-1 min-w-0">                  
+       88 -                  <div class="text-base font-medium">{{ ROLE_L
+          -ABEL[r] }}</div>                                              
+       89 -                  <div class="text-xs text-text-2 truncate">{{
+          - DEMO_ACCOUNTS[r].workshop }}</div>                           
+       90 -                </div>                                        
+       91 -              </button>                                       
+       92 -            </div>                                            
+       93 -          </transition>                                       
+       94 -        </div>                                                
+       95 -      </div>                                                  
+       96 -                                                              
+       84 +    <!-- 登录表单 -->                                         
+       85 +    <form v-if="mode === 'login'" @submit.prevent="onLogin" cl
+          +ass="px-6 pt-6 space-y-4 flex-1">                             
+       86        <div class="relative">
+       87          <User class="absolute left-4 top-1/2 -translate-y-1/2 
+           w-5 h-5 text-text-2" />
+       99 -        <input v-model="username" placeholder="工号 / 用户名" 
+       88 +        <input v-model="username" placeholder="用户名"        
+       89 +               autocomplete="username"                        
+       90                 class="w-full h-14 pl-12 pr-3 rounded-btn borde
+           r border-border bg-bg text-base outline-none focus:border-acce
+           nt focus:bg-card" />
+       91        </div>
+       92        <div class="relative">
+       93          <Lock class="absolute left-4 top-1/2 -translate-y-1/2 
+           w-5 h-5 text-text-2" />
+       94          <input v-model="password" type="password" placeholder=
+           "密码"
+       95 +               autocomplete="current-password"                
+       96                 class="w-full h-14 pl-12 pr-3 rounded-btn borde
+           r border-border bg-bg text-base outline-none focus:border-acce
+           nt focus:bg-card" />
+       97        </div>
+       98  
+     ...
+      101          {{ loading ? '登录中…' : '登 录' }}
+      102        </button>
+      103  
+      113 -      <button type="button" class="w-full h-12 rounded-btn bor
+          -der border-border text-text-2 flex items-center justify-center
+          - gap-2">                                                      
+      114 -        <QrCode class="w-5 h-5" /> 扫一扫登录(扫 PC 端二维码) 
+      115 -      </button>                                               
+      104 +      <div class="flex justify-between text-sm pt-2">         
+      105 +        <a class="text-text-2 hover:text-accent">忘记密码?</a>
+      106 +        <a class="text-accent font-medium" @click="switchTo('r
+          +egister')">立即注册 →</a>                                     
+      107 +      </div>                                                  
+      108  
+      109        <div class="px-3 py-2 bg-bg rounded-btn text-xs text-tex
+           t-2">
+      118 -        演示模式:选择角色后,输入任意用户名密码即可登录,不同角 
+          -色菜单不同                                                    
+      110 +        账号会真实写入后端数据库；后端不可达时会自动进入演示模
+          +式。                                                          
+      111        </div>
+      112 +    </form>                                                   
+      113  
+      121 -      <div class="flex justify-between text-sm text-text-2 pt-
+          -2">                                                           
+      122 -        <a class="hover:text-accent">忘记密码?</a>            
+      123 -        <a class="hover:text-accent">注册新账号 →</a>         
+      114 +    <!-- 注册表单 -->                                         
+      115 +    <form v-else @submit.prevent="onRegister" class="px-6 pt-6
+          + space-y-4 flex-1">                                           
+      116 +      <div class="relative">                                  
+      117 +        <User class="absolute left-4 top-1/2 -translate-y-1/2 
+          +w-5 h-5 text-text-2" />                                       
+      118 +        <input v-model="username" placeholder="用户名（至少 3 
+          +位）"                                                         
+      119 +               autocomplete="username"                        
+      120 +               class="w-full h-14 pl-12 pr-3 rounded-btn borde
+          +r border-border bg-bg text-base outline-none focus:border-acce
+          +nt focus:bg-card" />                                          
+      121        </div>
+      122 +      <div class="relative">                                  
+      123 +        <Lock class="absolute left-4 top-1/2 -translate-y-1/2 
+          +w-5 h-5 text-text-2" />                                       
+      124 +        <input v-model="password" type="password" placeholder=
+          +"密码（至少 6 位）"                                           
+      125 +               autocomplete="new-password"                    
+      126 +               class="w-full h-14 pl-12 pr-3 rounded-btn borde
+          +r border-border bg-bg text-base outline-none focus:border-acce
+          +nt focus:bg-card" />                                          
+      127 +      </div>                                                  
+      128 +      <div class="relative">                                  
+      129 +        <Lock class="absolute left-4 top-1/2 -translate-y-1/2 
+          +w-5 h-5 text-text-2" />                                       
+      130 +        <input v-model="confirm" type="password" placeholder="
+          +再次输入密码"                                                 
+      131 +               autocomplete="new-password"                    
+      132 +               class="w-full h-14 pl-12 pr-3 rounded-btn borde
+          +r border-border bg-bg text-base outline-none focus:border-acce
+          +nt focus:bg-card" />                                          
+      133 +      </div>                                                  
+      134 +      <div>                                                   
+      135 +        <div class="text-xs text-text-2 mb-2">期望角色（实际角
+          +色由管理员分配）</div>                                        
+      136 +        <div class="grid grid-cols-3 gap-2">                  
+      137 +          <button v-for="r in registerRoles" :key="r" type="bu
+          +tton"                                                         
+      138 +                  @click="role = r"                           
+      139 +                  :class="['h-11 rounded-btn border text-sm', 
+      140 +                           role === r ? 'border-accent bg-acce
+          +nt/5 text-accent font-semibold' : 'border-border text-text-2']
+          +">                                                            
+      141 +            {{ ROLE_LABEL[r] }}                               
+      142 +          </button>                                           
+      143 +        </div>                                                
+      144 +      </div>                                                  
+      145 +                                                              
+      146 +      <button type="submit" :disabled="loading"               
+      147 +              class="w-full h-14 rounded-btn bg-accent text-wh
+          +ite text-base font-semibold ai-shine active:bg-accent-2 disabl
+          +ed:opacity-60">                                               
+      148 +        {{ loading ? '注册中…' : '注 册' }}                   
+      149 +      </button>                                               
+      150 +                                                              
+      151 +      <div class="flex justify-between text-sm pt-2">         
+      152 +        <span class="text-text-2">已有账号?</span>            
+      153 +        <a class="text-accent font-medium" @click="switchTo('l
+          +ogin')">← 返回登录</a>                                        
+      154 +      </div>                                                  
+      155      </form>
+      156  
+      157      <div class="text-center text-xs text-text-2 px-6 pb-4 pt-4
+            mono">
+     ...
+      159      </div>
+      160    </div>
+      161  </template>
+      132 -                                                              
+      133 -<style scoped>                                                
+      134 -.fade-enter-active, .fade-leave-active { transition: opacity .
+          -15s, transform .15s; }                                        
+      135 -.fade-enter-from, .fade-leave-to { opacity: 0; transform: tran
+          -slateY(-4px); }                                               
+      136 -.rotate-180 { transform: rotate(180deg); }                    
+      137 -</style>                                                      
+
+● Step 2 — Router: / → /search, dashboard → /workspace, add admin/knowledge
+
+● Write(src/router/index.ts)  ⎿  Added 30 lines, removed 5 lines
+       4  
+       5  const routes: RouteRecordRaw[] = [
+       6    { path: '/login',     component: () => import('@/views/login/
+          index.vue'),     meta: { layout: 'blank', title: '登录' } },
+       7 -  { path: '/',          redirect: '/dashboard' },              
+       8 -  { path: '/dashboard', component: () => import('@/views/dashbo
+         -ard/index.vue'), meta: { layout: 'app', title: '工作台' } },   
+       7 +                                                               
+       8 +  // 首页 = 多模态检索（FIX2 第 6 项）                         
+       9 +  { path: '/',          redirect: '/search' },                 
+      10 +                                                               
+      11 +  // 检索                                                      
+      12    { path: '/search',    component: () => import('@/views/search
+          /index.vue'),    meta: { layout: 'app', title: '多模态检索' } }
+          ,
+      13    { path: '/search/:id',component: () => import('@/views/search
+          /Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
+      14 +                                                               
+      15 +  // 工单 / 作业指引                                           
+      16    { path: '/workflow',  component: () => import('@/views/workfl
+          ow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
+      17    { path: '/workflow/:id', component: () => import('@/views/wor
+          kflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情
+          ' } },
+      18 +                                                               
+      19 +  // 知识库                                                    
+      20    { path: '/knowledge/upload', component: () => import('@/views
+          /knowledge/Upload.vue'), meta: { layout: 'app', title: '知识上
+          传' } },
+      21 +                                                               
+      22 +  // 管理员-知识库管理（FIX2 第 4 项）                         
+      23 +  { path: '/admin/knowledge', component: () => import('@/views/
+         +admin/KnowledgeAdmin.vue'),                                    
+      24 +    meta: { layout: 'app', title: '知识库管理', roles: ['admin'
+         +] } },                                                         
+      25 +                                                               
+      26 +  // 审核                                                      
+      27    { path: '/audit',     component: () => import('@/views/audit/
+          index.vue'),     meta: { layout: 'app', title: '案例审核', role
+          s: ['auditor', 'admin'] } },
+      28 +                                                               
+      29 +  // 知识图谱                                                  
+      30    { path: '/kg',        component: () => import('@/views/kg/ind
+          ex.vue'),        meta: { layout: 'app', title: '知识图谱' } },
+      31 +                                                               
+      32 +  // 历史 / 我的                                               
+      33    { path: '/history',   component: () => import('@/views/histor
+          y/index.vue'),   meta: { layout: 'app', title: '历史与收藏' } }
+          ,
+      34    { path: '/profile',   component: () => import('@/views/profil
+          e/index.vue'),   meta: { layout: 'app', title: '用户中心' } },
+      35 +                                                               
+      36 +  // 旧"工作台"降级为次级入口（FIX2 第 6 项）                  
+      37 +  { path: '/workspace', component: () => import('@/views/dashbo
+         +ard/index.vue'), meta: { layout: 'app', title: '工作台' } },   
+      38 +  // 兼容旧 /dashboard 链接                                    
+      39 +  { path: '/dashboard', redirect: '/workspace' },              
+      40 +                                                               
+      41 +  // 系统管理                                                  
+      42    { path: '/admin/:sub?', component: () => import('@/views/admi
+          n/index.vue'),   meta: { layout: 'app', title: '系统管理', role
+          s: ['admin'], mobileReadonly: true } },
+      19 -  { path: '/:pathMatch(.*)*', redirect: '/dashboard' }         
+      43 +                                                               
+      44 +  { path: '/:pathMatch(.*)*', redirect: '/search' }            
+      45  ]
+      46  
+      47  const router = createRouter({
+     ...
+      57    if (to.path !== '/login' && !u.isLoggedIn) {
+      58      return next('/login')
+      59    }
+      35 -  // 移动端只读路由提示                                        
+      60 +  // 角色守卫                                                  
+      61    const allowed = (to.meta?.roles as string[]) || []
+      62    if (allowed.length && !allowed.includes(u.role)) {
+      63      showToast('权限不足,无法访问该模块')
+      39 -    return next('/dashboard')                                  
+      64 +    return next('/')                                           
+      65    }
+      66    if (to.meta?.mobileReadonly && window.innerWidth < 1024) {
+      67      showToast({ message: '该模块在移动端仅可只读浏览,完整操作请
+          前往 PC 端', duration: 2500 })
+
+● Now reorder menu items so 检索 comes first and add the admin knowledge entry:
+
+● Update(src/utils/permission.ts)
+  ⎿  Added 2 lines, removed 1 line
+      17  
+      18  /** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 
+          */
+      19  export const MENU_ITEMS: MenuItem[] = [
+      20 -  { path: '/dashboard',        label: '工作台' },              
+      20    { path: '/search',           label: '多模态检索', highlight: 
+          true },
+      21    { path: '/workflow',         label: '作业指引' },
+      22    { path: '/knowledge/upload', label: '知识上传' },
+      23    { path: '/audit',            label: '案例审核', badge: 5, rol
+          es: ['auditor', 'admin'] },
+      24 +  { path: '/admin/knowledge',  label: '知识库管理', roles: ['ad
+         +min'] },                                                       
+      25    { path: '/kg',               label: '知识图谱' },
+      26 +  { path: '/workspace',        label: '工作台' },              
+      27    { path: '/history',          label: '历史与收藏' },
+      28    { path: '/profile',          label: '个人中心' },
+      29    { path: '/admin',            label: '系统管理', roles: ['admi
+          n'] }
+
+● Now update the bottom tab bar — first tab → 检索, drop 首页:
+
+● Update(src/components/mobile/BottomTabBar.vue)
+  ⎿  Added 1 line, removed 1 line
+      1  <script setup lang="ts">
+      2  import { computed } from 'vue'
+      3  import { useRoute, useRouter } from 'vue-router'
+      4 -import { Home, Search, ListChecks, ShieldCheck, Cog, User } from
+        - 'lucide-vue-next'                                              
+      4 +import { Search, ListChecks, ShieldCheck, Cog, User, LayoutDashb
+        +oard } from 'lucide-vue-next'                                   
+      5  import { useUserStore } from '@/stores/user'
+      6  import { hasPermission } from '@/utils/permission'
+      7  
+
+● Update(src/components/mobile/BottomTabBar.vue)
+  ⎿  Added 7 lines, removed 12 lines
+      10  const user = useUserStore()
+      11  
+      12  /**
+      13 - * 移动端底部导航与 PC 保持一致的权限规则。                    
+      14 - * - 一线检修员/访客:首页 / 检索 / 指引 / 我的                 
+      15 - * - 审核员:首页 / 检索 / 审核 / 指引 / 我的                   
+      16 - * - 管理员:首页 / 检索 / 审核 / 系统 / 我的                   
+      17 - *                                                             
+      18 - * 移动端最多显示 5 个 Tab,其余功能通过侧边抽屉访问。          
+      13 + * 移动端底部导航 —— FIX2 第 6 项：检索为首位 Tab，工作台降级为
+         +次级入口。                                                     
+      14   */
+      15  const tabs = computed(() => {
+      16    const role = user.role
+      17    const all = [
+      23 -    { path: '/dashboard', icon: Home,        label: '首页', rol
+         -es: undefined },                                               
+      24 -    { path: '/search',    icon: Search,      label: '检索', rol
+         -es: undefined },                                               
+      25 -    { path: '/audit',     icon: ShieldCheck, label: '审核', bad
+         -ge: 5, roles: ['auditor', 'admin'] as const },                 
+      26 -    { path: '/admin',     icon: Cog,         label: '系统',  ro
+         -les: ['admin'] as const },                                     
+      27 -    { path: '/workflow',  icon: ListChecks,  label: '指引', bad
+         -ge: 1, roles: undefined },                                     
+      28 -    { path: '/profile',   icon: User,        label: '我的', rol
+         -es: undefined }                                                
+      18 +    { path: '/search',    icon: Search,         label: '检索', 
+         +roles: undefined },                                            
+      19 +    { path: '/workflow',  icon: ListChecks,     label: '指引', 
+         +badge: 1, roles: undefined },                                  
+      20 +    { path: '/audit',     icon: ShieldCheck,    label: '审核', 
+         +badge: 5, roles: ['auditor', 'admin'] as const },              
+      21 +    { path: '/admin',     icon: Cog,            label: '系统', 
+         +roles: ['admin'] as const },                                   
+      22 +    { path: '/workspace', icon: LayoutDashboard, label: '工作台
+         +', roles: undefined },                                         
+      23 +    { path: '/profile',   icon: User,           label: '我的', 
+         +roles: undefined }                                             
+      24    ]
+      25    // 过滤可见
+      26    const visible = all.filter(t => hasPermission(role, t.roles a
+          s any))
+
+  Thought for 11s, searched for 1 pattern (ctrl+o to expand)
+
+● These are minor — the router redirect handles them, but let me update for
+  cleanliness:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/components/pc/SideNav.vue)
+  ⎿  Added 1 line, removed 1 line
+      1  <script setup lang="ts">
+      2  import { computed } from 'vue'
+      3  import { useRoute, useRouter } from 'vue-router'
+      4 -import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCh
+        -eck, Network, Cog, History, User, ChevronRight } from 'lucide-vu
+        -e-next'                                                         
+      4 +import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCh
+        +eck, Network, Cog, History, User, ChevronRight, Database } from 
+        +'lucide-vue-next'                                               
+      5  import { useUserStore } from '@/stores/user'
+      6  import { getVisibleMenuItems } from '@/utils/permission'
+      7  
+
+● Update(src/components/pc/SideNav.vue)
+  ⎿  Added 2 lines
+      10  const user = useUserStore()
+      11  
+      12  const ICONS: Record<string, any> = {
+      13 +  '/workspace':        LayoutDashboard,                        
+      14    '/dashboard':        LayoutDashboard,
+      15    '/search':           Search,
+      16    '/workflow':         ListChecks,
+      17    '/knowledge/upload': BookOpen,
+      18 +  '/admin/knowledge':  Database,                               
+      19    '/audit':            ShieldCheck,
+      20    '/kg':               Network,
+      21    '/history':          History,
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/components/mobile/MobileSideDrawer.vue)
+  ⎿  Added 1 line, removed 1 line
+       6  import { ROLE_LABEL, getVisibleMenuItems } from '@/utils/permis
+          sion'
+       7  import {
+       8    LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, N
+          etwork, Cog, History, User,
+       9 -  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Spa
+         -rkles                                                          
+       9 +  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Spa
+         +rkles, Database                                                
+      10  } from 'lucide-vue-next'
+      11  
+      12  defineProps<{ open: boolean }>()
+
+● Update(src/components/mobile/MobileSideDrawer.vue)
+  ⎿  Added 2 lines
+      23  } = useTheme()
+      24  
+      25  const ICONS: Record<string, any> = {
+      26 +  '/workspace':        LayoutDashboard,                        
+      27    '/dashboard':        LayoutDashboard,
+      28    '/search':           Search,
+      29    '/workflow':         ListChecks,
+      30    '/knowledge/upload': BookOpen,
+      31 +  '/admin/knowledge':  Database,                               
+      32    '/audit':            ShieldCheck,
+      33    '/kg':               Network,
+      34    '/history':          History,
+
+● API Error: Request rejected (429) · You have exceeded the 5-hour usage
+  quota. It will reset at 2026-06-17 14:22:40 +0800 CST. We recommend 
+  upgrading your plan for more quota, or waiting for the reset. Request 
+  id: 021781662413418cfcda9ed8a69b2edb3386bd623e2b8f0cf1580
+
+✻ Cooked for 10m 25s

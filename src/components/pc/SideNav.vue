@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, ChevronRight } from 'lucide-vue-next'
+import { LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, ChevronRight, Database } from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
 import { getVisibleMenuItems } from '@/utils/permission'
 
@@ -10,10 +10,12 @@ const router = useRouter()
 const user = useUserStore()
 
 const ICONS: Record<string, any> = {
+  '/workspace':        LayoutDashboard,
   '/dashboard':        LayoutDashboard,
   '/search':           Search,
   '/workflow':         ListChecks,
   '/knowledge/upload': BookOpen,
+  '/admin/knowledge':  Database,
   '/audit':            ShieldCheck,
   '/kg':               Network,
   '/history':          History,

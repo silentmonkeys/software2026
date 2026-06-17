@@ -21,3 +21,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+backend/.env
+backend/chroma_db
+backend/uploads
+backend/loongchip.db

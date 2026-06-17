@@ -2,44 +2,70 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { Lock, User, Cog, QrCode, ChevronDown } from 'lucide-vue-next'
-import { showToast } from 'vant'
-import { ROLE_LABEL, DEMO_ACCOUNTS, type Role } from '@/utils/permission'
+import { Lock, User, Cog, ChevronLeft } from 'lucide-vue-next'
+import { showToast, showFailToast } from 'vant'
+import { ROLE_LABEL, type Role } from '@/utils/permission'
 
 const router = useRouter()
 const user = useUserStore()
-const username = ref('lishifu')
-const password = ref('demo123')
-const loading = ref(false)
+
+type Mode = 'login' | 'register'
+const mode = ref<Mode>('login')
+
+const username = ref('')
+const password = ref('')
+const confirm = ref('')
 const role = ref<Role>('frontline')
-const showRoleMenu = ref(false)
+const loading = ref(false)
 
-const roles: Role[] = ['frontline', 'auditor', 'admin', 'guest']
+const registerRoles: Role[] = ['frontline', 'auditor', 'admin']
 
-const currentDemo = computed(() => DEMO_ACCOUNTS[role.value])
+const switchTo = (m: Mode) => {
+  mode.value = m
+  password.value = ''
+  confirm.value = ''
+}
 
 const onLogin = async () => {
   if (!username.value || !password.value) { showToast('请填写账号和密码'); return }
   loading.value = true
   try {
-    await user.login(username.value, password.value, false, role.value)
-    showToast({ type: 'success', message: '登录成功 · ' + ROLE_LABEL[role.value] })
-    router.push('/dashboard')
+    const res = await user.login(username.value, password.value)
+    showToast({ type: 'success', message: '登录成功 · ' + ROLE_LABEL[res.user.role] })
+    router.push('/')
+  } catch (e: any) {
+    showFailToast(e?.message || '登录失败')
   } finally { loading.value = false }
 }
 
-const pickRole = (r: Role) => {
-  role.value = r
-  username.value = r
-  showRoleMenu.value = false
+const onRegister = async () => {
+  if (!username.value || !password.value) { showToast('请填写账号和密码'); return }
+  if (password.value.length < 6) { showFailToast('密码至少 6 位'); return }
+  if (password.value !== confirm.value) { showFailToast('两次密码不一致'); return }
+  loading.value = true
+  try {
+    await user.register(username.value, password.value, role.value)
+    showToast({ type: 'success', message: '注册成功，请登录' })
+    confirm.value = ''
+    password.value = ''
+    mode.value = 'login'
+  } catch (e: any) {
+    showFailToast(e?.message || '注册失败')
+  } finally { loading.value = false }
 }
+
+const title = computed(() => mode.value === 'login' ? '欢迎使用' : '注册新账号')
 </script>
 
 <template>
   <div class="min-h-screen bg-card flex flex-col safe-top safe-bottom">
     <!-- 顶部品牌 -->
     <div class="bg-industrial-hero px-6 pt-12 pb-10 text-on-dark relative">
-      <div class="flex items-center gap-3">
+      <button v-if="mode === 'register'" type="button" @click="switchTo('login')"
+              class="absolute left-3 top-10 w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+        <ChevronLeft class="w-5 h-5" />
+      </button>
+      <div class="flex items-center gap-3" :class="mode === 'register' ? 'pl-8' : ''">
         <div class="w-11 h-11 rounded bg-gradient-to-br from-accent to-accent-2 flex items-center justify-center">
           <Cog class="w-6 h-6 text-white" />
         </div>
@@ -48,60 +74,25 @@ const pickRole = (r: Role) => {
           <div class="text-[11px] opacity-70 mono">Equipment Maintenance · Mobile</div>
         </div>
       </div>
-      <div class="mt-6 text-2xl font-bold leading-tight">欢迎使用</div>
+      <div class="mt-6 text-2xl font-bold leading-tight">{{ title }}</div>
       <div class="mt-1 text-sm opacity-80">车间现场 · 多模态检索 · 标准化作业</div>
       <div class="mt-4">
         <span class="xinchuang-badge"><span class="dot"></span>信创认证 · LoongArch + 银河麒麟 V11</span>
       </div>
     </div>
 
-    <!-- 表单 -->
-    <form @submit.prevent="onLogin" class="px-6 pt-6 space-y-4 flex-1">
-      <!-- 演示角色 -->
-      <div>
-        <div class="text-xs text-text-2 mb-1.5 flex items-center gap-1">
-          演示角色
-          <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai text-[10px] mono">MOCK</span>
-        </div>
-        <div class="relative">
-          <button type="button" @click="showRoleMenu = !showRoleMenu"
-                  class="w-full h-14 px-4 rounded-btn border border-border bg-bg text-left flex items-center gap-3">
-            <span class="w-9 h-9 rounded-full bg-accent/10 text-accent text-sm font-bold flex items-center justify-center">
-              {{ ROLE_LABEL[role].slice(0,1) }}
-            </span>
-            <div class="flex-1 min-w-0">
-              <div class="text-base font-medium">{{ ROLE_LABEL[role] }}</div>
-              <div class="text-xs text-text-2 truncate">{{ currentDemo.workshop }}</div>
-            </div>
-            <ChevronDown class="w-5 h-5 text-text-2" :class="{ 'rotate-180': showRoleMenu }" />
-          </button>
-          <transition name="fade">
-            <div v-if="showRoleMenu" class="absolute z-20 left-0 right-0 mt-1 bg-card rounded-btn border border-border shadow-float overflow-hidden">
-              <button v-for="r in roles" :key="r" type="button"
-                      @click="pickRole(r)"
-                      class="w-full h-14 px-4 flex items-center gap-3 text-left active:bg-bg"
-                      :class="r === role ? 'bg-accent/5 text-accent' : ''">
-                <span class="w-9 h-9 rounded-full bg-accent/10 text-accent text-sm font-bold flex items-center justify-center">
-                  {{ ROLE_LABEL[r].slice(0,1) }}
-                </span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-base font-medium">{{ ROLE_LABEL[r] }}</div>
-                  <div class="text-xs text-text-2 truncate">{{ DEMO_ACCOUNTS[r].workshop }}</div>
-                </div>
-              </button>
-            </div>
-          </transition>
-        </div>
-      </div>
-
+    <!-- 登录表单 -->
+    <form v-if="mode === 'login'" @submit.prevent="onLogin" class="px-6 pt-6 space-y-4 flex-1">
       <div class="relative">
         <User class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-2" />
-        <input v-model="username" placeholder="工号 / 用户名"
+        <input v-model="username" placeholder="用户名"
+               autocomplete="username"
                class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
       </div>
       <div class="relative">
         <Lock class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-2" />
         <input v-model="password" type="password" placeholder="密码"
+               autocomplete="current-password"
                class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
       </div>
 
@@ -110,17 +101,56 @@ const pickRole = (r: Role) => {
         {{ loading ? '登录中…' : '登 录' }}
       </button>
 
-      <button type="button" class="w-full h-12 rounded-btn border border-border text-text-2 flex items-center justify-center gap-2">
-        <QrCode class="w-5 h-5" /> 扫一扫登录(扫 PC 端二维码)
-      </button>
-
-      <div class="px-3 py-2 bg-bg rounded-btn text-xs text-text-2">
-        演示模式:选择角色后,输入任意用户名密码即可登录,不同角色菜单不同
+      <div class="flex justify-between text-sm pt-2">
+        <a class="text-text-2 hover:text-accent">忘记密码?</a>
+        <a class="text-accent font-medium" @click="switchTo('register')">立即注册 →</a>
       </div>
 
-      <div class="flex justify-between text-sm text-text-2 pt-2">
-        <a class="hover:text-accent">忘记密码?</a>
-        <a class="hover:text-accent">注册新账号 →</a>
+      <div class="px-3 py-2 bg-bg rounded-btn text-xs text-text-2">
+        账号会真实写入后端数据库；后端不可达时会自动进入演示模式。
+      </div>
+    </form>
+
+    <!-- 注册表单 -->
+    <form v-else @submit.prevent="onRegister" class="px-6 pt-6 space-y-4 flex-1">
+      <div class="relative">
+        <User class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-2" />
+        <input v-model="username" placeholder="用户名（至少 3 位）"
+               autocomplete="username"
+               class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
+      </div>
+      <div class="relative">
+        <Lock class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-2" />
+        <input v-model="password" type="password" placeholder="密码（至少 6 位）"
+               autocomplete="new-password"
+               class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
+      </div>
+      <div class="relative">
+        <Lock class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-2" />
+        <input v-model="confirm" type="password" placeholder="再次输入密码"
+               autocomplete="new-password"
+               class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
+      </div>
+      <div>
+        <div class="text-xs text-text-2 mb-2">期望角色（实际角色由管理员分配）</div>
+        <div class="grid grid-cols-3 gap-2">
+          <button v-for="r in registerRoles" :key="r" type="button"
+                  @click="role = r"
+                  :class="['h-11 rounded-btn border text-sm',
+                           role === r ? 'border-accent bg-accent/5 text-accent font-semibold' : 'border-border text-text-2']">
+            {{ ROLE_LABEL[r] }}
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" :disabled="loading"
+              class="w-full h-14 rounded-btn bg-accent text-white text-base font-semibold ai-shine active:bg-accent-2 disabled:opacity-60">
+        {{ loading ? '注册中…' : '注 册' }}
+      </button>
+
+      <div class="flex justify-between text-sm pt-2">
+        <span class="text-text-2">已有账号?</span>
+        <a class="text-accent font-medium" @click="switchTo('login')">← 返回登录</a>
       </div>
     </form>
 
@@ -129,9 +159,3 @@ const pickRole = (r: Role) => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.fade-enter-active, .fade-leave-active { transition: opacity .15s, transform .15s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-4px); }
-.rotate-180 { transform: rotate(180deg); }
-</style>

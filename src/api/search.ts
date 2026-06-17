@@ -1,11 +1,14 @@
-import { post, get, safeCall } from './request'
+import { post, get, request, rawCall, safeCall } from './request'
 
 export type SearchMode = 'precise' | 'smart' | 'explore'
 export type SourceType = 'manual' | 'case' | 'graph'
 
 export interface SearchPayload {
   text?: string
+  /** 缩略图 URL，仅前端展示用 */
   images?: string[]
+  /** 真正发给后端的图片文件（多模态时必传一张，会取第一个） */
+  imageFile?: File | null
   deviceModel?: string
   mode?: SearchMode
   filters?: Record<string, unknown>
@@ -24,8 +27,18 @@ export interface SearchHit {
 
 export interface SearchResult {
   summary: string
+  /** 后端目前不返回原因 Top3，前端根据问题展示空数组或保留默认 */
   causes: { name: string; confidence: number }[]
   hits: SearchHit[]
+  /** 多模态场景下后端返回的图片观察文本（无图为空） */
+  imageObservation?: string
+}
+
+/** 后端 /api/chat/query 返回结构 */
+interface BackendChatResp {
+  answer: string
+  image_observation: string
+  sources: { title: string; snippet: string }[]
 }
 
 const FALLBACK: SearchResult = {
@@ -46,8 +59,54 @@ const FALLBACK: SearchResult = {
   ]
 }
 
-export const multimodalSearch = (p: SearchPayload) =>
-  safeCall<SearchResult>(() => post('/search/multimodal', p), FALLBACK)
+/**
+ * 多模态检索：实际调用 /api/chat/query。
+ * - question 取自 text + deviceModel 拼接
+ * - image 字段取 imageFile（前端图片管理保留 File 引用，URL 只用于预览）
+ * - sources → hits（type 默认 manual，相似度按顺序衰减）
+ * - causes 后端未返回，沿用前端兜底（也可以传空数组）
+ *
+ * 调用方继续兼容旧签名（不传 imageFile 时纯文字问答）。
+ */
+export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> => {
+  const question = [p.text || '', p.deviceModel ? `设备型号：${p.deviceModel}` : '']
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+
+  if (!question && !p.imageFile) return FALLBACK
+
+  const form = new FormData()
+  form.append('question', question || '请描述设备图片中的故障')
+  if (p.imageFile) form.append('image', p.imageFile)
+
+  try {
+    const data = await rawCall<BackendChatResp>(() =>
+      request.post<BackendChatResp>('/chat/query', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 90_000
+      })
+    )
+    const hits: SearchHit[] = (data.sources || []).map((s, i) => ({
+      id: 'src-' + i,
+      type: 'manual',
+      title: s.title || `引用 ${i + 1}`,
+      snippet: s.snippet || '',
+      similarity: Math.max(0.55, 0.92 - i * 0.07),
+      source: '知识库 · ' + (s.title || ''),
+      highlights: []
+    }))
+    return {
+      summary: data.answer || '',
+      causes: [],
+      hits,
+      imageObservation: data.image_observation || ''
+    }
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn('[search.multimodalSearch] fallback:', e)
+    return FALLBACK
+  }
+}
 
 export const suggest = (q: string) =>
   safeCall<string[]>(() => get('/search/suggest', { q }), [

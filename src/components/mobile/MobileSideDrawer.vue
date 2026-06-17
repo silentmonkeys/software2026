@@ -6,7 +6,7 @@ import { useTheme } from '@/composables/useTheme'
 import { ROLE_LABEL, getVisibleMenuItems } from '@/utils/permission'
 import {
   LayoutDashboard, Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User,
-  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Sparkles
+  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Sparkles, Database
 } from 'lucide-vue-next'
 
 defineProps<{ open: boolean }>()
@@ -23,10 +23,12 @@ const {
 } = useTheme()
 
 const ICONS: Record<string, any> = {
+  '/workspace':        LayoutDashboard,
   '/dashboard':        LayoutDashboard,
   '/search':           Search,
   '/workflow':         ListChecks,
   '/knowledge/upload': BookOpen,
+  '/admin/knowledge':  Database,
   '/audit':            ShieldCheck,
   '/kg':               Network,
   '/history':          History,

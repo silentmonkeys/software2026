@@ -1,303 +1,317 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+/**
+ * PC 端检索 · 对话式布局（FIX2 第 5 项）
+ *
+ * 视觉参考 ChatGPT / Kimi：
+ * - 初始：页面中央一个大的输入框 + 示例提示
+ * - 进入对话后：上方消息流（user / assistant 气泡）+ 底部固定输入条
+ * - AI 回复带「来源引用」可折叠列表
+ */
+import { ref, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Sparkles, Upload, X, Heart, Eye, Lightbulb, Image as ImageIcon } from 'lucide-vue-next'
+import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2 } from 'lucide-vue-next'
 import * as searchApi from '@/api/search'
-import type { SearchResult, SearchMode } from '@/api/search'
+import type { SearchHit } from '@/api/search'
 import { useSearchStore } from '@/stores/search'
-import { useStreamText } from '@/composables/useStreamText'
-import SimilarityBar from '@/components/common/SimilarityBar.vue'
-import StatusTag from '@/components/common/StatusTag.vue'
-import ConfidenceMeter from '@/components/common/ConfidenceMeter.vue'
-import AIAssistant from '@/components/common/AIAssistant.vue'
 
 const route = useRoute()
 const store = useSearchStore()
 
-const text = ref(typeof route.query.q === 'string' ? route.query.q : '电机异响')
-const deviceModel = ref('YKK630-4')
-const mode = ref<SearchMode>('smart')
-const images = ref<{ url: string; name: string }[]>([])
+interface UserMsg { role: 'user'; text: string; images: string[] }
+interface AiMsg { role: 'assistant'; summary: string; hits: SearchHit[]; observation: string; loading?: boolean; error?: string; expanded?: boolean }
+type Msg = UserMsg | AiMsg
+
+const input = ref(typeof route.query.q === 'string' ? route.query.q : '')
+const imageList = ref<{ url: string; name: string; file: File }[]>([])
+const messages = ref<Msg[]>([])
+const sending = ref(false)
 const dragging = ref(false)
-const loading = ref(false)
-const result = ref<SearchResult | null>(null)
-const tab = ref<'all' | 'manual' | 'case' | 'graph'>('all')
-
-const filters = reactive({
-  industry: ['钢铁'],
-  workshop: ['一号车间'],
-  device:   [] as string[],
-  level:    [1, 2] as number[],
-  range:    'recent-90'
-})
-
 const fileInput = ref<HTMLInputElement>()
+const scrollEl = ref<HTMLDivElement>()
 
-const { display, run, done } = useStreamText(18)
+const SAMPLES = [
+  '离心泵振动异常如何排查？',
+  '电机过热保护检修流程',
+  '减速箱漏油怎么处理？',
+  '空压机出口温度过高的原因有哪些？'
+]
 
-const onFiles = (files: FileList | null) => {
+const hasMessages = computed(() => messages.value.length > 0)
+
+const onPickFiles = (files: FileList | null) => {
   if (!files) return
-  Array.from(files).forEach(f => images.value.push({ url: URL.createObjectURL(f), name: f.name }))
+  Array.from(files).forEach(f => imageList.value.push({ url: URL.createObjectURL(f), name: f.name, file: f }))
 }
 const onDrop = (e: DragEvent) => {
   e.preventDefault(); dragging.value = false
-  onFiles(e.dataTransfer?.files || null)
+  onPickFiles(e.dataTransfer?.files || null)
 }
 
-const filteredHits = computed(() => {
-  if (!result.value) return []
-  if (tab.value === 'all') return result.value.hits
-  return result.value.hits.filter(h => h.type === tab.value)
-})
+const useSample = (s: string) => { input.value = s }
 
-const onSearch = async () => {
-  loading.value = true
-  result.value = null
+const scrollToBottom = async () => {
+  await nextTick()
+  scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior: 'smooth' })
+}
+
+const onSend = async () => {
+  const text = input.value.trim()
+  if (!text && !imageList.value.length) return
+  if (sending.value) return
+
+  // 1) 投递用户消息
+  const usr: UserMsg = { role: 'user', text, images: imageList.value.map(i => i.url) }
+  messages.value.push(usr)
+
+  // 2) 占位的 assistant 消息（loading）
+  const ai: AiMsg = { role: 'assistant', summary: '', hits: [], observation: '', loading: true, expanded: true }
+  messages.value.push(ai)
+
+  // 3) 同步保留首张图发到后端，再清空输入区
+  const file = imageList.value[0]?.file || null
+  input.value = ''
+  imageList.value = []
+  if (text) store.push(text)
+  sending.value = true
+  await scrollToBottom()
+
   try {
-    const res = await searchApi.multimodalSearch({
-      text: text.value, deviceModel: deviceModel.value, mode: mode.value,
-      images: images.value.map(i => i.url)
-    })
-    result.value = res
-    run(res.summary)
-    if (text.value) store.push(text.value, deviceModel.value)
-  } finally { loading.value = false }
+    const res = await searchApi.multimodalSearch({ text, imageFile: file })
+    ai.summary = res.summary || '（后端未返回内容）'
+    ai.hits = res.hits || []
+    ai.observation = res.imageObservation || ''
+    ai.loading = false
+  } catch (e: any) {
+    ai.loading = false
+    ai.error = e?.message || '检索失败，请稍后重试'
+  } finally {
+    sending.value = false
+    await scrollToBottom()
+  }
 }
 
-onMounted(() => { onSearch() })
+const onKey = (e: KeyboardEvent) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    onSend()
+  }
+}
+
+const clearHistory = () => {
+  messages.value = []
+}
 </script>
 
 <template>
-  <div class="grid grid-cols-12 gap-4 p-4 h-full overflow-hidden">
-    <!-- 左侧筛选 -->
-    <aside class="col-span-3 industrial-card p-4 overflow-auto">
-      <h3 class="text-sm font-semibold text-text mb-3 flex items-center gap-2">
-        <Lightbulb class="w-4 h-4 text-accent" /> 检索筛选
-      </h3>
-
-      <div class="space-y-5 text-sm">
-        <div>
-          <div class="text-text-2 mb-2">设备类型(三级)</div>
-          <ul class="space-y-1">
-            <li>📁 钢铁
-              <ul class="ml-4 mt-1 space-y-1">
-                <li>📂 一号车间·热轧线
-                  <ul class="ml-4 mt-1 space-y-1 text-text-2">
-                    <li class="cursor-pointer hover:text-accent">⚙ YKK630-4 主电机 ×12</li>
-                    <li class="cursor-pointer hover:text-accent">⚙ HD-450 减速机 ×4</li>
-                    <li class="cursor-pointer hover:text-accent">⚙ CT-2400 冷却泵 ×6</li>
-                  </ul>
-                </li>
-                <li>📂 二号车间·冷轧线 …</li>
-              </ul>
-            </li>
-          </ul>
-        </div>
-
-        <div>
-          <div class="text-text-2 mb-2">检修等级</div>
-          <div class="flex gap-2">
-            <label v-for="lv in [1,2,3]" :key="lv" class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" :checked="filters.level.includes(lv)" class="accent-accent"
-                     @change="filters.level.includes(lv) ? filters.level = filters.level.filter(x=>x!==lv) : filters.level.push(lv)" />
-              <span class="mono">L{{ lv }}</span>
-            </label>
+  <div class="h-full flex flex-col bg-bg">
+    <!-- ─────────────── 初始空态：居中大输入 ─────────────── -->
+    <div v-if="!hasMessages" class="flex-1 flex items-center justify-center px-6 overflow-auto">
+      <div class="w-full max-w-[720px] py-12">
+        <div class="text-center mb-10">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-white mb-4">
+            <Sparkles class="w-8 h-8" />
           </div>
+          <h1 class="text-3xl font-bold text-primary">设备检修智能检索</h1>
+          <div class="mt-2 text-sm text-text-2">基于多模态大模型 · 描述故障或上传现场照片，AI 会从知识库中给出答案</div>
         </div>
 
-        <div>
-          <div class="text-text-2 mb-2">来源类型</div>
-          <div class="flex flex-wrap gap-1.5">
-            <label v-for="s in ['手册','案例','图谱']" :key="s"
-                   class="px-2 py-1 rounded border border-border text-xs cursor-pointer hover:border-accent hover:text-accent">{{ s }}</label>
-          </div>
-        </div>
+        <!-- 输入卡 -->
+        <div
+          @dragover.prevent="dragging = true"
+          @dragleave.prevent="dragging = false"
+          @drop="onDrop"
+          class="industrial-card p-3 shadow-float transition"
+          :class="dragging ? 'border-accent ring-2 ring-accent/30' : ''">
+          <textarea v-model="input" rows="3" @keydown="onKey"
+                    placeholder="输入设备故障描述或检修问题…（Enter 发送，Shift+Enter 换行）"
+                    class="w-full resize-none bg-transparent outline-none px-2 py-1 text-base leading-relaxed"></textarea>
 
-        <div>
-          <div class="text-text-2 mb-2">时间范围</div>
-          <select v-model="filters.range" class="w-full h-8 px-2 border border-border rounded-btn bg-card text-sm">
-            <option value="recent-7">最近 7 天</option>
-            <option value="recent-30">最近 30 天</option>
-            <option value="recent-90">最近 90 天</option>
-            <option value="all">全部</option>
-          </select>
-        </div>
-
-        <div>
-          <div class="text-text-2 mb-2">关键词高亮</div>
-          <label class="flex items-center gap-2 text-text-2">
-            <input type="checkbox" checked class="accent-accent" /> 启用命中高亮
-          </label>
-        </div>
-      </div>
-    </aside>
-
-    <!-- 主区 -->
-    <section class="col-span-9 flex flex-col gap-4 overflow-hidden">
-      <!-- 多模态输入条 -->
-      <div class="industrial-card p-4">
-        <div class="flex gap-3 items-stretch">
-          <div class="flex-1 flex flex-col gap-3">
-            <div class="flex gap-3">
-              <textarea v-model="text" rows="2"
-                        placeholder="描述故障现象,如: 电机异响、温度异常、振动超标…"
-                        class="flex-1 resize-none px-3 py-2 rounded-btn border border-border bg-bg outline-none focus:border-accent focus:bg-card text-sm"></textarea>
-              <select v-model="deviceModel"
-                      class="w-44 px-3 rounded-btn border border-border bg-card text-sm font-mono">
-                <option>YKK630-4</option>
-                <option>CT-2400</option>
-                <option>HP-180</option>
-                <option>INV-5500</option>
-              </select>
-            </div>
-            <div class="flex items-center gap-3">
-              <div class="text-xs text-text-2">检索模式:</div>
-              <div class="flex p-0.5 bg-bg rounded-btn border border-border">
-                <button v-for="m in [{k:'precise',l:'精准'},{k:'smart',l:'智能(推荐)'},{k:'explore',l:'探索'}]" :key="m.k"
-                        @click="mode = m.k as SearchMode"
-                        :class="['px-3 h-7 rounded text-xs font-medium transition',
-                                 mode === m.k ? 'bg-card shadow-card text-accent' : 'text-text-2 hover:text-text']">
-                  {{ m.l }}
-                </button>
-              </div>
-              <div class="ml-auto text-xs text-text-2">
-                共 <span class="mono text-text">2,481</span> 条案例 / <span class="mono text-text">186</span> 份手册
-              </div>
-            </div>
-          </div>
-
-          <!-- 拖拽上传 -->
-          <div
-            @click="fileInput?.click()"
-            @dragover.prevent="dragging = true"
-            @dragleave.prevent="dragging = false"
-            @drop.prevent="onDrop"
-            class="w-44 rounded-btn border-2 border-dashed flex flex-col items-center justify-center gap-1 cursor-pointer transition"
-            :class="dragging ? 'border-accent bg-accent/5' : 'border-border hover:border-accent text-text-2'">
-            <ImageIcon class="w-6 h-6" />
-            <div class="text-xs">{{ dragging ? '松手即可上传' : '拖拽 / 粘贴 / 点击' }}</div>
-            <div class="text-[10px] opacity-70 mono">JPG / PNG · ≤ 10MB</div>
-          </div>
-          <input ref="fileInput" type="file" accept="image/*" multiple class="hidden"
-                 @change="e => onFiles((e.target as HTMLInputElement).files)" />
-        </div>
-
-        <!-- 缩略图 + 大按钮 -->
-        <div class="flex items-end gap-3 mt-3">
-          <div class="flex-1 flex gap-2 flex-wrap">
-            <div v-for="(img, i) in images" :key="i" class="relative w-16 h-16 rounded-btn overflow-hidden bg-bg group">
+          <!-- 图片缩略图 -->
+          <div v-if="imageList.length" class="px-1 pb-2 flex flex-wrap gap-2">
+            <div v-for="(img, i) in imageList" :key="i" class="relative w-14 h-14 rounded-btn overflow-hidden bg-bg group">
               <img :src="img.url" class="w-full h-full object-cover" />
-              <button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center opacity-80 hover:opacity-100"
-                      @click="images.splice(i, 1)">
+              <button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center opacity-80"
+                      @click="imageList.splice(i, 1)">
                 <X class="w-3 h-3" />
               </button>
-              <div class="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[10px] px-1 truncate">{{ img.name }}</div>
             </div>
-            <button v-if="!images.length" @click="fileInput?.click()"
-                    class="text-xs text-text-2 px-3 h-8 rounded border border-dashed border-border hover:border-accent hover:text-accent flex items-center gap-1">
-              <Upload class="w-3 h-3" /> 添加现场照片
+          </div>
+
+          <div class="flex items-center justify-between border-t border-border pt-2 mt-1">
+            <button @click="fileInput?.click()"
+                    class="h-9 w-9 rounded-full hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent" title="上传图片">
+              <Paperclip class="w-4 h-4" />
+            </button>
+            <input ref="fileInput" type="file" accept="image/*" multiple class="hidden"
+                   @change="e => onPickFiles((e.target as HTMLInputElement).files)" />
+            <button @click="onSend" :disabled="sending || (!input.trim() && !imageList.length)"
+                    class="h-9 px-4 rounded-btn bg-accent hover:bg-accent-2 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ai-shine">
+              <Send class="w-4 h-4" />
+              <span>发送</span>
             </button>
           </div>
-          <button @click="onSearch" :disabled="loading"
-                  class="px-6 h-11 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold flex items-center gap-2 ai-shine disabled:opacity-60">
-            <Sparkles class="w-4 h-4" />
-            {{ loading ? 'AI 正在分析图像…' : 'AI 智能检索' }}
-          </button>
+        </div>
+
+        <!-- 示例提示 -->
+        <div class="mt-6">
+          <div class="text-xs text-text-2 mb-2">💡 试试这些问题</div>
+          <div class="flex flex-wrap gap-2">
+            <button v-for="s in SAMPLES" :key="s" @click="useSample(s)"
+                    class="px-3 h-9 rounded-pill border border-border text-sm text-text-2 hover:border-accent hover:text-accent hover:bg-accent/5 transition">
+              {{ s }}
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-8 text-center text-xs text-text-2">
+          数据来源：本地向量知识库（/api/chat/query）· 多模态支持图片输入
         </div>
       </div>
+    </div>
 
-      <!-- AI 摘要 + 可能原因 -->
-      <div v-if="result" class="industrial-card p-4 border-l-4 border-l-ai">
-        <div class="flex items-start gap-3">
-          <div class="w-9 h-9 rounded bg-ai/10 text-ai flex items-center justify-center flex-shrink-0">
-            <Sparkles class="w-5 h-5" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-xs text-text-2 mb-1 flex items-center gap-2">
-              AI 一句话诊断
-              <span class="mono text-[10px] px-1.5 py-0.5 rounded bg-ai/10 text-ai">multimodal-v2.4</span>
+    <!-- ─────────────── 对话状态：消息流 + 底部输入 ─────────────── -->
+    <template v-else>
+      <!-- 顶部：标题 + 清空按钮 -->
+      <header class="flex-shrink-0 px-6 py-3 border-b border-border bg-card flex items-center gap-3">
+        <Sparkles class="w-4 h-4 text-accent" />
+        <h2 class="text-sm font-semibold">设备检修智能检索</h2>
+        <span class="text-xs text-text-2 mono">{{ messages.filter(m => m.role === 'user').length }} 条提问</span>
+        <button @click="clearHistory" class="ml-auto h-8 px-3 rounded-btn text-xs text-text-2 hover:bg-bg hover:text-danger flex items-center gap-1">
+          <Trash2 class="w-3.5 h-3.5" /> 清空对话
+        </button>
+      </header>
+
+      <!-- 消息区 -->
+      <div ref="scrollEl" class="flex-1 overflow-auto px-6 py-6">
+        <div class="max-w-[860px] mx-auto space-y-6">
+          <template v-for="(m, i) in messages" :key="i">
+            <!-- 用户消息 -->
+            <div v-if="m.role === 'user'" class="flex justify-end">
+              <div class="flex items-start gap-3 max-w-[75%]">
+                <div class="bg-accent text-white px-4 py-3 rounded-2xl rounded-tr-sm shadow-card">
+                  <div v-if="m.images.length" class="grid grid-cols-3 gap-1.5 mb-2">
+                    <img v-for="(u, j) in m.images" :key="j" :src="u" class="w-full aspect-square object-cover rounded-btn" />
+                  </div>
+                  <p v-if="m.text" class="text-sm leading-relaxed whitespace-pre-wrap break-words">{{ m.text }}</p>
+                </div>
+                <div class="w-8 h-8 rounded-full bg-bg border border-border flex items-center justify-center flex-shrink-0 text-text-2">
+                  <UserIcon class="w-4 h-4" />
+                </div>
+              </div>
             </div>
-            <div class="text-base leading-relaxed text-text" :class="!done ? 'typing-cursor' : ''">{{ display }}</div>
 
-            <div class="mt-4 pt-3 border-t border-border">
-              <div class="text-xs text-text-2 mb-2">可能原因 Top 3</div>
-              <div class="grid grid-cols-3 gap-3">
-                <div v-for="(c, i) in result.causes" :key="i"
-                     class="bg-bg rounded-card p-3 flex items-center gap-3">
-                  <ConfidenceMeter :value="c.confidence" :size="48" />
-                  <div class="flex-1 min-w-0">
-                    <div class="text-xs text-text-2">原因 {{ i + 1 }}</div>
-                    <div class="text-sm font-medium leading-tight mt-0.5">{{ c.name }}</div>
+            <!-- AI 回复 -->
+            <div v-else class="flex justify-start">
+              <div class="flex items-start gap-3 max-w-[85%]">
+                <div class="w-8 h-8 rounded-full bg-ai/10 text-ai flex items-center justify-center flex-shrink-0">
+                  <Bot class="w-4 h-4" />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <!-- 加载态 -->
+                  <div v-if="m.loading" class="industrial-card p-4 border-l-2 border-l-ai bg-ai/5">
+                    <div class="flex items-center gap-2 text-text-2 text-sm">
+                      <Loader class="w-4 h-4 animate-spin text-ai" />
+                      正在检索知识库 · 大模型推理中…
+                    </div>
+                  </div>
+
+                  <!-- 错误态 -->
+                  <div v-else-if="m.error" class="industrial-card p-4 border-l-2 border-l-danger">
+                    <div class="text-danger text-sm">⚠️ {{ m.error }}</div>
+                  </div>
+
+                  <!-- 正常回复 -->
+                  <div v-else class="industrial-card p-4 border-l-2 border-l-ai">
+                    <div class="text-xs text-text-2 mb-2 flex items-center gap-2">
+                      <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai mono text-[10px]">multimodal-v2.4</span>
+                      <span v-if="m.observation">· 已分析图片</span>
+                    </div>
+
+                    <div v-if="m.observation"
+                         class="mb-3 px-3 py-2 rounded-btn bg-bg text-xs text-text-2 italic">
+                      <ImageIcon class="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+                      图像观察：{{ m.observation }}
+                    </div>
+
+                    <div class="text-base leading-relaxed text-text whitespace-pre-wrap break-words">{{ m.summary }}</div>
+
+                    <!-- 来源引用 -->
+                    <div v-if="m.hits.length" class="mt-4 pt-3 border-t border-border">
+                      <button @click="m.expanded = !m.expanded"
+                              class="text-xs text-text-2 hover:text-accent flex items-center gap-1">
+                        <BookOpen class="w-3.5 h-3.5" />
+                        来源引用 · {{ m.hits.length }} 条
+                        <ChevronDown v-if="!m.expanded" class="w-3.5 h-3.5" />
+                        <ChevronUp v-else class="w-3.5 h-3.5" />
+                      </button>
+                      <ol v-if="m.expanded" class="mt-2 space-y-1.5">
+                        <li v-for="(h, hi) in m.hits" :key="h.id"
+                            class="text-xs px-3 py-2 rounded-btn bg-bg border border-border">
+                          <div class="flex items-start gap-2">
+                            <span class="mono text-text-2">[{{ hi + 1 }}]</span>
+                            <div class="flex-1 min-w-0">
+                              <div class="font-medium text-text">{{ h.title }}</div>
+                              <div v-if="h.snippet" class="mt-0.5 text-text-2 leading-relaxed line-clamp-3">{{ h.snippet }}</div>
+                            </div>
+                            <span class="mono text-text-2 flex-shrink-0">{{ Math.round((h.similarity || 0) * 100) }}%</span>
+                          </div>
+                        </li>
+                      </ol>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
       </div>
 
-      <!-- 结果列表 -->
-      <div class="industrial-card flex-1 overflow-hidden flex flex-col">
-        <div class="flex border-b border-border px-4 flex-shrink-0">
-          <button v-for="t in [
-                  {k:'all',     l:'全部',     n: result?.hits.length || 0},
-                  {k:'manual',  l:'手册片段', n: result?.hits.filter(h=>h.type==='manual').length || 0},
-                  {k:'case',    l:'历史案例', n: result?.hits.filter(h=>h.type==='case').length || 0},
-                  {k:'graph',   l:'图谱节点', n: result?.hits.filter(h=>h.type==='graph').length || 0}]"
-                  :key="t.k"
-                  @click="tab = t.k as any"
-                  :class="['h-11 px-4 text-sm flex items-center gap-2 border-b-2 -mb-px transition',
-                           tab === t.k ? 'border-accent text-accent font-semibold' : 'border-transparent text-text-2 hover:text-text']">
-            {{ t.l }}
-            <span class="mono text-xs px-1.5 rounded bg-bg">{{ t.n }}</span>
-          </button>
-        </div>
-
-        <div v-if="loading" class="flex-1 grid place-items-center text-text-2">
-          <div class="text-center">
-            <Sparkles class="w-8 h-8 mx-auto text-ai animate-pulse" />
-            <div class="mt-2 text-sm">AI 正在分析图像与文本…</div>
-          </div>
-        </div>
-
-        <div v-else class="flex-1 overflow-auto p-4 space-y-3">
-          <article v-for="h in filteredHits" :key="h.id"
-                   class="industrial-card p-4 hover:shadow-float transition cursor-pointer group">
-            <div class="flex items-start gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <StatusTag :type="h.type" />
-                  <h4 class="text-base font-semibold text-text group-hover:text-accent transition">{{ h.title }}</h4>
-                </div>
-                <p class="text-sm text-text-2 leading-relaxed mt-2">
-                  <template v-for="(seg, i) in h.snippet.split(new RegExp(`(${(h.highlights||[]).join('|')})`,'g'))" :key="i">
-                    <span v-if="(h.highlights||[]).includes(seg)" class="text-hl">{{ seg }}</span>
-                    <span v-else>{{ seg }}</span>
-                  </template>
-                </p>
-                <div class="mt-3 flex items-center gap-3 text-xs text-text-2">
-                  <span>来源: {{ h.source }}</span>
-                </div>
-              </div>
-              <div class="w-48 flex-shrink-0 space-y-2">
-                <SimilarityBar :value="h.similarity" />
-                <div class="flex gap-1 justify-end">
-                  <button class="w-7 h-7 rounded hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent" title="查看">
-                    <Eye class="w-3.5 h-3.5" />
-                  </button>
-                  <button class="w-7 h-7 rounded hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent" title="收藏">
-                    <Heart class="w-3.5 h-3.5" />
-                  </button>
-                </div>
+      <!-- 底部固定输入条 -->
+      <div class="flex-shrink-0 border-t border-border bg-card px-6 py-3">
+        <div class="max-w-[860px] mx-auto">
+          <div
+            @dragover.prevent="dragging = true"
+            @dragleave.prevent="dragging = false"
+            @drop="onDrop"
+            class="rounded-card border bg-card transition"
+            :class="dragging ? 'border-accent ring-2 ring-accent/30' : 'border-border'">
+            <div v-if="imageList.length" class="px-3 pt-2 flex flex-wrap gap-2">
+              <div v-for="(img, i) in imageList" :key="i" class="relative w-12 h-12 rounded-btn overflow-hidden bg-bg group">
+                <img :src="img.url" class="w-full h-full object-cover" />
+                <button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center"
+                        @click="imageList.splice(i, 1)">
+                  <X class="w-3 h-3" />
+                </button>
               </div>
             </div>
-          </article>
-
-          <div v-if="!filteredHits.length" class="py-12 text-center text-text-2 text-sm">该 Tab 下暂无命中</div>
+            <div class="flex items-end gap-2 px-2 py-2">
+              <button @click="fileInput?.click()"
+                      class="h-9 w-9 rounded-full hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent flex-shrink-0" title="上传图片">
+                <Paperclip class="w-4 h-4" />
+              </button>
+              <textarea v-model="input" rows="1" @keydown="onKey"
+                        placeholder="继续追问…"
+                        class="flex-1 resize-none bg-transparent outline-none px-1 py-2 text-sm leading-relaxed max-h-32"></textarea>
+              <button @click="onSend" :disabled="sending || (!input.trim() && !imageList.length)"
+                      class="h-9 w-9 rounded-full bg-accent hover:bg-accent-2 text-white flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0">
+                <Send class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div class="mt-1.5 text-[11px] text-text-2 text-center">
+            AI 输出仅供参考，关键检修动作请以现场实测和官方手册为准
+          </div>
         </div>
       </div>
-    </section>
-
-    <AIAssistant />
+    </template>
   </div>
 </template>
+
+<style scoped>
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+</style>
