@@ -1,8 +1,10 @@
 # ===== Web 框架 =====
 fastapi>=0.111.0
 uvicorn[standard]>=0.30
+##
 gunicorn>=22.0
-python-multipart>=0.0.9          # FastAPI UploadFile/Form 必需
+python-multipart>=0.0.9
+##         # FastAPI UploadFile/Form 必需
 
 # ===== 数据校验 / 配置 =====
 pydantic>=2.7
@@ -13,12 +15,16 @@ sqlalchemy>=2.0
 
 # ===== 鉴权 / 加密 =====
 python-jose[cryptography]>=3.3   # JWT 编解码
-bcrypt>=4.0,<5.0                 # 密码哈希
+bcrypt>=4.0,<5.0
+##                # 密码哈希
 
 # ===== LLM / 向量 / RAG =====
-dashscope>=1.20                  # Qwen 文本 / 多模态 / Embedding
-chromadb>=0.5                    # 向量数据库
+dashscope>=1.20
+##                # Qwen 文本 / 多模态 / Embedding
+chromadb>=0.5
+##                # 向量数据库
 
 # ===== 文档解析 =====
 pypdf>=4.2                       # PDF 文本抽取
-python-docx>=1.1                 # DOCX 文本抽取
+python-docx>=1.1
+##               # DOCX 文本抽取
