@@ -41,40 +41,27 @@ request.interceptors.response.use(
   }
 )
 
-/** 包装：始终返回 data；失败回退到 fallback（用于演示态） */
+/**
+ * 包装：返回 {code,msg,data} 信封中的 data；失败抛出错误（FIX5 第 16 项：不再 mock 兜底）。
+ * 注意：本项目后端多数接口直接返回 JSON 体，请优先使用 rawCall。
+ */
 export async function safeCall<T>(
-  fn: () => Promise<{ data: ApiResponse<T> }>,
-  fallback: T
+  fn: () => Promise<{ data: ApiResponse<T> }>
 ): Promise<T> {
-  try {
-    const { data } = await fn()
-    if (data?.code === 0 && data?.data !== undefined) return data.data
-    return fallback
-  } catch (e) {
-    if (import.meta.env.DEV) console.warn('[api] fallback used:', e)
-    return fallback
-  }
+  const { data } = await fn()
+  if (data?.code === 0) return data.data
+  throw new Error(data?.msg || '请求失败')
 }
 
 /**
  * 真实后端调用：FastAPI 直接返回 JSON 体本身（不裹 {code,msg,data}）。
- * 第二参数 fallback 用于网络/后端不可用时的演示降级。
- * 失败时若没有 fallback 会向上抛错，调用方自行 try/catch。
+ * 失败时抛错，由调用方 try/catch 并展示错误状态（FIX5 第 16 项：不再 mock 兜底）。
  */
 export async function rawCall<T>(
-  fn: () => Promise<{ data: T }>,
-  fallback?: T
+  fn: () => Promise<{ data: T }>
 ): Promise<T> {
-  try {
-    const { data } = await fn()
-    return data as T
-  } catch (e) {
-    if (fallback !== undefined) {
-      if (import.meta.env.DEV) console.warn('[api] raw fallback used:', e)
-      return fallback
-    }
-    throw e
-  }
+  const { data } = await fn()
+  return data as T
 }
 
 export function get<T = unknown>(url: string, params?: object, cfg?: AxiosRequestConfig) {

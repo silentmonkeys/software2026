@@ -4,10 +4,13 @@ from app.core.db import Base, engine, SessionLocal
 from app.core.config import settings
 from app.api import auth, kb, chat, ticket, kg, admin
 from app import models  # noqa: register
+from app.core.migrate import run_migrations
 
 Base.metadata.create_all(bind=engine)
+# 旧库平滑升级：为已存在的表补充 FIX5 新增列
+run_migrations()
 
-# FIX4 第 4 项：启动时确保有默认 admin 账号（admin / admin123）
+# 启动时确保有默认 admin 账号（admin / 123456，不可删除）
 def _seed_default_admin():
     db = SessionLocal()
     try:

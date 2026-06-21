@@ -13,7 +13,7 @@ import { onMounted, computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
 import {
-  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket,
+  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket, syncStepProgress,
   type ToolItem, type ManualRef
 } from '@/api/workflow'
 import {
@@ -23,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import { showToast, showFailToast, showConfirmDialog } from 'vant'
 import { renderMarkdown } from '@/utils/markdown'
+import TicketTimeline from '@/components/common/TicketTimeline.vue'
 
 const wf = useWorkflowStore()
 const route = useRoute()
@@ -40,12 +41,15 @@ const isDemo = computed(() =>
 )
 
 const orderId = computed(() => String(route.params.id || ''))
+const ticketNumId = computed(() => orderId.value.startsWith('t-') ? orderId.value.slice(2) : orderId.value)
+const showTimeline = ref(false)
 
 /** 当前选中的大步骤索引（替代旧 Tab 系统） */
 const activeIdx = ref(0)
 const activeStep = computed(() => wf.flow?.steps[activeIdx.value])
 
 const loadFlow = async () => {
+  syncReady.value = false
   const id = orderId.value || undefined
   const f = await getFlow(id)
   wf.setFlow(f)
@@ -54,7 +58,20 @@ const loadFlow = async () => {
   activeIdx.value = firstUndone >= 0 ? firstUndone : 0
   loadTools()
   loadManuals()
+  syncReady.value = true
 }
+
+/** 将已完成的大步骤同步到后端（按用户维度记录时间线，FIX5 第 11 项） */
+const syncReady = ref(false)
+let syncTimer: number | null = null
+watch(() => ({ ...wf.stepDone }), () => {
+  if (!syncReady.value || isDemo.value || !wf.flow) return
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = window.setTimeout(() => {
+    const doneIds = (wf.flow?.steps || []).filter(s => wf.stepDone[s.id]).map(s => s.id)
+    syncStepProgress(orderId.value, doneIds).catch(() => {})
+  }, 400)
+}, { deep: true })
 
 const loadTools = async () => {
   if (isDemo.value) { tools.value = []; toolsError.value = false; return }
@@ -189,6 +206,10 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
       <div class="flex items-start gap-4 flex-wrap">
         <button @click="back" class="h-9 px-3 rounded-btn border border-border bg-bg hover:bg-card flex items-center gap-1.5 text-sm flex-shrink-0">
           <ChevronLeft class="w-4 h-4" /> 返回列表
+        </button>
+        <button v-if="!isDemo" @click="showTimeline = true"
+                class="h-9 px-3 rounded-btn border border-border bg-bg hover:bg-card flex items-center gap-1.5 text-sm flex-shrink-0">
+          <Clock class="w-4 h-4" /> 时间线
         </button>
 
         <div class="flex-1 min-w-72">
@@ -528,4 +549,6 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
     </footer>
   </div>
   <div v-else class="p-12 text-center text-text-2">流程加载中…</div>
+
+  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" @close="showTimeline = false" />
 </template>

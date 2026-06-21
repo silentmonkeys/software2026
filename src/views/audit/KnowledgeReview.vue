@@ -7,19 +7,20 @@
  *  - 已通过：下架（须填原因）
  *  - 通过后由后端触发向量化、入图谱
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import { useUserStore } from '@/stores/user'
 import {
-  listDocs, reviewDoc, type KbDoc, type ReviewAction,
-  STATUS_LABEL, isApprovedStatus
+  listDocs, reviewDoc, exportDoc, type KbDoc, type ReviewAction,
+  STATUS_LABEL
 } from '@/api/kb'
 import {
   ShieldCheck, FileText, Loader, RefreshCw, Search, Check, X, AlertTriangle,
-  ChevronLeft, ArrowDown
+  ChevronLeft, ArrowDown, Download
 } from 'lucide-vue-next'
-import { showToast, showFailToast, showConfirmDialog, showDialog } from 'vant'
+import { showToast, showFailToast, showConfirmDialog } from 'vant'
+import { Field as VanField } from 'vant'
 
 const router = useRouter()
 const { isPC } = useDevice()
@@ -58,30 +59,53 @@ const switchTab = async (t: Tab) => {
   await refresh()
 }
 
-const promptReason = async (title: string, placeholder = '请说明原因') => {
-  // Vant showDialog 没有内置 input；用浏览器 prompt 简化（也可后续替换为自定义弹窗）
-  const reason = window.prompt(title, '')
-  if (reason === null) return null
-  if (!reason.trim()) {
-    void showDialog({ title: '提示', message: '原因不能为空' })
+const promptReason = async (d: KbDoc, action: Extract<ReviewAction, 'reject' | 'take_down'>): Promise<string | null> => {
+  const label = action === 'reject' ? '驳回' : '下架'
+  reasonInput.value = ''
+  try {
+    await showConfirmDialog({
+      title: `${label}「${d.title}」`,
+      confirmButtonText: `确认${label}`,
+      confirmButtonColor: '#E5484D',
+      message: () => h('div', { style: 'text-align:left' }, [
+        h('div', { style: 'font-size:13px;color:#6B7280;margin-bottom:8px' },
+          action === 'reject'
+            ? '驳回后该文档不会进入检索/图谱，请填写原因告知提交人。'
+            : '下架后该文档将从检索/图谱中移除，请填写原因。'),
+        h(VanField as any, {
+          modelValue: reasonInput.value,
+          'onUpdate:modelValue': (v: string) => (reasonInput.value = v),
+          type: 'textarea',
+          rows: 3,
+          autosize: true,
+          placeholder: `请输入${label}原因`,
+          maxlength: 200,
+          showWordLimit: true,
+          style: 'border:1px solid #E5E7EB;border-radius:8px;'
+        })
+      ])
+    })
+  } catch {
     return null
   }
-  return reason.trim()
+  if (!reasonInput.value.trim()) {
+    showFailToast('原因不能为空')
+    return null
+  }
+  return reasonInput.value.trim()
 }
+
+const reasonInput = ref('')
 
 const doReview = async (d: KbDoc, action: ReviewAction) => {
   let reason: string | undefined
-  if (action === 'reject') {
-    const r = await promptReason(`驳回「${d.title}」原因：`)
-    if (!r) return
-    reason = r
-  } else if (action === 'take_down') {
-    const r = await promptReason(`下架「${d.title}」原因：`)
+  if (action === 'reject' || action === 'take_down') {
+    const r = await promptReason(d, action)
     if (!r) return
     reason = r
   } else {
     try {
-      await showConfirmDialog({ title: '通过审核?', message: `确认通过「${d.title}」？通过后会进入 RAG 检索与图谱。` })
+      await showConfirmDialog({ title: '通过审核', message: `确认通过「${d.title}」？通过后会进入 RAG 检索与图谱。` })
     } catch { return }
   }
   try {
@@ -94,6 +118,20 @@ const doReview = async (d: KbDoc, action: ReviewAction) => {
     await refresh()
   } catch {
     showFailToast('操作失败，请确认后端接口可用')
+  }
+}
+
+const exportingId = ref<number | null>(null)
+const doExport = async (d: KbDoc) => {
+  if (exportingId.value) return
+  exportingId.value = d.id
+  try {
+    await exportDoc(d.id, 'pdf', d.title)
+    showToast({ type: 'success', message: '已导出 PDF' })
+  } catch {
+    showFailToast('导出失败，请稍后重试')
+  } finally {
+    exportingId.value = null
   }
 }
 
@@ -187,6 +225,12 @@ const STATUS_CLS: Record<string, string> = {
             </div>
           </div>
 
+          <!-- 导出（所有 Tab 通用） -->
+          <button @click="doExport(d)" :disabled="exportingId === d.id"
+                  class="h-8 px-3 rounded-btn border border-border text-text-2 text-xs flex items-center gap-1 hover:border-accent hover:text-accent disabled:opacity-60">
+            <Loader v-if="exportingId === d.id" class="w-3.5 h-3.5 animate-spin" />
+            <Download v-else class="w-3.5 h-3.5" /> 导出
+          </button>
           <!-- 待审：通过 / 驳回 -->
           <template v-if="tab === 'pending'">
             <button @click="doReview(d, 'approve')"

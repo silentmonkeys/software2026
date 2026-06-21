@@ -56,10 +56,9 @@ const onLogout = async () => { await user.logout(); router.push('/login') }
             </div>
             <div class="flex-1 min-w-0">
               <div class="font-semibold truncate">{{ user.info?.name || '访客' }}</div>
-              <div class="text-xs opacity-70 truncate">{{ ROLE_LABEL[user.role] }} · {{ user.info?.workshop || '-' }}</div>
+              <div class="text-xs opacity-70 truncate">{{ ROLE_LABEL[user.role] }}</div>
             </div>
           </div>
-          <span class="xinchuang-badge mt-3"><span class="dot"></span>LoongArch | 银河麒麟 V11</span>
         </div>
 
         <nav class="flex-1 overflow-auto p-2">

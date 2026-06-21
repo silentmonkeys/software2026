@@ -1,62 +1,41 @@
-import { request, rawCall, safeCall, get, post } from './request'
-import type { Role } from '@/utils/permission'
-
-/**
- * 后端用户角色（与数据库一致）
- *  - worker / leader / auditor / admin
- */
-export type BackendRole = 'worker' | 'leader' | 'auditor' | 'admin'
+import { request, rawCall } from './request'
+import type { FrontendRole, BackendRole } from '@/constants/roles'
+import { mapFrontendRole, mapBackendRole } from '@/constants/roles'
 
 export interface SysUser {
   id: number
   username: string
   role: BackendRole
+  isDefaultAdmin: boolean
   createdAt: string | null
 }
 
-/** 前端 Role → 后端角色（提交时用） */
-export function frontendRoleToBackend(r: Role): BackendRole {
-  switch (r) {
-    case 'admin':     return 'admin'
-    case 'auditor':   return 'auditor'
-    case 'frontline': return 'worker'
-    case 'guest':     return 'worker'
-  }
-}
+// 兼容旧引用名（统一来源在 src/constants/roles.ts）
+export const frontendRoleToBackend = (r: FrontendRole): BackendRole => mapFrontendRole(r)
+export const backendRoleToFrontend = (r: string): FrontendRole => mapBackendRole(r)
+export type { BackendRole }
 
-/** 后端 → 前端角色（展示时用） */
-export function backendRoleToFrontend(r: string): Role {
-  switch ((r || '').toLowerCase()) {
-    case 'admin':   return 'admin'
-    case 'auditor': return 'auditor'
-    case 'leader':  return 'auditor'
-    default:        return 'frontline'
-  }
-}
+/** GET /api/admin/users（仅 admin） */
+export const listUsers = (): Promise<SysUser[]> =>
+  rawCall<SysUser[]>(() => request.get<SysUser[]>('/admin/users'))
 
-/**
- * GET /api/admin/users（仅 admin）
- *  - 后端 401/403/网络错误 → rawCall 兜底为空数组（UI 自行渲染空态）
- *  - 不再返回任何业务 mock 数据
- */
-export const listUsers = async (): Promise<SysUser[]> => {
-  return rawCall<SysUser[]>(() => request.get<SysUser[]>('/admin/users'), [])
-}
+/** 创建账户（员工/审查员/管理员） */
+export const createUser = (body: { username: string; password?: string; role: BackendRole }) =>
+  rawCall<SysUser>(() => request.post<SysUser>('/admin/users', body))
 
-/**
- * PUT /api/admin/users/{userId}/role
- *  - body: { role: 'worker' | 'auditor' | 'admin' | 'leader' }
- */
+/** 修改用户名 / 角色 */
+export const updateUser = (userId: number, body: { username?: string; role?: BackendRole }) =>
+  rawCall<SysUser>(() => request.put<SysUser>(`/admin/users/${userId}`, body))
+
+/** 仅改角色（兼容旧调用） */
 export const updateUserRole = (userId: number, role: BackendRole) =>
-  request.put<{ ok: boolean; id: number; role: BackendRole }>(
-    `/admin/users/${userId}/role`,
-    { role }
-  ).then(r => r.data)
+  rawCall<SysUser>(() => request.put<SysUser>(`/admin/users/${userId}/role`, { role }))
 
-/* ===== 兼容旧接口（设备库 / SOP 模板 占位）===== */
-export interface DeviceModel { id: string; model: string; vendor: string; category: string; updatedAt: string }
-export interface SopTpl { id: string; name: string; deviceModel: string; level: number; steps: number; updatedAt: string }
+/** 重置密码为 123456 */
+export const resetPassword = (userId: number) =>
+  rawCall<{ ok: boolean; password: string }>(() =>
+    request.put<{ ok: boolean; password: string }>(`/admin/users/${userId}/reset-password`, {}))
 
-export const listDevices = () => safeCall<DeviceModel[]>(() => get('/admin/devices'), [])
-export const listSops    = () => safeCall<SopTpl[]>(() => get('/admin/sops'),       [])
-export const saveSop     = (p: object) => safeCall(() => post('/admin/sop', p), { ok: true })
+/** 删除账户（默认 admin 不可删） */
+export const deleteUser = (userId: number) =>
+  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }>(`/admin/users/${userId}`))

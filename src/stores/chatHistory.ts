@@ -20,6 +20,16 @@ export interface SourceItem {
   similarity?: number
 }
 
+/** 检索结果中推荐的工单（FIX5 第 13 项） */
+export interface RecommendedTicketRef {
+  id: number
+  device: string
+  fault: string
+  summary: string
+  added: boolean
+  score: number
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -31,6 +41,8 @@ export interface ChatMessage {
   sources?: SourceItem[]
   /** 仅 assistant：图像观察文本 */
   imageObservation?: string
+  /** 仅 assistant：推荐工单（FIX5 第 13 项） */
+  recommendedTickets?: RecommendedTicketRef[]
   /** 错误态 */
   error?: string
   createdAt: number

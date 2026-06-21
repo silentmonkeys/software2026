@@ -1,0 +1,1633 @@
+ ▐▛███▜▌   Claude Code v2.1.185
+▝▜█████▛▘  glm-5.2 · API Usage Billing
+  ▘▘ ▝▝    ~/Documents/software2026
+
+
+❯ @CHANGE/2026-06-21-160904-needsfix5md.txt 根据上次中断继续进行                
+
+  Thought for 5s (ctrl+o to expand)
+
+● I'll read the referenced change file to understand what was interrupted and
+  needs to continue.
+
+  Thought for 5s, read 1 file (ctrl+o to expand)
+
+● This is a large interrupted session. Let me read the rest of the change log to
+  understand what was completed and what remains.
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● The previous session hit a quota limit after completing the backend foundation
+  and frontend API layer, and spawned 2 subagents to rewrite views. Let me
+  assess the current state: read the spec and run a typecheck to see what's
+  broken.
+
+  Thought for 6s, read 1 file (ctrl+o to expand)
+
+● Now let me check the current state — run typecheck to map remaining breakage,
+  and inspect what the subagents created.
+
+● Bash(npm run typecheck 2>&1 | head -80)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+     … +14 lines (ctrl+o to expand)
+
+  Thought for 14s, listed 1 directory (ctrl+o to expand)
+
+● Good — backend and API layer are done, and the subagents rewrote most views.
+  Typecheck shows only a few remaining errors. Let me set up task tracking and
+  gather the remaining-work picture in parallel.
+
+● Let me gather the state of the remaining files in parallel.
+
+● Bash(echo "=== LoongArch/信创 UI labels (src only) ===" && grep -rln
+      "LoongArch\|银河麒麟\|信创\|龙芯\|LoongArch64" src/ 2>/dev/null; echo "===
+      v-html usages ===" && grep -rn…)
+  ⎿  === LoongArch/信创 UI labels (src only) ===
+     src/assets/styles/industrial.css
+     src/components/pc/SideNav.vue
+     … +22 lines (ctrl+o to expand)
+
+  Thought for 14s, read 1 file (ctrl+o to expand)
+
+● Let me understand the workflow view structure and whether WorkList.vue is
+  actually wired.
+
+  Thought for 19s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● WorkList.vue is the list page using the old API — it's the core of items
+  8/9/10. Let me read the profile views and check how the detail view syncs step
+  progress before rewriting.
+
+  Thought for 17s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Profile is comprehensive — only the formatTime(ev.at) null issue remains. Let
+  me check the format util and workflow store before rewriting.
+
+  Thought for 8s, searched for 1 pattern (ctrl+o to expand)
+
+● Now I have full context. Let me start executing. First the quick fixes: make
+  formatTime tolerate null (robust, fixes profile/Pc.vue), then rewrite
+  WorkList.vue to the new ticket model.
+
+  Read 1 file (ctrl+o to expand)
+● Update(src/utils/format.ts)
+  ⎿  Added 2 lines, removed 1 line
+      1  /** 时间、置信度、设备型号等格式化 */
+      2  
+      3 -export function formatTime(t: string | number | Date): string { 
+      3 +export function formatTime(t: string | number | Date | null | un
+        +defined): string {                                              
+      4 +  if (t === null || t === undefined || t === '') return '-'     
+      5    const d = new Date(t)
+      6    if (isNaN(d.getTime())) return '-'
+      7    const pad = (n: number) => String(n).padStart(2, '0')
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now the main rewrite: WorkList.vue. Let me verify the current API exports
+  first.
+
+● Bash(echo "=== workflow.ts exports ===" && grep -n
+      "^export\|listFlows\|FlowsResult" src/api/workflow.ts | head -40; echo
+      "=== ticket.ts exports ===" && grep -n "^ex…)
+  ⎿  === workflow.ts exports ===
+     7:export interface ToolItem {
+     15:export interface SubStep {
+     … +36 lines (ctrl+o to expand)
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now I'll rewrite WorkList.vue for the new ticket model — covering items 8
+  (delete-with-reason), 9 (mine vs recommended), 10 (recommend-before-create).
+
+● Write(src/views/workflow/WorkList.vue)
+  ⎿  Added 337 lines, removed 96 lines
+       1  <script setup lang="ts">
+       2  /**
+       3 - * 工单列表（FIX3 第 8 项）                                    
+       4 - * - 状态简化为 待办 / 已完成                                  
+       5 - * - 默认筛选：待办；已完成进入折叠区                          
+       6 - * - 支持新建 AI 工单                                          
+       3 + * 作业指引 · 工单列表（FIX5 第 8/9/10 项）                    
+       4 + * - 我的工单：当前用户已添加的工单，显示自己的进度            
+       5 + * - 推荐工单：他人创建、我未添加的工单，可一键"添加到我的工单"
+       6 + * - 新建工单前先做相似度推荐（item 10），无合适项再新建       
+       7 + * - 删除：已完成无需理由；未完成必须填写理由（需求错误 / 误触 
+         +/ 其他）                                                       
+       8 + * - 无 Mock：接口失败显示错误状态                             
+       9   */
+      10  import { onMounted, ref, computed, reactive } from 'vue'
+      11  import { useRouter } from 'vue-router'
+      10 -import { listFlows, createTicket, type WorkItem } from '@/api/w
+         -orkflow'                                                       
+      12 +import { listFlows, type WorkItem } from '@/api/workflow'      
+      13 +import {                                                       
+      14 +  createTicket, recommendTickets, addTicketToMine, deleteTicket
+         +,                                                              
+      15 +  type TicketSummary                                           
+      16 +} from '@/api/ticket'                                          
+      17  import { useDevice } from '@/composables/useDevice'
+      12 -import { showToast, showFailToast } from 'vant'                
+      18 +import { showToast, showFailToast, showSuccessToast } from 'van
+         +t'                                                             
+      19  import {
+      20    ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, 
+          ChevronDown,
+      15 -  Plus, Loader, X, Sparkles, WifiOff, Inbox                    
+      21 +  Plus, Loader, X, Sparkles, Inbox, Trash2, UserPlus, Users, Ch
+         +eckCircle2                                                     
+      22  } from 'lucide-vue-next'
+      23 +import EmptyState from '@/components/common/EmptyState.vue'    
+      24  
+      25  const router = useRouter()
+      26  const { isPC } = useDevice()
+      27  
+      21 -const list = ref<WorkItem[]>([])                               
+      22 -const offline = ref(false)                                     
+      28 +const mine = ref<WorkItem[]>([])                               
+      29 +const recommended = ref<WorkItem[]>([])                        
+      30  const loaded = ref(false)
+      31 +const loadError = ref<string | null>(null)                     
+      32  const q = ref('')
+      33  const showDone = ref(false)
+      34 +const showRecommend = ref(true)                                
+      35  
+      36  const refresh = async () => {
+      28 -  const res = await listFlows()                                
+      29 -  list.value = res.items                                       
+      30 -  offline.value = res.offline                                  
+      31 -  loaded.value = true                                          
+      37 +  loadError.value = null                                       
+      38 +  try {                                                        
+      39 +    const res = await listFlows()                              
+      40 +    mine.value = res.mine                                      
+      41 +    recommended.value = res.recommended                        
+      42 +  } catch (e: any) {                                           
+      43 +    loadError.value = e?.message || '服务不可用，请确认后端已启
+         +动并已登录'                                                    
+      44 +    mine.value = []                                            
+      45 +    recommended.value = []                                     
+      46 +  } finally {                                                  
+      47 +    loaded.value = true                                        
+      48 +  }                                                            
+      49  }
+      50  onMounted(refresh)
+      51  
+     ...
+       53    !q.value || it.name.includes(q.value) || it.deviceModel.incl
+           udes(q.value)
+       54  
+       55  const pendingList = computed(() =>
+       39 -  list.value.filter(it => it.status === '待办' && matchKeyword
+          -(it))                                                         
+       56 +  mine.value.filter(it => it.status === '待办' && matchKeyword
+          +(it))                                                         
+       57  )
+       58  const doneList = computed(() =>
+       42 -  list.value.filter(it => it.status === '已完成' && matchKeywo
+          -rd(it))                                                       
+       59 +  mine.value.filter(it => it.status === '已完成' && matchKeywo
+          +rd(it))                                                       
+       60  )
+       61 +const recommendList = computed(() => recommended.value.filter(
+          +matchKeyword))                                                
+       62  
+       63  const open = (it: WorkItem) => router.push(`/workflow/${it.id}
+           `)
+       64  
+       65 +/* ---------------- 添加他人工单到我的 ---------------- */    
+       66 +const adding = ref<Record<number, boolean>>({})               
+       67 +const onAdd = async (it: WorkItem) => {                       
+       68 +  adding.value[it.ticketId] = true                            
+       69 +  try {                                                       
+       70 +    await addTicketToMine(it.ticketId)                        
+       71 +    showSuccessToast('已添加到我的工单')                      
+       72 +    await refresh()                                           
+       73 +  } catch (e: any) {                                          
+       74 +    showFailToast(e?.message || '添加失败')                   
+       75 +  } finally {                                                 
+       76 +    adding.value[it.ticketId] = false                         
+       77 +  }                                                           
+       78 +}                                                             
+       79 +                                                              
+       80 +/* ---------------- 删除工单 ---------------- */              
+       81 +const delTarget = ref<WorkItem | null>(null)                  
+       82 +const delReason = ref<'需求错误' | '误触' | '其他' | ''>('')  
+       83 +const delOther = ref('')                                      
+       84 +const deleting = ref(false)                                   
+       85 +                                                              
+       86 +const askDelete = (it: WorkItem) => {                         
+       87 +  delTarget.value = it                                        
+       88 +  delReason.value = ''                                        
+       89 +  delOther.value = ''                                         
+       90 +}                                                             
+       91 +const confirmDelete = async () => {                           
+       92 +  const it = delTarget.value                                  
+       93 +  if (!it) return                                             
+       94 +  let reason: string | undefined                              
+       95 +  if (it.status !== '已完成') {                               
+       96 +    if (!delReason.value) { showFailToast('请选择删除理由'); r
+          +eturn }                                                       
+       97 +    if (delReason.value === '其他') {                         
+       98 +      if (!delOther.value.trim()) { showFailToast('请填写其他 
+          +理由'); return }                                              
+       99 +      reason = delOther.value.trim()                          
+      100 +    } else {                                                  
+      101 +      reason = delReason.value                                
+      102 +    }                                                         
+      103 +  }                                                           
+      104 +  deleting.value = true                                       
+      105 +  try {                                                       
+      106 +    await deleteTicket(it.ticketId, reason)                   
+      107 +    showSuccessToast('已删除')                                
+      108 +    delTarget.value = null                                    
+      109 +    await refresh()                                           
+      110 +  } catch (e: any) {                                          
+      111 +    showFailToast(e?.message || '删除失败')                   
+      112 +  } finally {                                                 
+      113 +    deleting.value = false                                    
+      114 +  }                                                           
+      115 +}                                                             
+      116 +                                                              
+      117 +/* ---------------- 新建工单（先推荐再新建） ---------------- 
+          +*/                                                            
+      118  const showCreate = ref(false)
+      119  const creating = ref(false)
+      120 +const recommending = ref(false)                               
+      121  const draft = reactive({ device: '', fault: '' })
+       50 -const openCreate = () => { draft.device = ''; draft.fault = ''
+          -; showCreate.value = true }                                   
+       51 -const submitCreate = async () => {                            
+      122 +const createMatches = ref<TicketSummary[]>([])                
+      123 +const showMatchStep = ref(false)                              
+      124 +                                                              
+      125 +const openCreate = () => {                                    
+      126 +  draft.device = ''                                           
+      127 +  draft.fault = ''                                            
+      128 +  createMatches.value = []                                    
+      129 +  showMatchStep.value = false                                 
+      130 +  showCreate.value = true                                     
+      131 +}                                                             
+      132 +                                                              
+      133 +/** 第一步：相似度推荐 */                                     
+      134 +const findSimilar = async () => {                             
+      135    if (!draft.device.trim() || !draft.fault.trim()) {
+      136      showFailToast('请填写设备与故障描述')
+      137      return
+      138    }
+      139 +  recommending.value = true                                   
+      140 +  try {                                                       
+      141 +    createMatches.value = await recommendTickets({            
+      142 +      device: draft.device.trim(), fault: draft.fault.trim()  
+      143 +    })                                                        
+      144 +    if (createMatches.value.length) {                         
+      145 +      showMatchStep.value = true                              
+      146 +    } else {                                                  
+      147 +      await doCreate()                                        
+      148 +    }                                                         
+      149 +  } catch {                                                   
+      150 +    // 推荐失败不阻断，直接进入新建                           
+      151 +    await doCreate()                                          
+      152 +  } finally {                                                 
+      153 +    recommending.value = false                                
+      154 +  }                                                           
+      155 +}                                                             
+      156 +                                                              
+      157 +const addMatch = async (t: TicketSummary) => {                
+      158 +  adding.value[t.id] = true                                   
+      159 +  try {                                                       
+      160 +    await addTicketToMine(t.id)                               
+      161 +    showSuccessToast('已添加到我的工单')                      
+      162 +    showCreate.value = false                                  
+      163 +    await refresh()                                           
+      164 +    router.push(`/workflow/t-${t.id}`)                        
+      165 +  } catch (e: any) {                                          
+      166 +    showFailToast(e?.message || '添加失败')                   
+      167 +  } finally {                                                 
+      168 +    adding.value[t.id] = false                                
+      169 +  }                                                           
+      170 +}                                                             
+      171 +                                                              
+      172 +/** 第二步：确认新建 */                                       
+      173 +const doCreate = async () => {                                
+      174    creating.value = true
+      175    try {
+      176      const res = await createTicket({ device: draft.device.trim
+           (), fault: draft.fault.trim() })
+     ...
+      178      showCreate.value = false
+      179      await refresh()
+      180      router.push(`/workflow/t-${res.id}`)
+       63 -  } catch {                                                   
+       64 -    showFailToast('创建失败：请确认后端已启动并已登录')       
+      181 +  } catch (e: any) {                                          
+      182 +    showFailToast(e?.message || '创建失败：请确认后端已启动并 
+          +已登录')                                                      
+      183    } finally {
+      184      creating.value = false
+      185    }
+     ...
+      189    '待办':   'bg-accent/10 text-accent border-accent/30',
+      190    '已完成': 'bg-success/10 text-success border-success/30'
+      191  }
+       74 -                                                              
+       75 -const LEVEL_LABEL = ['', '一级·常规', '二级·重要', '三级·紧急'
+          -]                                                             
+       76 -const LEVEL_CLS = ['', 'text-success', 'text-warning', 'text-d
+          -anger']                                                       
+       77 -                                                              
+      192  const formatMin = (m: number) => m < 60 ? `${m} 分钟` : `${Mat
+           h.floor(m / 60)}h ${m % 60}m`
+      193 +const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.d
+          +oneSteps / it.totalSteps) * 100) : 0                          
+      194  </script>
+      195  
+      196  <template>
+     ...
+      200        <div>
+      201          <div class="text-xs text-text-2">作业指引 / 列表</div>
+      202          <h1 class="text-2xl font-bold text-primary mt-1">作业
+           指引</h1>
+       88 -        <div class="text-sm text-text-2 mt-1">默认仅显示「待办
+          -」工单，已完成的工单可在下方折叠区查看</div>                  
+      203 +        <div class="text-sm text-text-2 mt-1">我的工单显示个人
+          +进度；他人创建的工单作为推荐，可一键添加</div>                
+      204        </div>
+      205        <button @click="openCreate"
+      206                class="h-10 px-4 rounded-btn bg-accent hover:bg-
+           accent-2 text-white font-semibold flex items-center gap-2 ai-s
+           hine">
+     ...
+      208        </button>
+      209      </header>
+      210  
+       96 -    <div v-if="offline" class="mb-4 px-4 py-2 rounded-btn bg-w
+          -arning/10 border border-warning/30 text-warning text-sm flex i
+          -tems-center gap-2">                                           
+       97 -      <WifiOff class="w-4 h-4" />                             
+       98 -      <span>当前为离线模式，展示示例数据。请确认后端已启动并已
+          -登录。</span>                                                 
+      211 +    <div v-if="loadError" class="mb-4 px-4 py-2 rounded-btn bg
+          +-danger/10 border border-danger/30 text-danger text-sm flex it
+          +ems-center gap-2">                                            
+      212 +      <AlertTriangle class="w-4 h-4" />                       
+      213 +      <span>{{ loadError }}</span>                            
+      214 +      <button @click="refresh" class="ml-auto h-7 px-3 rounded
+          +-btn border border-danger/40 text-xs hover:bg-danger/10">重试<
+          +/button>                                                      
+      215      </div>
+      216  
+      217      <div class="industrial-card p-3 flex items-center gap-3 mb
+           -4">
+     ...
+      223        <div class="ml-auto text-sm text-text-2">
+      224          待办 <span class="font-semibold text-text">{{ pendingL
+           ist.length }}</span>
+      225          · 已完成 <span class="font-semibold text-text">{{ done
+           List.length }}</span>
+      226 +        · 推荐 <span class="font-semibold text-text">{{ recomm
+          +endList.length }}</span>                                      
+      227        </div>
+      228      </div>
+      229  
+      113 -    <!-- 待办 -->                                             
+      230 +    <!-- 我的工单 -->                                         
+      231      <section>
+      232        <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+      116 -        <button v-for="it in pendingList" :key="it.id"        
+      117 -                @click="open(it)"                             
+      118 -                class="industrial-card p-5 text-left hover:sha
+          -dow-float hover:-translate-y-0.5 transition group">           
+      233 +        <div v-for="it in pendingList" :key="it.id"           
+      234 +             class="industrial-card p-5 text-left hover:shadow
+          +-float hover:-translate-y-0.5 transition group cursor-pointer 
+          +relative"                                                     
+      235 +             @click="open(it)">                               
+      236            <div class="flex items-start gap-3">
+      237              <div class="w-11 h-11 rounded-card flex-shrink-0 f
+           lex items-center justify-center"
+      238                   :class="it.hazardous ? 'bg-warning/10 text-wa
+           rning' : 'bg-accent/10 text-accent'">
+     ...
+      241              </div>
+      242              <div class="flex-1 min-w-0">
+      243                <div class="text-base font-semibold leading-snug
+            group-hover:text-accent transition">{{ it.name }}</div>
+      127 -              <div class="text-xs text-text-2 mt-1 mono">     
+      128 -                {{ it.id }}                                   
+      129 -                <span v-if="it.demo" class="ml-1 px-1 py-0.5 r
+          -ounded bg-warning/10 text-warning border border-warning/30 tex
+          -t-[10px]">示例</span>                                         
+      130 -              </div>                                          
+      244 +              <div class="text-xs text-text-2 mt-1 mono">{{ it
+          +.id }}</div>                                                  
+      245              </div>
+      246              <span class="px-2 py-0.5 rounded-pill text-xs bord
+           er whitespace-nowrap" :class="STATUS_CLS[it.status]">
+      247                {{ it.status }}
+     ...
+      255              <div class="flex items-center gap-1.5 text-text-2"
+           >
+      256                <Clock class="w-3.5 h-3.5" /> {{ formatMin(it.es
+           timatedMinutes) }}
+      257              </div>
+      144 -            <div class="flex items-center gap-1.5">           
+      145 -              <span :class="LEVEL_CLS[it.level]">{{ LEVEL_LABE
+          -L[it.level] }}</span>                                         
+      258 +          </div>                                              
+      259 +                                                              
+      260 +          <!-- 进度条 -->                                     
+      261 +          <div class="mt-3">                                  
+      262 +            <div class="flex items-center justify-between text
+          +-[11px] text-text-2 mb-1">                                    
+      263 +              <span>进度 {{ it.doneSteps }}/{{ it.totalSteps }
+          +}</span>                                                      
+      264 +              <span class="mono">{{ pct(it) }}%</span>        
+      265              </div>
+      147 -            <div class="flex items-center gap-1.5 text-text-2"
+          ->                                                             
+      148 -              难度 <span class="font-medium text-text">{{ it.d
+          -ifficulty }}</span>                                           
+      266 +            <div class="h-1.5 rounded-full bg-border overflow-
+          +hidden">                                                      
+      267 +              <div class="h-full bg-accent transition-all" :st
+          +yle="{ width: pct(it) + '%' }"></div>                         
+      268              </div>
+      269            </div>
+      270  
+      271            <div class="mt-4 pt-3 border-t border-border flex it
+           ems-center justify-between text-xs text-text-2">
+      272              <span class="truncate">{{ it.workshop || '—' }}</s
+           pan>
+      154 -            <span class="text-accent group-hover:translate-x-0
+          -.5 transition flex items-center gap-1">                       
+      155 -              进入 <ChevronRight class="w-3.5 h-3.5" />       
+      156 -            </span>                                           
+      273 +            <button class="text-danger hover:text-danger/80 fl
+          +ex items-center gap-1" @click.stop="askDelete(it)">           
+      274 +              <Trash2 class="w-3.5 h-3.5" /> 删除             
+      275 +            </button>                                         
+      276            </div>
+      158 -        </button>                                             
+      277 +        </div>                                                
+      278        </div>
+      279  
+      161 -      <div v-if="loaded && pendingList.length === 0 && !offlin
+          -e"                                                            
+      162 -           class="industrial-card p-12 text-center mt-2">     
+      163 -        <Inbox class="w-12 h-12 mx-auto text-text-2 opacity-60
+          -" />                                                          
+      164 -        <div class="mt-3 text-base font-semibold">暂无待办工单
+          -</div>                                                        
+      165 -        <div class="mt-1 text-sm text-text-2">点击右上角"新建 
+          -AI 工单"，让大模型生成检修方案</div>                          
+      166 -      </div>                                                  
+      280 +      <EmptyState v-if="loaded && pendingList.length === 0 && 
+          +!loadError"                                                   
+      281 +                  title="暂无待办工单"                        
+      282 +                  desc="点击右上角“新建 AI 工单”，或从下方推荐
+          +工单中添加" class="mt-2" />                                   
+      283      </section>
+      284  
+      285      <!-- 已完成（折叠） -->
+      286      <section v-if="doneList.length" class="mt-6">
+      287        <button class="w-full h-11 px-4 rounded-card border bord
+           er-border bg-card hover:bg-bg flex items-center gap-2 transiti
+           on"
+      288                @click="showDone = !showDone">
+      173 -        <ChevronDown class="w-4 h-4 text-text-2 transition-tra
+          -nsform"                                                       
+      174 -                     :class="showDone ? 'rotate-180' : ''" /> 
+      289 +        <ChevronDown class="w-4 h-4 text-text-2 transition-tra
+          +nsform" :class="showDone ? 'rotate-180' : ''" />              
+      290          <span class="text-sm font-semibold">已完成（{{ doneLis
+           t.length }}）</span>
+      291          <span class="ml-auto text-xs text-text-2">{{ showDone 
+           ? '点击收起' : '点击展开查看' }}</span>
+      292        </button>
+      293        <div v-if="showDone" class="grid grid-cols-2 lg:grid-col
+           s-3 gap-4 mt-3">
+      179 -        <button v-for="it in doneList" :key="it.id"           
+      180 -                @click="open(it)"                             
+      181 -                class="industrial-card p-5 text-left opacity-8
+          -0 hover:opacity-100 hover:shadow-float transition">           
+      294 +        <div v-for="it in doneList" :key="it.id"              
+      295 +             class="industrial-card p-5 text-left opacity-80 h
+          +over:opacity-100 hover:shadow-float transition cursor-pointer"
+      296 +             @click="open(it)">                               
+      297            <div class="flex items-start gap-3">
+      298              <div class="w-10 h-10 rounded-card flex-shrink-0 b
+           g-success/10 text-success flex items-center justify-center">
+      184 -              <ListChecks class="w-5 h-5" />                  
+      299 +              <CheckCircle2 class="w-5 h-5" />                
+      300              </div>
+      301              <div class="flex-1 min-w-0">
+      302                <div class="text-sm font-semibold leading-snug">
+           {{ it.name }}</div>
+      303                <div class="text-[11px] text-text-2 mt-1 mono">{
+           { it.id }} · {{ it.deviceModel }}</div>
+      304              </div>
+      190 -            <span class="px-2 py-0.5 rounded-pill text-xs bord
+          -er whitespace-nowrap" :class="STATUS_CLS[it.status]">         
+      191 -              {{ it.status }}                                 
+      192 -            </span>                                           
+      305 +            <button class="text-danger hover:text-danger/80 fl
+          +ex-shrink-0" @click.stop="askDelete(it)">                     
+      306 +              <Trash2 class="w-4 h-4" />                      
+      307 +            </button>                                         
+      308            </div>
+      194 -        </button>                                             
+      309 +        </div>                                                
+      310        </div>
+      311      </section>
+      312 +                                                              
+      313 +    <!-- 推荐工单（折叠） -->                                 
+      314 +    <section v-if="recommendList.length" class="mt-6">        
+      315 +      <button class="w-full h-11 px-4 rounded-card border bord
+          +er-border bg-card hover:bg-bg flex items-center gap-2 transiti
+          +on"                                                           
+      316 +              @click="showRecommend = !showRecommend">        
+      317 +        <Users class="w-4 h-4 text-ai" />                     
+      318 +        <span class="text-sm font-semibold">推荐工单（{{ recom
+          +mendList.length }}）</span>                                   
+      319 +        <ChevronDown class="ml-auto w-4 h-4 text-text-2 transi
+          +tion-transform" :class="showRecommend ? 'rotate-180' : ''" /> 
+      320 +      </button>                                               
+      321 +      <div v-if="showRecommend" class="grid grid-cols-2 lg:gri
+          +d-cols-3 gap-4 mt-3">                                         
+      322 +        <div v-for="it in recommendList" :key="it.id" class="i
+          +ndustrial-card p-5 border-dashed">                            
+      323 +          <div class="flex items-start gap-3">                
+      324 +            <div class="w-10 h-10 rounded-card flex-shrink-0 b
+          +g-ai/10 text-ai flex items-center justify-center">            
+      325 +              <ListChecks class="w-5 h-5" />                  
+      326 +            </div>                                            
+      327 +            <div class="flex-1 min-w-0">                      
+      328 +              <div class="text-sm font-semibold leading-snug">
+          +{{ it.name }}</div>                                           
+      329 +              <div class="text-[11px] text-text-2 mt-1 mono">{
+          +{ it.deviceModel }} · 共 {{ it.totalSteps }} 步</div>         
+      330 +              <div v-if="it.creator" class="text-[11px] text-t
+          +ext-2 mt-0.5">创建人 · {{ it.creator }}</div>                 
+      331 +            </div>                                            
+      332 +          </div>                                              
+      333 +          <button @click="onAdd(it)" :disabled="adding[it.tick
+          +etId]"                                                        
+      334 +                  class="mt-3 w-full h-9 rounded-btn border bo
+          +rder-accent/40 text-accent text-sm font-semibold flex items-ce
+          +nter justify-center gap-1.5 hover:bg-accent/10 transition disa
+          +bled:opacity-60">                                             
+      335 +            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 
+          +animate-spin" />                                              
+      336 +            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
+      337 +          </button>                                           
+      338 +        </div>                                                
+      339 +      </div>                                                  
+      340 +    </section>                                                
+      341    </div>
+      342  
+      343    <!-- ==================== 移动端 ==================== -->
+     ...
+      346        <div class="flex-1 min-w-0">
+      347          <h1 class="text-lg font-bold text-primary">作业指引</h
+           1>
+      348          <div class="text-xs text-text-2 mt-1">
+      205 -          待办 {{ pendingList.length }} · 已完成 {{ doneList.l
+          -ength }}                                                      
+      349 +          待办 {{ pendingList.length }} · 已完成 {{ doneList.l
+          +ength }} · 推荐 {{ recommendList.length }}                    
+      350          </div>
+      351        </div>
+      352        <button @click="openCreate"
+     ...
+      355        </button>
+      356      </header>
+      357  
+      214 -    <div v-if="offline" class="px-3 py-2 rounded-btn bg-warnin
+          -g/10 border border-warning/30 text-warning text-xs flex items-
+          -center gap-1.5">                                              
+      215 -      <WifiOff class="w-3.5 h-3.5" />                         
+      216 -      离线模式 · 当前为示例数据                               
+      358 +    <div v-if="loadError" class="px-3 py-2 rounded-btn bg-dang
+          +er/10 border border-danger/30 text-danger text-xs flex items-c
+          +enter gap-1.5">                                               
+      359 +      <AlertTriangle class="w-3.5 h-3.5" /> {{ loadError }}   
+      360 +      <button @click="refresh" class="ml-auto underline">重试<
+          +/button>                                                      
+      361      </div>
+      362  
+      363      <div class="relative">
+     ...
+      366               class="w-full h-11 pl-10 pr-3 rounded-btn border 
+           border-border bg-card text-base" />
+      367      </div>
+      368  
+      369 +    <!-- 我的待办 -->                                         
+      370      <ul class="space-y-3">
+      226 -      <li v-for="it in pendingList" :key="it.id"              
+      227 -          class="industrial-card p-4 active:bg-bg" @click="ope
+          -n(it)">                                                       
+      371 +      <li v-for="it in pendingList" :key="it.id" class="indust
+          +rial-card p-4 active:bg-bg" @click="open(it)">                
+      372          <div class="flex items-start gap-3">
+      373            <div class="w-10 h-10 rounded-card flex-shrink-0 fle
+           x items-center justify-center"
+      374                 :class="it.hazardous ? 'bg-warning/10 text-warn
+           ing' : 'bg-accent/10 text-accent'">
+     ...
+      379              <div class="text-sm font-semibold leading-snug">{{
+            it.name }}</div>
+      380              <div class="text-xs text-text-2 mt-1 flex items-ce
+           nter gap-2 flex-wrap">
+      381                <span class="mono">{{ it.deviceModel }}</span>
+      238 -              <span :class="LEVEL_CLS[it.level]">{{ LEVEL_LABE
+          -L[it.level] }}</span>                                         
+      239 -              <span>{{ formatMin(it.estimatedMinutes) }}</span
+          ->                                                             
+      240 -              <span v-if="it.demo" class="px-1 py-0.5 rounded 
+          -bg-warning/10 text-warning border border-warning/30 text-[10px
+          -]">示例</span>                                                
+      382 +              <span>{{ it.doneSteps }}/{{ it.totalSteps }} 步<
+          +/span>                                                        
+      383              </div>
+      384            </div>
+      243 -          <span class="px-2 py-0.5 rounded-pill text-[11px] bo
+          -rder whitespace-nowrap flex-shrink-0" :class="STATUS_CLS[it.st
+          -atus]">                                                       
+      244 -            {{ it.status }}                                   
+      245 -          </span>                                             
+      385 +          <button class="text-danger flex-shrink-0 p-1" @click
+          +.stop="askDelete(it)">                                        
+      386 +            <Trash2 class="w-4 h-4" />                        
+      387 +          </button>                                           
+      388          </div>
+      389 +        <div class="mt-2 h-1.5 rounded-full bg-border overflow
+          +-hidden">                                                     
+      390 +          <div class="h-full bg-accent transition-all" :style=
+          +"{ width: pct(it) + '%' }"></div>                             
+      391 +        </div>                                                
+      392        </li>
+      248 -      <li v-if="loaded && pendingList.length === 0 && !offline
+          -" class="industrial-card p-8 text-center">                    
+      249 -        <Inbox class="w-10 h-10 mx-auto text-text-2 opacity-60
+          -" />                                                          
+      250 -        <div class="mt-2 text-sm font-semibold">暂无待办工单</
+          -div>                                                          
+      251 -        <div class="mt-1 text-xs text-text-2">点击上方"新建"，
+          -AI 会为您生成检修方案</div>                                   
+      393 +      <li v-if="loaded && pendingList.length === 0 && !loadErr
+          +or">                                                          
+      394 +        <EmptyState title="暂无待办工单" desc="点击上方“新建” 
+          +，或从推荐工单中添加" />                                      
+      395        </li>
+      396      </ul>
+      397  
+     ...
+      399      <div v-if="doneList.length">
+      400        <button class="w-full h-11 px-3 rounded-card border bord
+           er-border bg-card flex items-center gap-2"
+      401                @click="showDone = !showDone">
+      259 -        <ChevronDown class="w-4 h-4 text-text-2 transition-tra
+          -nsform"                                                       
+      260 -                     :class="showDone ? 'rotate-180' : ''" /> 
+      402 +        <ChevronDown class="w-4 h-4 text-text-2 transition-tra
+          +nsform" :class="showDone ? 'rotate-180' : ''" />              
+      403          <span class="text-sm font-semibold">已完成（{{ doneLis
+           t.length }}）</span>
+      404        </button>
+      405        <ul v-if="showDone" class="space-y-2 mt-2">
+      264 -        <li v-for="it in doneList" :key="it.id"               
+      265 -            class="industrial-card p-3 opacity-80 active:bg-bg
+          -" @click="open(it)">                                          
+      406 +        <li v-for="it in doneList" :key="it.id" class="industr
+          +ial-card p-3 opacity-80 active:bg-bg">                        
+      407            <div class="flex items-start gap-2">
+      267 -            <div class="w-8 h-8 rounded-card flex-shrink-0 bg-
+          -success/10 text-success flex items-center justify-center">    
+      408 +            <div class="w-8 h-8 rounded-card flex-shrink-0 bg-
+          +success/10 text-success flex items-center justify-center" @cli
+          +ck="open(it)">                                                
+      409 +              <CheckCircle2 class="w-4 h-4" />                
+      410 +            </div>                                            
+      411 +            <div class="flex-1 min-w-0" @click="open(it)">    
+      412 +              <div class="text-sm font-medium">{{ it.name }}</
+          +div>                                                          
+      413 +              <div class="text-[11px] text-text-2 mt-0.5 mono"
+          +>{{ it.deviceModel }}</div>                                   
+      414 +            </div>                                            
+      415 +            <button class="text-danger flex-shrink-0 p-1" @cli
+          +ck.stop="askDelete(it)">                                      
+      416 +              <Trash2 class="w-4 h-4" />                      
+      417 +            </button>                                         
+      418 +          </div>                                              
+      419 +        </li>                                                 
+      420 +      </ul>                                                   
+      421 +    </div>                                                    
+      422 +                                                              
+      423 +    <!-- 推荐工单（折叠） -->                                 
+      424 +    <div v-if="recommendList.length">                         
+      425 +      <button class="w-full h-11 px-3 rounded-card border bord
+          +er-border bg-card flex items-center gap-2"                    
+      426 +              @click="showRecommend = !showRecommend">        
+      427 +        <Users class="w-4 h-4 text-ai" />                     
+      428 +        <span class="text-sm font-semibold">推荐工单（{{ recom
+          +mendList.length }}）</span>                                   
+      429 +        <ChevronDown class="ml-auto w-4 h-4 text-text-2 transi
+          +tion-transform" :class="showRecommend ? 'rotate-180' : ''" /> 
+      430 +      </button>                                               
+      431 +      <ul v-if="showRecommend" class="space-y-2 mt-2">        
+      432 +        <li v-for="it in recommendList" :key="it.id" class="in
+          +dustrial-card p-3 border-dashed">                             
+      433 +          <div class="flex items-start gap-2">                
+      434 +            <div class="w-8 h-8 rounded-card flex-shrink-0 bg-
+          +ai/10 text-ai flex items-center justify-center">              
+      435                <ListChecks class="w-4 h-4" />
+      436              </div>
+      437              <div class="flex-1 min-w-0">
+      438                <div class="text-sm font-medium">{{ it.name }}</
+           div>
+      272 -              <div class="text-[11px] text-text-2 mt-0.5 mono"
+          ->{{ it.deviceModel }}</div>                                   
+      439 +              <div class="text-[11px] text-text-2 mt-0.5 mono"
+          +>{{ it.deviceModel }} · {{ it.creator || '其他用户' }}</div>  
+      440              </div>
+      274 -            <span class="px-2 py-0.5 rounded-pill text-[10px] 
+          -border whitespace-nowrap" :class="STATUS_CLS[it.status]">     
+      275 -              已完成                                          
+      276 -            </span>                                           
+      441            </div>
+      442 +          <button @click="onAdd(it)" :disabled="adding[it.tick
+          +etId]"                                                        
+      443 +                  class="mt-2 w-full h-9 rounded-btn border bo
+          +rder-accent/40 text-accent text-sm font-semibold flex items-ce
+          +nter justify-center gap-1.5 disabled:opacity-60">             
+      444 +            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 
+          +animate-spin" />                                              
+      445 +            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
+      446 +          </button>                                           
+      447          </li>
+      448        </ul>
+      449      </div>
+      450    </div>
+      451  
+      452 +  <!-- ==================== 删除工单弹窗 ==================== 
+          +-->                                                           
+      453 +  <div v-if="delTarget" class="fixed inset-0 z-50 bg-black/40 
+          +flex items-center justify-center p-4"                         
+      454 +       @click.self="!deleting && (delTarget = null)">         
+      455 +    <div class="industrial-card w-full max-w-sm bg-card overfl
+          +ow-hidden">                                                   
+      456 +      <header class="px-5 py-3 border-b border-border flex ite
+          +ms-center gap-2">                                             
+      457 +        <Trash2 class="w-4 h-4 text-danger" />                
+      458 +        <span class="font-semibold flex-1">删除工单</span>    
+      459 +        <button class="text-text-2 hover:text-danger" :disable
+          +d="deleting" @click="delTarget = null"><X class="w-4 h-4" /></
+          +button>                                                       
+      460 +      </header>                                               
+      461 +      <div class="p-5 space-y-3">                             
+      462 +        <div class="text-sm text-text-2 truncate">{{ delTarget
+          +.name }}</div>                                                
+      463 +        <!-- 已完成：无需理由 -->                             
+      464 +        <div v-if="delTarget.status === '已完成'" class="text-
+          +sm">                                                          
+      465 +          该工单已完成，将以“已完成”记录保存到历史工单，确认删
+          +除？                                                          
+      466 +        </div>                                                
+      467 +        <!-- 未完成：必须填写理由 -->                         
+      468 +        <div v-else class="space-y-2">                        
+      469 +          <div class="text-sm">未完成的工单，请选择删除理由：<
+          +/div>                                                         
+      470 +          <div class="grid grid-cols-3 gap-2">                
+      471 +            <button v-for="r in (['需求错误','误触','其他'] as
+          + const)" :key="r"                                             
+      472 +                    @click="delReason = r"                    
+      473 +                    :class="['h-9 rounded-btn border text-sm t
+          +ransition',                                                   
+      474 +                             delReason === r ? 'border-accent 
+          +bg-accent/10 text-accent font-semibold' : 'border-border text-
+          +text-2']">                                                    
+      475 +              {{ r }}                                         
+      476 +            </button>                                         
+      477 +          </div>                                              
+      478 +          <textarea v-if="delReason === '其他'" v-model="delOt
+          +her" rows="2" placeholder="请填写删除理由"                    
+      479 +                    class="w-full px-3 py-2 rounded-btn border
+          + border-border bg-bg outline-none focus:border-accent resize-n
+          +one text-sm"></textarea>                                      
+      480 +        </div>                                                
+      481 +      </div>                                                  
+      482 +      <footer class="px-5 py-3 border-t border-border flex jus
+          +tify-end gap-2">                                              
+      483 +        <button class="h-9 px-4 rounded-btn border border-bord
+          +er" :disabled="deleting" @click="delTarget = null">取消</butto
+          +n>                                                            
+      484 +        <button class="h-9 px-5 rounded-btn bg-danger hover:bg
+          +-danger/90 text-white font-semibold flex items-center gap-2 di
+          +sabled:opacity-60"                                            
+      485 +                :disabled="deleting" @click="confirmDelete">  
+      486 +          <Loader v-if="deleting" class="w-4 h-4 animate-spin"
+          + />                                                           
+      487 +          <Trash2 v-else class="w-4 h-4" /> 确认删除          
+      488 +        </button>                                             
+      489 +      </footer>                                               
+      490 +    </div>                                                    
+      491 +  </div>                                                      
+      492 +                                                              
+      493    <!-- ==================== 新建工单弹窗 ==================== 
+           -->
+      494    <div v-if="showCreate" class="fixed inset-0 z-40 bg-black/40
+            flex items-center justify-center p-4"
+      285 -       @click.self="!creating && (showCreate = false)">       
+      495 +       @click.self="!(creating || recommending) && (showCreate
+          + = false)">                                                   
+      496      <div class="industrial-card w-full max-w-md bg-card overfl
+           ow-hidden">
+      497        <header class="px-5 py-3 border-b border-border flex ite
+           ms-center gap-2">
+      498          <Sparkles class="w-4 h-4 text-ai" />
+      289 -        <span class="font-semibold flex-1">AI 工单 · 自动生成 
+          -检修步骤</span>                                               
+      290 -        <button class="text-text-2 hover:text-danger" :disable
+          -d="creating" @click="showCreate = false">                     
+      499 +        <span class="font-semibold flex-1">{{ showMatchStep ? 
+          +'发现相似工单' : 'AI 工单 · 自动生成检修步骤' }}</span>       
+      500 +        <button class="text-text-2 hover:text-danger" :disable
+          +d="creating || recommending" @click="showCreate = false">     
+      501            <X class="w-4 h-4" />
+      502          </button>
+      503        </header>
+      294 -      <div class="p-5 space-y-3">                             
+      504 +                                                              
+      505 +      <!-- 第一步：填写 -->                                   
+      506 +      <div v-if="!showMatchStep" class="p-5 space-y-3">       
+      507          <div>
+      508            <div class="text-sm text-text-2 mb-1">设备</div>
+      297 -          <input v-model="draft.device" placeholder="如：空压 
+          -机-XG200"                                                     
+      298 -                 :disabled="creating"                         
+      509 +          <input v-model="draft.device" placeholder="如：空压 
+          +机-XG200" :disabled="recommending"                            
+      510                   class="w-full h-10 px-3 rounded-btn border bo
+           rder-border bg-bg outline-none focus:border-accent focus:bg-ca
+           rd mono" />
+      511          </div>
+      512          <div>
+      513            <div class="text-sm text-text-2 mb-1">故障描述</div>
+      514            <textarea v-model="draft.fault" rows="4" placeholder
+           ="一句话描述故障现象，AI 会按【风险预检/工具准备/检修步骤/验收
+           标准】生成方案"
+      304 -                    :disabled="creating"                      
+      515 +                    :disabled="recommending"                  
+      516                      class="w-full px-3 py-2 rounded-btn border
+            border-border bg-bg outline-none focus:border-accent focus:bg
+           -card resize-none"></textarea>
+      517          </div>
+      518          <div class="text-[11px] text-text-2 leading-relaxed">
+      308 -          后端会同步调用大模型，单次生成约 5–30 秒，请耐心等待
+          -。                                                            
+      519 +          新建前会先为您匹配相似的已有工单；若无合适项再调用大
+          +模型生成（约 5–30 秒）。                                      
+      520          </div>
+      521        </div>
+      522 +                                                              
+      523 +      <!-- 第二步：相似推荐 -->                               
+      524 +      <div v-else class="p-5 space-y-3 max-h-[60vh] overflow-y
+          +-auto">                                                       
+      525 +        <div class="text-sm text-text-2">已为您找到 {{ createM
+          +atches.length }} 条相似工单，可直接添加；或选择继续新建。</div
+          +>                                                             
+      526 +        <div v-for="t in createMatches" :key="t.id" class="ind
+          +ustrial-card p-3">                                            
+      527 +          <div class="flex items-start gap-2">                
+      528 +            <div class="flex-1 min-w-0">                      
+      529 +              <div class="text-sm font-semibold">{{ t.fault ||
+          + ('工单 #' + t.id) }}</div>                                   
+      530 +              <div class="text-[11px] text-text-2 mt-0.5 mono"
+          +>                                                             
+      531 +                {{ t.device }} · {{ t.creator || '其他用户' }}
+      532 +                <span v-if="t.score" class="ml-1">· 匹配 {{ Ma
+          +th.round(t.score * 100) }}%</span>                            
+      533 +              </div>                                          
+      534 +            </div>                                            
+      535 +            <button @click="addMatch(t)" :disabled="adding[t.i
+          +d]"                                                           
+      536 +                    class="h-8 px-3 rounded-btn border border-
+          +accent/40 text-accent text-xs font-semibold flex items-center 
+          +gap-1 hover:bg-accent/10 disabled:opacity-60">                
+      537 +              <Loader v-if="adding[t.id]" class="w-3.5 h-3.5 a
+          +nimate-spin" />                                               
+      538 +              <UserPlus v-else class="w-3.5 h-3.5" /> 添加    
+      539 +            </button>                                         
+      540 +          </div>                                              
+      541 +        </div>                                                
+      542 +      </div>                                                  
+      543 +                                                              
+      544        <footer class="px-5 py-3 border-t border-border flex jus
+           tify-end gap-2">
+      312 -        <button class="h-9 px-4 rounded-btn border border-bord
+          -er" :disabled="creating" @click="showCreate = false">取消</but
+          -ton>                                                          
+      313 -        <button class="h-9 px-5 rounded-btn bg-accent hover:bg
+          --accent-2 text-white font-semibold flex items-center gap-2 dis
+          -abled:opacity-60"                                             
+      314 -                :disabled="creating" @click="submitCreate">   
+      545 +        <button class="h-9 px-4 rounded-btn border border-bord
+          +er" :disabled="creating || recommending" @click="showCreate = 
+          +false">取消</button>                                          
+      546 +        <button v-if="!showMatchStep"                         
+      547 +                class="h-9 px-5 rounded-btn bg-accent hover:bg
+          +-accent-2 text-white font-semibold flex items-center gap-2 dis
+          +abled:opacity-60"                                             
+      548 +                :disabled="recommending" @click="findSimilar">
+      549 +          <Loader v-if="recommending" class="w-4 h-4 animate-s
+          +pin" />                                                       
+      550 +          <Sparkles v-else class="w-4 h-4" />                 
+      551 +          {{ recommending ? '匹配中…' : '下一步' }}           
+      552 +        </button>                                             
+      553 +        <button v-else                                        
+      554 +                class="h-9 px-5 rounded-btn bg-accent hover:bg
+          +-accent-2 text-white font-semibold flex items-center gap-2 dis
+          +abled:opacity-60"                                             
+      555 +                :disabled="creating" @click="doCreate">       
+      556            <Loader v-if="creating" class="w-4 h-4 animate-spin"
+            />
+      557            <Sparkles v-else class="w-4 h-4" />
+      317 -          {{ creating ? 'AI 生成中…' : '生成检修方案' }}      
+      558 +          {{ creating ? 'AI 生成中…' : '仍要新建' }}          
+      559          </button>
+      560        </footer>
+      561      </div>
+
+  Thought for 18s (ctrl+o to expand)
+
+● Let me run typecheck to see where we stand after these fixes.
+
+● Bash(npm run typecheck 2>&1 | head -40)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+
+  Thought for 8s (ctrl+o to expand)
+
+● Typecheck is clean. Task 1 done. Now let me wire per-user step-progress sync
+  into the detail views (needed for timeline events, item 11). Let me check the
+  detail views' completion logic.
+
+  Thought for 22s, read 1 file (ctrl+o to expand)
+
+● The detail views only persist step progress locally — they don't sync per-user
+  progress to the backend, so timeline step_completed events never fire. Let me
+  wire syncStepProgress into both detail views.
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      13  import { useRoute, useRouter } from 'vue-router'
+      14  import { useWorkflowStore } from '@/stores/workflow'
+      15  import {
+      16 -  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket
+         -,                                                              
+      16 +  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket
+         +, syncStepProgress,                                            
+      17    type ToolItem, type ManualRef
+      18  } from '@/api/workflow'
+      19  import {
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 13 lines
+      54    activeIdx.value = firstUndone >= 0 ? firstUndone : 0
+      55    loadTools()
+      56    loadManuals()
+      57 +  syncReady.value = true                                       
+      58  }
+      59  
+      60 +/** 将已完成的大步骤同步到后端（按用户维度记录时间线，FIX5 第 1
+         +1 项） */                                                      
+      61 +const syncReady = ref(false)                                   
+      62 +let syncTimer: number | null = null                            
+      63 +watch(() => ({ ...wf.stepDone }), () => {                      
+      64 +  if (!syncReady.value || isDemo.value || !wf.flow) return     
+      65 +  if (syncTimer) clearTimeout(syncTimer)                       
+      66 +  syncTimer = window.setTimeout(() => {                        
+      67 +    const doneIds = (wf.flow?.steps || []).filter(s => wf.stepD
+         +one[s.id]).map(s => s.id)                                      
+      68 +    syncStepProgress(orderId.value, doneIds).catch(() => {})   
+      69 +  }, 400)                                                      
+      70 +}, { deep: true })                                             
+      71 +                                                               
+      72  const loadTools = async () => {
+      73    if (isDemo.value) { tools.value = []; toolsError.value = fals
+          e; return }
+      74    toolsLoading.value = true
+
+  Thought for 9s (ctrl+o to expand)
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 1 line
+      46  const activeStep = computed(() => wf.flow?.steps[activeIdx.valu
+          e])
+      47  
+      48  const loadFlow = async () => {
+      49 +  syncReady.value = false                                      
+      50    const id = orderId.value || undefined
+      51    const f = await getFlow(id)
+      52    wf.setFlow(f)
+
+  Thought for 9s (ctrl+o to expand)
+
+● Now the same for Mobile.vue. Let me read its loadFlow section.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 1 line, removed 1 line
+       9  import { useRoute, useRouter } from 'vue-router'
+      10  import { useWorkflowStore } from '@/stores/workflow'
+      11  import {
+      12 -  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket
+         -,                                                              
+      12 +  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket
+         +, syncStepProgress,                                            
+      13    type ToolItem, type ManualRef
+      14  } from '@/api/workflow'
+      15  import {
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 14 lines
+      35  const isDemo = computed(() => !orderId.value || !orderId.value.
+          startsWith('t-'))
+      36  
+      37  const loadFlow = async () => {
+      38 +  syncReady.value = false                                      
+      39    const f = await getFlow(orderId.value || undefined)
+      40    wf.setFlow(f)
+      41    tab.value = 'steps'
+      42    loadTools()
+      43    loadManuals()
+      44 +  syncReady.value = true                                       
+      45  }
+      46  
+      47 +/** 将已完成的大步骤同步到后端（按用户维度记录时间线，FIX5 第 1
+         +1 项） */                                                      
+      48 +const syncReady = ref(false)                                   
+      49 +let syncTimer: number | null = null                            
+      50 +watch(() => ({ ...wf.stepDone }), () => {                      
+      51 +  if (!syncReady.value || isDemo.value || !wf.flow) return     
+      52 +  if (syncTimer) clearTimeout(syncTimer)                       
+      53 +  syncTimer = window.setTimeout(() => {                        
+      54 +    const doneIds = (wf.flow?.steps || []).filter(s => wf.stepD
+         +one[s.id]).map(s => s.id)                                      
+      55 +    syncStepProgress(orderId.value, doneIds).catch(() => {})   
+      56 +  }, 400)                                                      
+      57 +}, { deep: true })                                             
+      58 +                                                               
+      59  const loadTools = async () => {
+      60    if (isDemo.value) { tools.value = []; return }
+      61    toolsLoading.value = true
+
+  Thought for 8s (ctrl+o to expand)
+
+● Now let me verify item 13 (search results: collapsed references + recommended
+  tickets) is wired in the search views, and check the detail view for the
+  timeline (item 11 auditor view). Let me check.
+
+  Thought for 16s, searched for 1 pattern (ctrl+o to expand)
+● Item 13 (recommended tickets in search) isn't wired yet. Let me look at the
+  search view's message/sources rendering.
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● Let me check the chatHistory store's message type to add recommended tickets.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● I'll add a recommendedTickets field to the message type, then wire it in the
+  search views. Let me add the type and a reusable type import.
+
+● Update(src/stores/chatHistory.ts)
+  ⎿  Added 12 lines
+      20    similarity?: number
+      21  }
+      22  
+      23 +/** 检索结果中推荐的工单（FIX5 第 13 项） */                   
+      24 +export interface RecommendedTicketRef {                        
+      25 +  id: number                                                   
+      26 +  device: string                                               
+      27 +  fault: string                                                
+      28 +  summary: string                                              
+      29 +  added: boolean                                               
+      30 +  score: number                                                
+      31 +}                                                              
+      32 +                                                               
+      33  export interface ChatMessage {
+      34    id: string
+      35    role: 'user' | 'assistant'
+     ...
+      41    sources?: SourceItem[]
+      42    /** 仅 assistant：图像观察文本 */
+      43    imageObservation?: string
+      44 +  /** 仅 assistant：推荐工单（FIX5 第 13 项） */               
+      45 +  recommendedTickets?: RecommendedTicketRef[]                  
+      46    /** 错误态 */
+      47    error?: string
+      48    createdAt: number
+
+  Thought for 9s (ctrl+o to expand)
+
+● Now update the Pc.vue onSend to store recommended tickets and collapse sources
+  by default.
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 4 lines, removed 2 lines
+      106      chat.updateMessage(sid, aiId, {
+      107        content: res.summary || '（后端未返回内容）',
+      108        sources,
+      109 -      imageObservation: res.imageObservation || ''            
+      109 +      imageObservation: res.imageObservation || '',           
+      110 +      recommendedTickets: res.recommendedTickets || []        
+      111      })
+      111 -    expandedSources.value[aiId] = true                        
+      112 +    // FIX5 第 13 项：引用材料默认折叠；推荐工单自动展示      
+      113 +    expandedSources.value[aiId] = false                       
+      114    } catch (e: any) {
+      115      chat.updateMessage(sid, aiId, {
+      116        error: e?.message || '检索失败，请稍后重试'
+
+● Now let me look at the sources rendering area in the template to add the
+  recommended-tickets card.
+
+  Thought for 10s, read 1 file (ctrl+o to expand)
+
+● I'll add an add-to-mine handler and the recommended-tickets card. First the
+  script logic:
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 2 lines
+      11  import { useRoute } from 'vue-router'
+      12  import { Sparkles, Paperclip, Send, X, Image as ImageIcon, Book
+          Open, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Tr
+          ash2, Star } from 'lucide-vue-next'
+      13  import * as searchApi from '@/api/search'
+      14 +import { addTicketToMine } from '@/api/ticket'                 
+      15 +import { showToast } from 'vant'                               
+      16  import { useSearchStore } from '@/stores/search'
+      17  import { useChatHistoryStore, nanoid, type SourceItem } from '@
+          /stores/chatHistory'
+      18  import { renderMarkdown } from '@/utils/markdown'
+
+  Thought for 8s (ctrl+o to expand)
+
+● Let me merge the vant import cleanly instead of duplicating.
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Removed 1 line
+      12  import { Sparkles, Paperclip, Send, X, Image as ImageIcon, Book
+          Open, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Tr
+          ash2, Star } from 'lucide-vue-next'
+      13  import * as searchApi from '@/api/search'
+      14  import { addTicketToMine } from '@/api/ticket'
+      15 -import { showToast } from 'vant'                               
+      15  import { useSearchStore } from '@/stores/search'
+      16  import { useChatHistoryStore, nanoid, type SourceItem } from '@
+          /stores/chatHistory'
+      17  import { renderMarkdown } from '@/utils/markdown'
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      15  import { useSearchStore } from '@/stores/search'
+      16  import { useChatHistoryStore, nanoid, type SourceItem } from '@
+          /stores/chatHistory'
+      17  import { renderMarkdown } from '@/utils/markdown'
+      18 -import { showConfirmDialog } from 'vant'                       
+      18 +import { showConfirmDialog, showSuccessToast, showFailToast } f
+         +rom 'vant'                                                     
+      19  
+      20  const route = useRoute()
+      21  const store = useSearchStore()
+
+● Now add the handler. Let me find a good insertion point near onSend:
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 17 lines
+      43    return sessionId.value
+      44  }
+      45  
+      46 +/** 推荐工单：一键添加到我的工单（FIX5 第 13 项） */           
+      47 +const addingTicket = ref<Record<number, boolean>>({})          
+      48 +const onAddTicket = async (msgId: string, ticketId: number) => 
+         +{                                                              
+      49 +  addingTicket.value[ticketId] = true                          
+      50 +  try {                                                        
+      51 +    await addTicketToMine(ticketId)                            
+      52 +    showSuccessToast('已添加到我的工单')                       
+      53 +    const msg = messages.value.find(m => m.id === msgId)       
+      54 +    const rt = msg?.recommendedTickets?.find(t => t.id === tick
+         +etId)                                                          
+      55 +    if (rt) rt.added = true                                    
+      56 +  } catch (e: any) {                                           
+      57 +    showFailToast(e?.message || '添加失败')                    
+      58 +  } finally {                                                  
+      59 +    addingTicket.value[ticketId] = false                       
+      60 +  }                                                            
+      61 +}                                                              
+      62 +                                                               
+      63  const onPickFiles = (files: FileList | null) => {
+      64    if (!files) return
+      65    Array.from(files).forEach(f => imageList.value.push({ url: UR
+          L.createObjectURL(f), name: f.name, file: f }))
+
+● Now add the template card. I'll insert the recommended-tickets block right
+  after the markdown body, before the sources block (so it shows above
+  references):
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 23 lines
+      297                      <!-- markdown 渲染 -->
+      298                      <div class="md-body" v-html="renderMarkdow
+           n(m.content)"></div>
+      299  
+      300 +                    <!-- 推荐工单（FIX5 第 13 项：有则自动展示
+          +） -->                                                        
+      301 +                    <div v-if="m.recommendedTickets && m.recom
+          +mendedTickets.length"                                         
+      302 +                         class="mt-4 pt-3 border-t border-bord
+          +er">                                                          
+      303 +                      <div class="text-xs font-semibold text-a
+          +i flex items-center gap-1.5 mb-2">                            
+      304 +                        <ListChecks class="w-3.5 h-3.5" /> 相 
+          +关作业工单                                                    
+      305 +                      </div>                                  
+      306 +                      <div class="grid sm:grid-cols-2 gap-2"> 
+      307 +                        <div v-for="rt in m.recommendedTickets
+          +" :key="rt.id"                                                
+      308 +                             class="px-3 py-2 rounded-btn bg-b
+          +g border border-border">                                      
+      309 +                          <div class="text-sm font-medium text
+          +-text truncate">{{ rt.fault || ('工单 #' + rt.id) }}</div>    
+      310 +                          <div class="text-[11px] text-text-2 
+          +mono mt-0.5 truncate">{{ rt.device }}</div>                   
+      311 +                          <button v-if="!rt.added" @click="onA
+          +ddTicket(m.id, rt.id)" :disabled="addingTicket[rt.id]"        
+      312 +                                  class="mt-2 h-7 px-3 rounded
+          +-btn border border-accent/40 text-accent text-xs font-semibold
+          + flex items-center gap-1 hover:bg-accent/10 disabled:opacity-6
+          +0">                                                           
+      313 +                            <Loader v-if="addingTicket[rt.id]"
+          + class="w-3 h-3 animate-spin" />                              
+      314 +                            <UserPlus v-else class="w-3 h-3" /
+          +> 添加到我的工单                                              
+      315 +                          </button>                           
+      316 +                          <div v-else class="mt-2 text-xs text
+          +-success flex items-center gap-1">                            
+      317 +                            <Check class="w-3 h-3" /> 已在我的
+          +工单                                                          
+      318 +                          </div>                              
+      319 +                        </div>                                
+      320 +                      </div>                                  
+      321 +                    </div>                                    
+      322 +                                                              
+      323                      <!-- 来源引用（与本条消息强绑定） -->
+      324                      <div v-if="m.sources && m.sources.length" 
+           class="mt-4 pt-3 border-t border-border">
+      325                        <button @click="expandedSources[m.id] = 
+           !expandedSources[m.id]"
+
+● I need to add the ListChecks, UserPlus, Check icons to the imports. Let me
+  update the lucide import:
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+       9   */
+      10  import { ref, nextTick, computed, onMounted, watch } from 'vue'
+      11  import { useRoute } from 'vue-router'
+      12 -import { Sparkles, Paperclip, Send, X, Image as ImageIcon, Book
+         -Open, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Tr
+         -ash2, Star } from 'lucide-vue-next'                            
+      12 +import { Sparkles, Paperclip, Send, X, Image as ImageIcon, Book
+         +Open, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Tr
+         +ash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next
+         +'                                                              
+      13  import * as searchApi from '@/api/search'
+      14  import { addTicketToMine } from '@/api/ticket'
+      15  import { useSearchStore } from '@/stores/search'
+
+● Now the same for Mobile.vue search. Let me look at its structure around onSend
+  and the message rendering.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 2 lines, removed 1 line
+      83      chat.updateMessage(sid, aiId, {
+      84        content: res.summary || '（后端未返回内容）',
+      85        sources,
+      86 -      imageObservation: res.imageObservation || ''             
+      86 +      imageObservation: res.imageObservation || '',            
+      87 +      recommendedTickets: res.recommendedTickets || []         
+      88      })
+      89    } catch (e: any) {
+      90      chat.updateMessage(sid, aiId, { error: e?.message || '检索
+          失败，请稍后重试' })
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 3 lines, removed 2 lines
+       6   */
+       7  import { ref, nextTick, computed, watch, onMounted } from 'vue'
+       8  import { useRoute } from 'vue-router'
+       9 -import { Sparkles, Bot, User as UserIcon, BookOpen, Image as Im
+         -ageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star } from 'l
+         -ucide-vue-next'                                                
+      10 -import { showConfirmDialog } from 'vant'                       
+       9 +import { Sparkles, Bot, User as UserIcon, BookOpen, Image as Im
+         +ageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star, ListChec
+         +ks, UserPlus, Check } from 'lucide-vue-next'                   
+      10 +import { showConfirmDialog, showSuccessToast, showFailToast } f
+         +rom 'vant'                                                     
+      11  import * as searchApi from '@/api/search'
+      12 +import { addTicketToMine } from '@/api/ticket'                 
+      13  import { useSearchStore } from '@/stores/search'
+      14  import { useChatHistoryStore, nanoid, type SourceItem } from '@
+          /stores/chatHistory'
+      15  import { renderMarkdown } from '@/utils/markdown'
+
+  Thought for 8s (ctrl+o to expand)
+
+● Now add the handler and template card to Mobile.vue. Let me find the messages
+  computed and a good insertion spot.
+
+  Read 1 file (ctrl+o to expand)
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 17 lines
+      36    return sessionId.value
+      37  }
+      38  
+      39 +/** 推荐工单：一键添加到我的工单（FIX5 第 13 项） */           
+      40 +const addingTicket = ref<Record<number, boolean>>({})          
+      41 +const onAddTicket = async (msgId: string, ticketId: number) => 
+         +{                                                              
+      42 +  addingTicket.value[ticketId] = true                          
+      43 +  try {                                                        
+      44 +    await addTicketToMine(ticketId)                            
+      45 +    showSuccessToast('已添加到我的工单')                       
+      46 +    const msg = messages.value.find(m => m.id === msgId)       
+      47 +    const rt = msg?.recommendedTickets?.find(t => t.id === tick
+         +etId)                                                          
+      48 +    if (rt) rt.added = true                                    
+      49 +  } catch (e: any) {                                           
+      50 +    showFailToast(e?.message || '添加失败')                    
+      51 +  } finally {                                                  
+      52 +    addingTicket.value[ticketId] = false                       
+      53 +  }                                                            
+      54 +}                                                              
+      55 +                                                               
+      56  const onPickFiles = (files: File[]) => { imageFiles.value.push(
+          ...files) }
+      57  
+      58  const scrollToBottom = async () => {
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 23 lines
+      191                      {{ m.imageObservation }}
+      192                    </div>
+      193                    <div class="md-body" v-html="renderMarkdown(
+           m.content)"></div>
+      194 +                                                              
+      195 +                  <!-- 推荐工单（FIX5 第 13 项） -->          
+      196 +                  <div v-if="m.recommendedTickets && m.recomme
+          +ndedTickets.length" class="mt-3 pt-2 border-t border-border"> 
+      197 +                    <div class="text-xs font-semibold text-ai 
+          +flex items-center gap-1.5 mb-2">                              
+      198 +                      <ListChecks class="w-3.5 h-3.5" /> 相关 
+          +作业工单                                                      
+      199 +                    </div>                                    
+      200 +                    <div class="space-y-2">                   
+      201 +                      <div v-for="rt in m.recommendedTickets" 
+          +:key="rt.id"                                                  
+      202 +                           class="px-3 py-2 rounded-btn bg-bg 
+          +border border-border">                                        
+      203 +                        <div class="text-sm font-medium text-t
+          +ext truncate">{{ rt.fault || ('工单 #' + rt.id) }}</div>      
+      204 +                        <div class="text-[11px] text-text-2 mo
+          +no mt-0.5 truncate">{{ rt.device }}</div>                     
+      205 +                        <button v-if="!rt.added" @click="onAdd
+          +Ticket(m.id, rt.id)" :disabled="addingTicket[rt.id]"          
+      206 +                                class="mt-2 h-7 px-3 rounded-b
+          +tn border border-accent/40 text-accent text-xs font-semibold f
+          +lex items-center gap-1 disabled:opacity-60">                  
+      207 +                          <Loader v-if="addingTicket[rt.id]" c
+          +lass="w-3 h-3 animate-spin" />                                
+      208 +                          <UserPlus v-else class="w-3 h-3" /> 
+          +添加到我的工单                                                
+      209 +                        </button>                             
+      210 +                        <div v-else class="mt-2 text-xs text-s
+          +uccess flex items-center gap-1">                              
+      211 +                          <Check class="w-3 h-3" /> 已在我的工
+          +单                                                            
+      212 +                        </div>                                
+      213 +                      </div>                                  
+      214 +                    </div>                                    
+      215 +                  </div>                                      
+      216 +                                                              
+      217                    <div v-if="m.sources && m.sources.length" cl
+           ass="mt-3 pt-2 border-t border-border">
+      218                      <button @click="expandedSources[m.id] = !e
+           xpandedSources[m.id]"
+      219                              class="text-xs text-text-2 flex it
+           ems-center gap-1">
+
+  Thought for 14s (ctrl+o to expand)
+
+● Let me run typecheck to validate the search changes before moving on.
+
+● Bash(npm run typecheck 2>&1 | head -30)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+
+  Thought for 11s (ctrl+o to expand)
+
+● Typecheck clean. Now item 11: auditor/admin viewing all-users timeline on a
+  ticket. Let me build a reusable timeline component used by both detail views.
+
+● Write(src/components/common/TicketTimeline.vue)
+  ⎿  Wrote 105 lines to src/components/common/TicketTimeline.vue
+       1 <script setup lang="ts">
+       2 /**
+       3  * 工单时间线（FIX5 第 11 项）
+       4  * - 员工：只看自己（events）
+       5  * - 审查员/管理员：按用户分组（grouped）
+       6  * 竖向步骤条样式，复用现有设计系统。
+       7  */
+       8 import { ref, watch } from 'vue'
+       9 import { getTimeline, type TicketEvent } from '@/api/ticket'
+      10 import { formatTime } from '@/utils/format'
+     … +119 lines (ctrl+o to expand)
+
+● Now wire a "时间线" button into both detail views. Let me check the Pc.vue
+  header area where back button is.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 4 lines
+      204          <button @click="back" class="h-9 px-3 rounded-btn bord
+           er border-border bg-bg hover:bg-card flex items-center gap-1.5
+            text-sm flex-shrink-0">
+      205            <ChevronLeft class="w-4 h-4" /> 返回列表
+      206          </button>
+      207 +        <button v-if="!isDemo" @click="showTimeline = true"   
+      208 +                class="h-9 px-3 rounded-btn border border-bord
+          +er bg-bg hover:bg-card flex items-center gap-1.5 text-sm flex-
+          +shrink-0">                                                    
+      209 +          <Clock class="w-4 h-4" /> 时间线                    
+      210 +        </button>                                             
+      211  
+      212          <div class="flex-1 min-w-72">
+      213            <div class="text-xs text-text-2 mb-1 flex items-cent
+           er gap-2">
+
+  Thought for 8s (ctrl+o to expand)
+
+● Now add the script ref + import and the component at the end of the Pc.vue
+  template.
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 1 line
+      23  } from 'lucide-vue-next'
+      24  import { showToast, showFailToast, showConfirmDialog } from 'va
+          nt'
+      25  import { renderMarkdown } from '@/utils/markdown'
+      26 +import TicketTimeline from '@/components/common/TicketTimeline.
+         +vue'                                                           
+      27  
+      28  const wf = useWorkflowStore()
+      29  const route = useRoute()
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 2 lines
+      41  )
+      42  
+      43  const orderId = computed(() => String(route.params.id || ''))
+      44 +const ticketNumId = computed(() => orderId.value.startsWith('t-
+         +') ? orderId.value.slice(2) : orderId.value)                   
+      45 +const showTimeline = ref(false)                                
+      46  
+      47  /** 当前选中的大步骤索引（替代旧 Tab 系统） */
+      48  const activeIdx = ref(0)
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 2 lines
+      549      </footer>
+      550    </div>
+      551    <div v-else class="p-12 text-center text-text-2">流程加载中…
+           </div>
+      552 +                                                              
+      553 +  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          +" @close="showTimeline = false" />                            
+      554  </template>
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now Mobile.vue. Let me find its header back button and end.
+
+  Thought for 9s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 4 lines
+      171            </div>
+      172            <div class="text-sm font-semibold truncate">{{ wf.fl
+           ow.name }}</div>
+      173          </div>
+      174 +        <button v-if="!isDemo" @click="showTimeline = true"   
+      175 +                class="w-9 h-9 flex items-center justify-cente
+          +r text-text-2" aria-label="时间线">                           
+      176 +          <Clock class="w-5 h-5" />                           
+      177 +        </button>                                             
+      178          <button v-if="!isDemo" @click="finalizeTicket"
+      179                  class="h-9 px-2.5 rounded-btn bg-success text-
+           white text-xs font-semibold flex items-center gap-1 mr-1">
+      180            <CheckCircle2 class="w-3.5 h-3.5" /> 完成
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 1 line
+      18  } from 'lucide-vue-next'
+      19  import { showToast, showFailToast, showConfirmDialog } from 'va
+          nt'
+      20  import { renderMarkdown } from '@/utils/markdown'
+      21 +import TicketTimeline from '@/components/common/TicketTimeline.
+         +vue'                                                           
+      22  
+      23  const wf = useWorkflowStore()
+      24  const route = useRoute()
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 2 lines
+      34  
+      35  const orderId = computed(() => String(route.params.id || ''))
+      36  const isDemo = computed(() => !orderId.value || !orderId.value.
+          startsWith('t-'))
+      37 +const ticketNumId = computed(() => orderId.value.startsWith('t-
+         +') ? orderId.value.slice(2) : orderId.value)                   
+      38 +const showTimeline = ref(false)                                
+      39  
+      40  const loadFlow = async () => {
+      41    syncReady.value = false
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 2 lines
+      376      </main>
+      377    </div>
+      378    <div v-else class="p-12 text-center text-text-2">流程加载中…
+           </div>
+      379 +                                                              
+      380 +  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          +" @close="showTimeline = false" />                            
+      381  </template>
+
+● Bash(npm run typecheck 2>&1 | head -30)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+
+● Ticket system frontend is wired (items 8-13). Let me mark task 2 done and move
+  to the mechanical items. Let me look at the LoongArch labels and KG animation
+  in parallel.
+● Bash(cd /home/chen/Documents/software2026; for f in
+      src/components/pc/SideNav.vue src/layouts/PCLayout.vue
+      src/components/pc/TopBar.vue src/assets/styles/industrial.…)
+  ⎿  === src/components/pc/SideNav.vue ===
+     53:    <!-- 底部信创信息卡 -->
+     === src/layouts/PCLayout.vue ===
+     … +6 lines (ctrl+o to expand)
+
+  Thought for 27s, read 4 files (ctrl+o to expand)
+
+● Now removing the LoongArch/信创 UI labels. PCLayout footer:
+
+● Update(src/layouts/PCLayout.vue)
+  ⎿  Removed 5 lines
+      24          <slot />
+      25        </main>
+      26      </div>
+      27 -    <!-- 底部信创认证条 -->                                    
+      27      <footer class="h-8 px-4 flex items-center justify-between b
+          g-primary text-on-dark text-xs flex-shrink-0">
+      28        <span class="opacity-70">© 2026 设备检修知识检索与作业系
+          统</span>
+      30 -      <span class="xinchuang-badge">                           
+      31 -        <span class="dot"></span>                              
+      32 -        信创认证 · LoongArch + 银河麒麟 V11                    
+      33 -      </span>                                                  
+      29        <span class="opacity-70 mono">Asia/Shanghai · v0.1.0</spa
+          n>
+      30      </footer>
+      31  
+
+● API Error: Request rejected (429) · You have exceeded the 5-hour usage
+  quota. It will reset at 2026-06-21 21:10:22 +0800 CST. We recommend 
+  upgrading your plan for more quota, or waiting for the reset. Request 
+  id: 0217820304332320b3f405af7fd729b2ba1cacbbbecc68dcc9894
+
+✻ Churned for 16m 32s

@@ -9,12 +9,13 @@
  */
 import { ref, nextTick, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2, Star } from 'lucide-vue-next'
+import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next'
 import * as searchApi from '@/api/search'
+import { addTicketToMine } from '@/api/ticket'
 import { useSearchStore } from '@/stores/search'
 import { useChatHistoryStore, nanoid, type SourceItem } from '@/stores/chatHistory'
 import { renderMarkdown } from '@/utils/markdown'
-import { showConfirmDialog } from 'vant'
+import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
 const store = useSearchStore()
@@ -40,6 +41,23 @@ const ensureSession = () => {
     sessionId.value = s.id
   }
   return sessionId.value
+}
+
+/** 推荐工单：一键添加到我的工单（FIX5 第 13 项） */
+const addingTicket = ref<Record<number, boolean>>({})
+const onAddTicket = async (msgId: string, ticketId: number) => {
+  addingTicket.value[ticketId] = true
+  try {
+    await addTicketToMine(ticketId)
+    showSuccessToast('已添加到我的工单')
+    const msg = messages.value.find(m => m.id === msgId)
+    const rt = msg?.recommendedTickets?.find(t => t.id === ticketId)
+    if (rt) rt.added = true
+  } catch (e: any) {
+    showFailToast(e?.message || '添加失败')
+  } finally {
+    addingTicket.value[ticketId] = false
+  }
 }
 
 const onPickFiles = (files: FileList | null) => {
@@ -106,9 +124,11 @@ const onSend = async () => {
     chat.updateMessage(sid, aiId, {
       content: res.summary || '（后端未返回内容）',
       sources,
-      imageObservation: res.imageObservation || ''
+      imageObservation: res.imageObservation || '',
+      recommendedTickets: res.recommendedTickets || []
     })
-    expandedSources.value[aiId] = true
+    // FIX5 第 13 项：引用材料默认折叠；推荐工单自动展示
+    expandedSources.value[aiId] = false
   } catch (e: any) {
     chat.updateMessage(sid, aiId, {
       error: e?.message || '检索失败，请稍后重试'
@@ -276,6 +296,29 @@ onMounted(() => { if (input.value) onSend() })
 
                     <!-- markdown 渲染 -->
                     <div class="md-body" v-html="renderMarkdown(m.content)"></div>
+
+                    <!-- 推荐工单（FIX5 第 13 项：有则自动展示） -->
+                    <div v-if="m.recommendedTickets && m.recommendedTickets.length"
+                         class="mt-4 pt-3 border-t border-border">
+                      <div class="text-xs font-semibold text-ai flex items-center gap-1.5 mb-2">
+                        <ListChecks class="w-3.5 h-3.5" /> 相关作业工单
+                      </div>
+                      <div class="grid sm:grid-cols-2 gap-2">
+                        <div v-for="rt in m.recommendedTickets" :key="rt.id"
+                             class="px-3 py-2 rounded-btn bg-bg border border-border">
+                          <div class="text-sm font-medium text-text truncate">{{ rt.fault || ('工单 #' + rt.id) }}</div>
+                          <div class="text-[11px] text-text-2 mono mt-0.5 truncate">{{ rt.device }}</div>
+                          <button v-if="!rt.added" @click="onAddTicket(m.id, rt.id)" :disabled="addingTicket[rt.id]"
+                                  class="mt-2 h-7 px-3 rounded-btn border border-accent/40 text-accent text-xs font-semibold flex items-center gap-1 hover:bg-accent/10 disabled:opacity-60">
+                            <Loader v-if="addingTicket[rt.id]" class="w-3 h-3 animate-spin" />
+                            <UserPlus v-else class="w-3 h-3" /> 添加到我的工单
+                          </button>
+                          <div v-else class="mt-2 text-xs text-success flex items-center gap-1">
+                            <Check class="w-3 h-3" /> 已在我的工单
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
                     <!-- 来源引用（与本条消息强绑定） -->
                     <div v-if="m.sources && m.sources.length" class="mt-4 pt-3 border-t border-border">

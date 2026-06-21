@@ -1,11 +1,16 @@
-export type Role = 'frontline' | 'auditor' | 'admin' | 'guest'
+import {
+  type FrontendRole,
+  type Role,
+  ROLE_LABEL,
+  mapBackendRole,
+  mapFrontendRole,
+  ASSIGNABLE_ROLES,
+  isAuditorRole,
+} from '@/constants/roles'
 
-export const ROLE_LABEL: Record<Role, string> = {
-  frontline: '一线检修员',
-  auditor:   '知识审核员',
-  admin:     '系统管理员',
-  guest:     '访客'
-}
+// 兼容旧引用：从单一来源 re-export（FIX5 第 17 项）
+export type { Role, FrontendRole }
+export { ROLE_LABEL, mapBackendRole, mapFrontendRole, ASSIGNABLE_ROLES, isAuditorRole }
 
 export interface MenuItem {
   path: string
@@ -17,17 +22,16 @@ export interface MenuItem {
 
 /** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 */
 export const MENU_ITEMS: MenuItem[] = [
-  { path: '/search',           label: '多模态检索', highlight: true },
-  { path: '/workflow',         label: '作业指引' },
-  { path: '/knowledge/upload', label: '知识上传' },
-  { path: '/audit/knowledge',  label: '知识审查', roles: ['auditor', 'admin'] },
-  { path: '/audit',            label: '案例审核', roles: ['auditor', 'admin'] },
-  { path: '/admin/knowledge',  label: '知识库管理', roles: ['admin'] },
-  { path: '/admin/user',       label: '用户管理',   roles: ['admin'] },
-  { path: '/kg',               label: '知识图谱' },
-  { path: '/history',          label: '历史与收藏' },
-  { path: '/profile',          label: '个人中心' },
-  { path: '/admin',            label: '系统管理', roles: ['admin'] }
+  { path: '/search',            label: '多模态检索', highlight: true },
+  { path: '/workflow',          label: '作业指引' },
+  { path: '/knowledge/browse',  label: '知识库' },
+  { path: '/knowledge/upload',  label: '经验分享',   roles: ['frontline'] },
+  { path: '/auditor/review',    label: '待审核',     roles: ['auditor', 'admin'] },
+  { path: '/auditor/knowledge', label: '知识库管理', roles: ['auditor', 'admin'] },
+  { path: '/admin/user',        label: '用户管理',   roles: ['admin'] },
+  { path: '/kg',                label: '知识图谱' },
+  { path: '/history',           label: '历史与收藏' },
+  { path: '/profile',           label: '个人中心' },
 ]
 
 /** 权限判断:无 allow 视为公共菜单 */
@@ -44,12 +48,4 @@ export function hasRole(current: Role | undefined, allow: Role[]): boolean {
 /** 根据当前角色获取可见菜单 */
 export function getVisibleMenuItems(role: Role | undefined): MenuItem[] {
   return MENU_ITEMS.filter(it => hasPermission(role, it.roles))
-}
-
-/** 演示用预设账户(同时支持登录页"角色选择"快速切换) */
-export const DEMO_ACCOUNTS: Record<Role, { name: string; workshop: string; avatar?: string }> = {
-  frontline: { name: '李师傅 · 检修员演示', workshop: '一号车间·热轧线' },
-  auditor:   { name: '王工 · 审核员演示',   workshop: '设备技术部' },
-  admin:     { name: '张主管 · 管理员演示', workshop: '系统管理中心' },
-  guest:     { name: '访客演示',            workshop: '访客通道' }
 }

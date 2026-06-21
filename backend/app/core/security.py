@@ -47,3 +47,21 @@ def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(sec
     if user is None:
         raise HTTPException(401, "用户不存在")
     return user
+
+
+# 后端角色：worker / leader / auditor / admin。auditor 与 leader 等价（审核员）。
+def _is_auditor(role: str) -> bool:
+    return role in ("auditor", "leader", "admin")
+
+
+def require_admin(user=Depends(get_current_user)):
+    if user.role != "admin":
+        raise HTTPException(403, "需要管理员权限")
+    return user
+
+
+def require_auditor(user=Depends(get_current_user)):
+    """审核员或管理员可访问。"""
+    if not _is_auditor(user.role):
+        raise HTTPException(403, "需要审核员或管理员权限")
+    return user

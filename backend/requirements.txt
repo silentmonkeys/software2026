@@ -28,3 +28,6 @@ chromadb>=0.5
 pypdf>=4.2                       # PDF 文本抽取
 python-docx>=1.1
 ##               # DOCX 文本抽取
+
+# ===== 文档导出 =====
+reportlab>=4.0                   # PDF 导出（内置 CJK 字体 STSong-Light 支持中文）

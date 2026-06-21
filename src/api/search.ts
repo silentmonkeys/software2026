@@ -1,4 +1,4 @@
-import { post, get, request, rawCall, safeCall } from './request'
+import { request, rawCall } from './request'
 
 export type SearchMode = 'precise' | 'smart' | 'explore'
 export type SourceType = 'manual' | 'case' | 'graph'
@@ -25,6 +25,15 @@ export interface SearchHit {
   meta?: Record<string, unknown>
 }
 
+export interface RecommendedTicket {
+  id: number
+  device: string
+  fault: string
+  summary: string
+  added: boolean
+  score: number
+}
+
 export interface SearchResult {
   summary: string
   /** 后端目前不返回原因 Top3，前端根据问题展示空数组或保留默认 */
@@ -32,22 +41,17 @@ export interface SearchResult {
   hits: SearchHit[]
   /** 多模态场景下后端返回的图片观察文本（无图为空） */
   imageObservation?: string
+  /** FIX5 第 13 项：检索结果中的推荐工单 */
+  recommendedTickets: RecommendedTicket[]
 }
 
-/** 后端 /api/chat/query 返回结构（FIX3 第 3.2 项：sources 与回答强绑定） */
+/** 后端 /api/chat/query 返回结构 */
 interface BackendChatResp {
   answer: string
   image_observation: string
   sources: { id?: string; doc_id?: string | number; title: string; snippet: string; page?: number; score?: number }[]
+  recommended_tickets?: RecommendedTicket[]
 }
-
-const FALLBACK: SearchResult = {
-  summary: '',
-  causes: [],
-  hits: [],
-  imageObservation: ''
-}
-void FALLBACK
 
 /**
  * 多模态检索：实际调用 /api/chat/query。
@@ -91,14 +95,7 @@ export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> 
     summary: data.answer || '',
     causes: [],
     hits,
-    imageObservation: data.image_observation || ''
+    imageObservation: data.image_observation || '',
+    recommendedTickets: data.recommended_tickets || []
   }
 }
-
-export const suggest = (q: string) =>
-  safeCall<string[]>(() => get('/search/suggest', { q }), [
-    `${q}-振动异常`, `${q}-温度过高`, `${q}-异响排查`
-  ])
-
-export const feedback = (id: string, useful: boolean) =>
-  safeCall(() => post('/search/feedback', { id, useful }), { ok: true })

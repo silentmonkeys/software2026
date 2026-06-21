@@ -53,9 +53,15 @@ onMounted(async () => {
             {{ (u.username || '?').slice(0, 1) }}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate">{{ u.username }}</div>
+            <div class="font-medium text-sm truncate flex items-center gap-1.5">
+              {{ u.username }}
+              <span v-if="u.isDefaultAdmin"
+                    class="text-[10px] px-1 py-0.5 rounded bg-warning/10 text-warning flex items-center gap-0.5 flex-shrink-0">
+                <Lock class="w-2.5 h-2.5" /> 默认管理员
+              </span>
+            </div>
             <div class="text-xs text-text-2 truncate">
-              {{ ROLE_LABEL[backendRoleToFrontend(u.role)] }} · {{ u.role }}
+              {{ ROLE_LABEL[backendRoleToFrontend(u.role)] }}
               <span v-if="u.createdAt" class="ml-1">· {{ formatTime(u.createdAt) }}</span>
             </div>
           </div>

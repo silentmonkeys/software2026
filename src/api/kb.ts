@@ -1,9 +1,9 @@
 import { request, rawCall } from './request'
 
 /**
- * 知识库文档（FIX3 第 7 项扩展）
- * - 新增 status: pending / approved / rejected / taken_down 审批语义
- * - 兼容旧后端 ready / parsing / failed 字面量
+ * 知识库文档（FIX5）
+ * - status: pending / approved / rejected / taken_down
+ * - 兼容旧后端 ready 字面量（视为 approved）
  */
 export type KbStatus =
   | 'pending'      // 待审
@@ -11,20 +11,22 @@ export type KbStatus =
   | 'rejected'     // 已驳回
   | 'taken_down'   // 已下架
   | 'ready'        // 旧后端「已就绪」=> 视为 approved
-  | 'parsing'      // 解析中
-  | 'failed'       // 解析失败
   | string
 
 export interface KbDoc {
   id: number
   title: string
   type: string
+  category?: string
   status: KbStatus
   created_at: string
-  /** 上传人（FIX3 第 7.3 项要求按 uploader 过滤） */
+  uploaderId?: number
   uploader?: string
-  /** 驳回原因 / 下架原因 */
   reason?: string
+}
+
+export interface KbDocDetail extends KbDoc {
+  content: string
 }
 
 export interface KbUploadResult {
@@ -33,9 +35,7 @@ export interface KbUploadResult {
   status?: KbStatus
 }
 
-/**
- * 上传文档：worker 角色上传后默认 status=pending（后端落库时由 JWT 角色判定）
- */
+/** 上传文件：员工 → pending；管理员/审查员 → approved（后端按 JWT 角色判定） */
 export const uploadDoc = (file: File): Promise<KbUploadResult> => {
   const form = new FormData()
   form.append('file', file)
@@ -47,48 +47,57 @@ export const uploadDoc = (file: File): Promise<KbUploadResult> => {
   )
 }
 
-/**
- * 文档列表（FIX3 第 7.2 项）
- *  - status：可选筛选条件
- *  - uploader：传 'me' 后端按 token 内的 sub 自动过滤；也可显式传用户 id
- */
+/** 文本知识 / 员工经验分享录入 */
+export const uploadText = (body: { title: string; content: string; category?: string }) =>
+  rawCall<KbUploadResult>(() => request.post<KbUploadResult>('/kb/text', body))
+
+/** 文档列表 */
 export const listDocs = (params?: {
-  status?: 'pending' | 'approved' | 'rejected' | 'taken_down' | 'all'
+  status?: 'pending' | 'approved' | 'rejected' | 'taken_down'
   uploader?: string
 }): Promise<KbDoc[]> =>
-  rawCall<KbDoc[]>(() =>
-    request.get<KbDoc[]>('/kb/list', { params }), []
-  )
+  rawCall<KbDoc[]>(() => request.get<KbDoc[]>('/kb/list', { params }))
 
-/** 删除文档（hard delete，仅 admin） */
+/** 文档详情（含正文） */
+export const getDoc = (id: number) =>
+  rawCall<KbDocDetail>(() => request.get<KbDocDetail>(`/kb/${id}`))
+
+/** 删除文档（hard delete，仅 admin/auditor） */
 export const deleteDoc = (id: number) =>
-  rawCall<{ ok: boolean }>(() =>
-    request.delete<{ ok: boolean }>(`/kb/${id}`), { ok: false }
-  )
+  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }>(`/kb/${id}`))
 
-/**
- * 知识审批（FIX3 第 7.2 项）
- *  POST /api/kb/review/{doc_id}
- *  body { action, reason? }
- */
 export type ReviewAction = 'approve' | 'reject' | 'take_down'
 
+/** 知识审批 POST /api/kb/review/{doc_id} */
 export const reviewDoc = (id: number, action: ReviewAction, reason?: string) =>
   rawCall<{ ok: boolean; status: KbStatus }>(() =>
-    request.post<{ ok: boolean; status: KbStatus }>(`/kb/review/${id}`, { action, reason }),
-    { ok: false, status: 'pending' }
-  )
+    request.post<{ ok: boolean; status: KbStatus }>(`/kb/review/${id}`, { action, reason }))
 
-/** 显示语义化文案（FIX3 第 7.3 项） */
+/** 导出文档为 PDF / Markdown，触发浏览器下载 */
+export const exportDoc = async (id: number, format: 'pdf' | 'md', filename: string) => {
+  const res = await request.get(`/kb/${id}/export`, {
+    params: { format },
+    responseType: 'blob'
+  })
+  const blob = new Blob([res.data as BlobPart], {
+    type: format === 'pdf' ? 'application/pdf' : 'text/markdown'
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}.${format}`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export const STATUS_LABEL: Record<string, string> = {
   pending: '待审',
   approved: '已通过',
   rejected: '已驳回',
   taken_down: '已下架',
-  ready: '已通过',
-  parsing: '解析中',
-  failed: '解析失败'
+  ready: '已通过'
 }
 
-export const isApprovedStatus = (s: KbStatus) =>
-  s === 'approved' || s === 'ready'
+export const isApprovedStatus = (s: KbStatus) => s === 'approved' || s === 'ready'

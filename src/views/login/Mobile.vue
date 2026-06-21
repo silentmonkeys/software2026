@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { Lock, User, Cog, ChevronLeft } from 'lucide-vue-next'
 import { showToast, showFailToast } from 'vant'
-import { ROLE_LABEL, type Role } from '@/utils/permission'
+import { ROLE_LABEL } from '@/utils/permission'
 
 const router = useRouter()
 const user = useUserStore()
@@ -15,10 +15,7 @@ const mode = ref<Mode>('login')
 const username = ref('')
 const password = ref('')
 const confirm = ref('')
-const role = ref<Role>('frontline')
 const loading = ref(false)
-
-const registerRoles: Role[] = ['frontline', 'auditor', 'admin']
 
 const switchTo = (m: Mode) => {
   mode.value = m
@@ -44,7 +41,7 @@ const onRegister = async () => {
   if (password.value !== confirm.value) { showFailToast('两次密码不一致'); return }
   loading.value = true
   try {
-    await user.register(username.value, password.value, role.value)
+    await user.register(username.value, password.value)
     showToast({ type: 'success', message: '注册成功，请登录' })
     confirm.value = ''
     password.value = ''
@@ -76,9 +73,6 @@ const title = computed(() => mode.value === 'login' ? '欢迎使用' : '注册�
       </div>
       <div class="mt-6 text-2xl font-bold leading-tight">{{ title }}</div>
       <div class="mt-1 text-sm opacity-80">车间现场 · 多模态检索 · 标准化作业</div>
-      <div class="mt-4">
-        <span class="xinchuang-badge"><span class="dot"></span>信创认证 · LoongArch + 银河麒麟 V11</span>
-      </div>
     </div>
 
     <!-- 登录表单 -->
@@ -131,16 +125,8 @@ const title = computed(() => mode.value === 'login' ? '欢迎使用' : '注册�
                autocomplete="new-password"
                class="w-full h-14 pl-12 pr-3 rounded-btn border border-border bg-bg text-base outline-none focus:border-accent focus:bg-card" />
       </div>
-      <div>
-        <div class="text-xs text-text-2 mb-2">期望角色（实际角色由管理员分配）</div>
-        <div class="grid grid-cols-3 gap-2">
-          <button v-for="r in registerRoles" :key="r" type="button"
-                  @click="role = r"
-                  :class="['h-11 rounded-btn border text-sm',
-                           role === r ? 'border-accent bg-accent/5 text-accent font-semibold' : 'border-border text-text-2']">
-            {{ ROLE_LABEL[r] }}
-          </button>
-        </div>
+      <div class="text-xs text-text-2 italic">
+        注册员工账户；账户角色为一线检修员，如需更高权限请联系管理员。
       </div>
 
       <button type="submit" :disabled="loading"

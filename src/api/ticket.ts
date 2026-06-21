@@ -1,71 +1,115 @@
 import { request, rawCall } from './request'
 
-/**
- * 工单状态（FIX3 第 8 项）
- * - 仅保留 `pending` / `done` 两种语义；后端若返回 `open` / `doing` 等，统一映射到 `pending`
- * - 旧 `doing`（检修中）已废弃
- */
-export type TicketStatus = 'pending' | 'done'
+/** 用户维度的工单状态 */
+export type TicketStatus = 'open' | 'doing' | 'done' | 'deleted'
 
-/** 后端可能返回的旧状态字面量，仅用于反向映射 */
-type RawTicketStatus = 'open' | 'doing' | 'done' | 'pending' | string
-
-export const normalizeStatus = (s: RawTicketStatus | undefined): TicketStatus =>
-  s === 'done' ? 'done' : 'pending'
-
-/** 列表项（GET /api/ticket 返回每条的字段） */
+/** 列表项 / 摘要（含当前用户的进度） */
 export interface TicketSummary {
   id: number
   device: string
   fault: string
+  creatorId?: number
+  creator?: string | null
+  isCreator: boolean
+  added: boolean
   status: TicketStatus
+  totalSteps: number
+  doneSteps: number
+  createdAt?: string | null
+  addedAt?: string | null
+  completedAt?: string | null
+  score?: number
 }
 
-/** 详情（GET /api/ticket/{id} 返回） */
-export interface TicketDetail extends TicketSummary {
-  steps: { raw: string } | Record<string, unknown> | null
-  created_at: string
+/** 历史工单记录 */
+export interface TicketHistoryItem extends TicketSummary {
+  deletedAt?: string | null
+  deleteReason?: string | null
 }
 
-/** 创建工单返回（POST /api/ticket） */
+/** 工单详情 */
+export interface TicketDetail {
+  id: number
+  device: string
+  fault: string
+  steps: { raw: string } | Record<string, unknown> | unknown[] | null
+  created_at: string | null
+  creator?: string | null
+  isCreator: boolean
+  added: boolean
+  progress: {
+    status: TicketStatus
+    stepDone: string[]
+    addedAt?: string | null
+    completedAt?: string | null
+  }
+}
+
 export interface TicketCreateResult {
   id: number
-  steps: { raw: string } | Record<string, unknown> | null
+  steps: { raw: string } | Record<string, unknown> | unknown[] | null
+}
+
+export interface TicketListResult {
+  mine: TicketSummary[]
+  recommended: TicketSummary[]
+}
+
+/** 时间线事件 */
+export interface TicketEvent {
+  type: 'created' | 'added' | 'step_completed' | 'completed' | 'deleted' | string
+  detail?: { stepId?: string; reason?: string } | null
+  at: string | null
+}
+export interface TimelineResult {
+  events?: TicketEvent[]
+  grouped?: { userId: number; user: string | null; events: TicketEvent[] }[]
 }
 
 export const createTicket = (body: { device: string; fault: string }) =>
-  rawCall<TicketCreateResult>(() => request.post<TicketCreateResult>('/ticket', body, {
-    timeout: 60_000
-  }))
+  rawCall<TicketCreateResult>(() =>
+    request.post<TicketCreateResult>('/ticket', body, { timeout: 60_000 }))
 
-/**
- * 拉取真实工单列表，并把 status 映射到 `pending` / `done`。
- */
-export const listTickets = async (): Promise<TicketSummary[]> => {
-  const raw = await rawCall<Array<TicketSummary & { status: RawTicketStatus }>>(() =>
-    request.get<TicketSummary[]>('/ticket')
-  )
-  return (raw || []).map(t => ({ ...t, status: normalizeStatus(t.status) }))
-}
+/** 列表：{ mine, recommended } */
+export const listTickets = () =>
+  rawCall<TicketListResult>(() => request.get<TicketListResult>('/ticket'))
 
-export const getTicket = async (id: number | string): Promise<TicketDetail | null> => {
-  const raw = await rawCall<(TicketDetail & { status: RawTicketStatus }) | null>(() =>
-    request.get<TicketDetail>(`/ticket/${id}`), null
-  )
-  if (!raw) return null
-  return { ...raw, status: normalizeStatus(raw.status) }
-}
+/** 创建前的相似工单推荐 */
+export const recommendTickets = (body: { device: string; fault: string }) =>
+  rawCall<TicketSummary[]>(() => request.post<TicketSummary[]>('/ticket/recommend', body))
 
-/**
- * 更新状态：前端只允许 `pending` / `done`。
- * 后端如果不识别 `pending`，退回到 `open`（同义）。
- */
-export const updateTicketStatus = (id: number | string, status: TicketStatus) =>
+/** 历史工单（已完成 / 已删除） */
+export const listTicketHistory = () =>
+  rawCall<TicketHistoryItem[]>(() => request.get<TicketHistoryItem[]>('/ticket/history'))
+
+/** 把他人工单添加到我的作业指引 */
+export const addTicketToMine = (id: number | string) =>
+  rawCall<{ ok: boolean; id: number }>(() => request.post(`/ticket/${id}/add`, {}))
+
+export const getTicket = (id: number | string) =>
+  rawCall<TicketDetail>(() => request.get<TicketDetail>(`/ticket/${id}`))
+
+/** 更新我的进度（步骤完成 / 状态） */
+export const updateProgress = (id: number | string, body: { stepDone?: string[]; status?: TicketStatus }) =>
   rawCall<{ ok: boolean; status: TicketStatus }>(() =>
-    request.patch<{ ok: boolean; status: TicketStatus }>(`/ticket/${id}`, {
-      status: status === 'done' ? 'done' : 'open'
-    })
-  , { ok: false, status })
+    request.patch(`/ticket/${id}/progress`, body))
 
-/** 完成工单：FIX3 第 8.3 项 */
-export const completeTicket = (id: number | string) => updateTicketStatus(id, 'done')
+/** 完成工单 */
+export const completeTicket = (id: number | string) => updateProgress(id, { status: 'done' })
+
+/** 兼容旧调用 */
+export const updateTicketStatus = (id: number | string, status: TicketStatus) =>
+  updateProgress(id, { status })
+
+/**
+ * 删除我的工单：
+ * - 已完成：无需理由（后端默认"已完成"）
+ * - 未完成：必须传 reason
+ */
+export const deleteTicket = (id: number | string, reason?: string) =>
+  rawCall<{ ok: boolean }>(() =>
+    request.delete(`/ticket/${id}`, { data: reason ? { reason } : {} }))
+
+/** 工单时间线 */
+export const getTimeline = (id: number | string) =>
+  rawCall<TimelineResult>(() => request.get<TimelineResult>(`/ticket/${id}/timeline`))

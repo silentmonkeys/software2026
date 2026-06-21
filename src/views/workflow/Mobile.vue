@@ -9,7 +9,7 @@ import { onMounted, computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWorkflowStore } from '@/stores/workflow'
 import {
-  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket,
+  getFlow, getWorkflowTools, getWorkflowManuals, completeTicket, syncStepProgress,
   type ToolItem, type ManualRef
 } from '@/api/workflow'
 import {
@@ -18,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 import { showToast, showFailToast, showConfirmDialog } from 'vant'
 import { renderMarkdown } from '@/utils/markdown'
+import TicketTimeline from '@/components/common/TicketTimeline.vue'
 
 const wf = useWorkflowStore()
 const route = useRoute()
@@ -33,14 +34,30 @@ const manualsLoading = ref(false)
 
 const orderId = computed(() => String(route.params.id || ''))
 const isDemo = computed(() => !orderId.value || !orderId.value.startsWith('t-'))
+const ticketNumId = computed(() => orderId.value.startsWith('t-') ? orderId.value.slice(2) : orderId.value)
+const showTimeline = ref(false)
 
 const loadFlow = async () => {
+  syncReady.value = false
   const f = await getFlow(orderId.value || undefined)
   wf.setFlow(f)
   tab.value = 'steps'
   loadTools()
   loadManuals()
+  syncReady.value = true
 }
+
+/** 将已完成的大步骤同步到后端（按用户维度记录时间线，FIX5 第 11 项） */
+const syncReady = ref(false)
+let syncTimer: number | null = null
+watch(() => ({ ...wf.stepDone }), () => {
+  if (!syncReady.value || isDemo.value || !wf.flow) return
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = window.setTimeout(() => {
+    const doneIds = (wf.flow?.steps || []).filter(s => wf.stepDone[s.id]).map(s => s.id)
+    syncStepProgress(orderId.value, doneIds).catch(() => {})
+  }, 400)
+}, { deep: true })
 
 const loadTools = async () => {
   if (isDemo.value) { tools.value = []; return }
@@ -157,6 +174,10 @@ const openManual = (m: ManualRef) => {
           </div>
           <div class="text-sm font-semibold truncate">{{ wf.flow.name }}</div>
         </div>
+        <button v-if="!isDemo" @click="showTimeline = true"
+                class="w-9 h-9 flex items-center justify-center text-text-2" aria-label="时间线">
+          <Clock class="w-5 h-5" />
+        </button>
         <button v-if="!isDemo" @click="finalizeTicket"
                 class="h-9 px-2.5 rounded-btn bg-success text-white text-xs font-semibold flex items-center gap-1 mr-1">
           <CheckCircle2 class="w-3.5 h-3.5" /> 完成
@@ -355,4 +376,6 @@ const openManual = (m: ManualRef) => {
     </main>
   </div>
   <div v-else class="p-12 text-center text-text-2">流程加载中…</div>
+
+  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" @close="showTimeline = false" />
 </template>

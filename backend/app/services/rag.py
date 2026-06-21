@@ -30,6 +30,14 @@ def ingest_document(doc_id: int, title: str, full_text: str):
     return len(chunks)
 
 
+def remove_document(doc_id: int) -> None:
+    """从向量库移除某文档的全部切片（驳回 / 下架 / 删除时调用）。"""
+    try:
+        _col.delete(where={"doc_id": doc_id})
+    except Exception:
+        pass
+
+
 def search(query: str, k: int = 5) -> List[dict]:
     q_vec = embed([query])[0]
     res = _col.query(query_embeddings=[q_vec], n_results=k)

@@ -23,6 +23,10 @@ app.use(Vant)
 
 app.mount('#app')
 
+// 刷新后用已存的 token 回填当前用户信息（用户资料不再写 localStorage）
+import { useUserStore } from '@/stores/user'
+useUserStore().hydrate()
+
 // 启动屏移除
 const splash = document.getElementById('splash')
 if (splash) {

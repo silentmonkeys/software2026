@@ -1,6 +1,7 @@
 /** 时间、置信度、设备型号等格式化 */
 
-export function formatTime(t: string | number | Date): string {
+export function formatTime(t: string | number | Date | null | undefined): string {
+  if (t === null || t === undefined || t === '') return '-'
   const d = new Date(t)
   if (isNaN(d.getTime())) return '-'
   const pad = (n: number) => String(n).padStart(2, '0')

@@ -1,10 +1,8 @@
 import { request, rawCall } from './request'
-import { listDocs } from './kb'
+import { listDocs, isApprovedStatus } from './kb'
 
 /**
- * 知识图谱（FIX3 第 5 项）
- * - 严禁前端硬编码 mockGraphNodes / mockGraphEdges
- * - 必须传已通过审核的 doc_id 列表给后端，缺接口时返回空图（UI 显示空态）
+ * 知识图谱（基于已审通过的真实文档，无 mock）
  */
 export type KGType = 'device' | 'part' | 'fault' | 'method' | 'case' | 'manual'
 
@@ -16,7 +14,6 @@ export interface KGNode {
   desc?: string
   status?: string
   manualRef?: string
-  /** 节点对应的源文档（FIX3 第 5.2 项） */
   docId?: string
   chunkId?: string
 }
@@ -26,40 +23,21 @@ export interface KGGraph { nodes: KGNode[]; edges: KGEdge[] }
 const EMPTY_GRAPH: KGGraph = { nodes: [], edges: [] }
 
 /**
- * 拉取图谱：把已审通过的 doc_ids 传给后端
- * - 入参缺省时自动从 /api/kb/list 取 status=ready/approved 的文档
- * - 后端不可达时返回空图（UI 提示"暂无可视化的图谱数据"）
+ * 拉取图谱：把已审通过的 doc_ids 传给后端。
+ * 缺省入参时自动取 status=approved/ready 的文档；无文档则返回空图（不触发请求）。
  */
 export const getGraph = async (docIds?: string[]): Promise<KGGraph> => {
   let ids = docIds
   if (!ids) {
-    try {
-      const docs = await listDocs()
-      ids = docs
-        .filter(d => d.status === 'ready' || (d as any).status === 'approved')
-        .map(d => String(d.id))
-    } catch {
-      ids = []
-    }
+    const docs = await listDocs()
+    ids = docs.filter(d => isApprovedStatus(d.status)).map(d => String(d.id))
   }
   if (!ids.length) return EMPTY_GRAPH
   return rawCall<KGGraph>(() =>
-    request.get<KGGraph>('/kg/graph', { params: { doc_ids: ids!.join(',') } }),
-    EMPTY_GRAPH
-  )
+    request.get<KGGraph>('/kg/graph', { params: { doc_ids: ids!.join(',') } }))
 }
 
-/** 拉取实体详细信息（关联节点） */
-export const getEntity = (id: string) =>
-  rawCall<{ id: string; props: Record<string, unknown>; related: KGNode[] }>(() =>
-    request.get(`/kg/entity/${id}`),
-    { id, props: {}, related: [] }
-  )
-
-/**
- * 拉取节点对应的原文片段（FIX3 第 5.2 项）
- * GET /api/kb/{docId}/chunk/{chunkId}
- */
+/** 节点对应原文片段 GET /api/kb/{docId}/chunk/{chunkId} */
 export interface ChunkContent {
   docId: string
   chunkId: string
@@ -68,7 +46,4 @@ export interface ChunkContent {
   title?: string
 }
 export const getChunk = (docId: string, chunkId: string) =>
-  rawCall<ChunkContent | null>(() =>
-    request.get<ChunkContent>(`/kb/${docId}/chunk/${chunkId}`),
-    null
-  )
+  rawCall<ChunkContent>(() => request.get<ChunkContent>(`/kb/${docId}/chunk/${chunkId}`))

@@ -24,13 +24,8 @@ useShortcut([
         <slot />
       </main>
     </div>
-    <!-- 底部信创认证条 -->
     <footer class="h-8 px-4 flex items-center justify-between bg-primary text-on-dark text-xs flex-shrink-0">
       <span class="opacity-70">© 2026 设备检修知识检索与作业系统</span>
-      <span class="xinchuang-badge">
-        <span class="dot"></span>
-        信创认证 · LoongArch + 银河麒麟 V11
-      </span>
       <span class="opacity-70 mono">Asia/Shanghai · v0.1.0</span>
     </footer>
 

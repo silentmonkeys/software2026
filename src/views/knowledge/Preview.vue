@@ -1,34 +1,56 @@
 <script setup lang="ts">
 /**
- * 知识库文档预览（FIX3 第 4.3 项需要的跳转目标）
- * - 后端如有 /api/kb/{id}/chunks 接口则展示分块
- * - 接口未实现时显示文档基本信息 + 提示
+ * 知识库文档预览（FIX5）
+ * - 调用 getDoc(id) 获取含正文的详情，renderMarkdown + v-html 渲染全文（只读）
+ * - 导出 PDF / Markdown（exportDoc）
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listDocs, type KbDoc } from '@/api/kb'
-import { ChevronLeft, FileText, Loader, AlertTriangle } from 'lucide-vue-next'
+import { getDoc, exportDoc, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
+import { renderMarkdown } from '@/utils/markdown'
+import { showToast, showFailToast } from 'vant'
+import { ChevronLeft, FileText, Loader, AlertTriangle, Download, FileDown } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
 
-const docId = computed(() => String(route.params.docId || ''))
-const doc = ref<KbDoc | null>(null)
+const docId = computed(() => Number(route.params.docId || 0))
+const doc = ref<KbDocDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
+const exporting = ref<'pdf' | 'md' | ''>('')
+
+const STATUS_CLS: Record<string, string> = {
+  pending:    'bg-warning/10 text-warning border-warning/30',
+  approved:   'bg-success/10 text-success border-success/30',
+  ready:      'bg-success/10 text-success border-success/30',
+  rejected:   'bg-danger/10 text-danger border-danger/30',
+  taken_down: 'bg-text-2/10 text-text-2 border-border'
+}
 
 onMounted(async () => {
   loading.value = true
   try {
-    const list = await listDocs()
-    doc.value = list.find(d => String(d.id) === docId.value) || null
-    if (!doc.value) error.value = '该文档不在已审通过的列表中（可能已被下架）'
+    doc.value = await getDoc(docId.value)
   } catch {
-    error.value = '后端不可达，无法加载文档信息'
+    error.value = '后端不可达或文档不存在，无法加载文档内容'
   } finally {
     loading.value = false
   }
 })
+
+const doExport = async (format: 'pdf' | 'md') => {
+  if (!doc.value || exporting.value) return
+  exporting.value = format
+  try {
+    await exportDoc(doc.value.id, format, doc.value.title)
+    showToast({ type: 'success', message: `已导出 ${format.toUpperCase()}` })
+  } catch {
+    showFailToast('导出失败，请稍后重试')
+  } finally {
+    exporting.value = ''
+  }
+}
 </script>
 
 <template>
@@ -41,6 +63,18 @@ onMounted(async () => {
         <div class="text-xs text-text-2">知识库 / 文档预览</div>
         <div class="text-sm font-semibold truncate">{{ doc?.title || `doc-${docId}` }}</div>
       </div>
+      <template v-if="doc && !loading && !error">
+        <button class="h-9 px-3 rounded-btn border border-border flex items-center gap-1.5 text-sm disabled:opacity-60"
+                :disabled="!!exporting" @click="doExport('md')">
+          <Loader v-if="exporting === 'md'" class="w-4 h-4 animate-spin" />
+          <FileDown v-else class="w-4 h-4" /> <span class="hidden sm:inline">Markdown</span>
+        </button>
+        <button class="h-9 px-3 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold flex items-center gap-1.5 text-sm disabled:opacity-60"
+                :disabled="!!exporting" @click="doExport('pdf')">
+          <Loader v-if="exporting === 'pdf'" class="w-4 h-4 animate-spin" />
+          <Download v-else class="w-4 h-4" /> PDF
+        </button>
+      </template>
     </header>
 
     <div class="flex-1 overflow-auto p-6 max-w-3xl mx-auto w-full space-y-4">
@@ -59,22 +93,15 @@ onMounted(async () => {
               <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-2">
                 <span class="mono">#{{ doc.id }}</span>
                 <span class="px-1.5 py-0.5 rounded mono uppercase bg-bg border border-border">{{ doc.type }}</span>
-                <span class="px-1.5 py-0.5 rounded-pill border bg-success/10 text-success border-success/30">{{ doc.status }}</span>
+                <span v-if="doc.category" class="px-1.5 py-0.5 rounded bg-bg border border-border">{{ doc.category }}</span>
+                <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[doc.status] || 'bg-bg border-border'">{{ STATUS_LABEL[doc.status] || doc.status }}</span>
                 <span class="mono opacity-70">{{ doc.created_at }}</span>
               </div>
             </div>
           </div>
         </div>
-        <div class="industrial-card p-5 text-sm text-text-2 leading-relaxed">
-          <div class="text-text font-semibold mb-2">文档内容预览</div>
-          <p>
-            后端尚未提供 <code class="mono px-1 py-0.5 rounded bg-bg">GET /api/kb/{id}/chunks</code> 分块预览接口。
-          </p>
-          <p class="mt-2">
-            可以在
-            <button class="text-accent hover:underline" @click="router.push('/search')">多模态检索</button>
-            页提问，AI 会自动检索本文档的相关片段并附在回答的"来源引用"里。
-          </p>
+        <div class="industrial-card p-5">
+          <div class="md-body" v-html="renderMarkdown(doc.content || '（暂无正文内容）')"></div>
         </div>
       </template>
       <div v-else class="industrial-card p-10 text-center text-text-2">

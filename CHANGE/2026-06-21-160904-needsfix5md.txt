@@ -1,0 +1,3176 @@
+ ▐▛███▜▌   Claude Code v2.1.183
+▝▜█████▛▘  glm-5.2 · API Usage Billing
+  ▘▘ ▝▝    ~/Documents/software2026
+
+
+❯ @NEEDS/FIX5.md 根据文档内容完善该项目                                         
+  ⎿  Read NEEDS/FIX5.md (247 lines)
+
+  Thought for 8s (ctrl+o to expand)
+
+● I'll start by exploring the codebase to understand the current state before
+  planning this large set of changes.
+
+  Thought for 7s, listed 1 directory (ctrl+o to expand)
+
+● This is a large 19-item spec spanning frontend and backend. Let me map the
+  core files in parallel before planning.
+
+  Thought for 5s, read 4 files (ctrl+o to expand)
+
+● Let me read the backend core files in parallel to understand the data model
+  and existing endpoints.
+
+  Thought for 12s, read 4 files (ctrl+o to expand)
+
+● This is a large undertaking. Let me read the remaining backend APIs and
+  frontend API layer to fully understand the contracts before planning.
+
+  Thought for 26s, read 5 files (ctrl+o to expand)
+
+● I have a clear picture of the backend (it's minimal relative to what FIX5
+  demands — new tables, columns, and endpoints are needed). This is a large
+  19-item full-stack effort. Let me enter plan mode and finish mapping the
+  frontend before presenting a plan.
+
+● Entered plan mode
+  Claude is now exploring and designing an implementation approach.
+
+● I'll explore the frontend in parallel to finish mapping before planning.
+
+● 3 Explore agents finished (ctrl+o to expand)
+   ├ Map frontend API layer · 10 tool uses · 22.3k tokens
+   │ ⎿  Done
+   ├ Map frontend views and components · 122 tool uses · 111.3k tokens
+   │ ⎿  Done
+   └ Find LoongArch labels and stores · 88 tool uses · 47.5k tokens
+     ⎿  Done
+
+  Thought for 10m 0s (ctrl+o to expand)
+
+● Plan mode was exited. Given the enormous scope (19 items, full-stack), I'll
+  work methodically following the recommended order, starting with the
+  foundation: backend data model + role unification, since the frontend must
+  align to real endpoints. Let me set up task tracking and read the remaining
+  foundation files.
+
+  Thought for 20s, read 5 files (ctrl+o to expand)
+
+● I now have a comprehensive map of both frontend and backend. The backend is
+  minimal and needs substantial new tables/endpoints; the frontend needs role
+  unification, mock removal, and many new/updated views. I'll work through this
+  systematically. Let me set up task tracking.
+
+  Thought for 41s (ctrl+o to expand)
+
+● The scope is large but the spec is precise. I'll build the backend foundation
+  first since it's the contract the frontend aligns to. Starting with the data
+  model.
+● Write(backend/app/models/__init__.py)
+  ⎿  Added 42 lines, removed 7 lines
+      1  from datetime import datetime
+      2 -from sqlalchemy import Column, Integer, String, DateTime, Foreig
+        -nKey, Text, JSON                                                
+      2 +from sqlalchemy import Column, Integer, String, DateTime, Foreig
+        +nKey, Text, JSON, Boolean, UniqueConstraint                     
+      3  from app.core.db import Base
+      4  
+      5  
+     ...
+       8      id = Column(Integer, primary_key=True)
+       9      username = Column(String(64), unique=True, index=True, null
+          able=False)
+      10      password_hash = Column(String(256), nullable=False)
+      11 -    role = Column(String(16), default="worker")  # worker / lea
+         -der / admin                                                    
+      11 +    role = Column(String(16), default="worker")  # worker / lea
+         +der / auditor / admin                                          
+      12 +    is_default_admin = Column(Boolean, default=False)  # FIX5：
+         +默认管理员账户不可删除                                         
+      13      created_at = Column(DateTime, default=datetime.utcnow)
+      14  
+      15  
+     ...
+      17      __tablename__ = "documents"
+      18      id = Column(Integer, primary_key=True)
+      19      title = Column(String(256), nullable=False)
+      19 -    file_path = Column(String(512), nullable=False)            
+      20 -    type = Column(String(16))  # pdf / docx / image            
+      21 -    status = Column(String(16), default="ready")  # ready / par
+         -sing / failed                                                  
+      20 +    file_path = Column(String(512))            # 文件类文档的本
+         +地路径；纯文本经验分享可为空                                   
+      21 +    type = Column(String(16))                  # pdf / docx / t
+         +xt / md / experience                                           
+      22 +    category = Column(String(32), default="manual")  # manual /
+         + experience（员工经验分享）                                    
+      23 +    content = Column(Text)                      # 文本知识 / 经
+         +验分享正文，用于预览与导出                                     
+      24 +    # ready/approved 视为已入库可检索；pending 待审；rejected  
+         +驳回；taken_down 已下架                                        
+      25 +    status = Column(String(16), default="pending")             
+      26 +    review_reason = Column(Text)               # 驳回 / 下架理 
+         +由                                                             
+      27 +    reviewer_id = Column(Integer, ForeignKey("users.id"))      
+      28 +    reviewed_at = Column(DateTime)                             
+      29      uploader_id = Column(Integer, ForeignKey("users.id"))
+      30      created_at = Column(DateTime, default=datetime.utcnow)
+      31  
+      32  
+      33  class Ticket(Base):
+      34 +    """工单为平台级资源：所有人可见，进度按用户维度独立记录在 U
+         +serTicketProgress。"""                                         
+      35      __tablename__ = "tickets"
+      36      id = Column(Integer, primary_key=True)
+      37      device = Column(String(128))
+      38      fault = Column(String(512))
+      39      steps = Column(JSON)
+      32 -    status = Column(String(16), default="open")  # open / doing
+         - / done                                                        
+      33 -    owner_id = Column(Integer, ForeignKey("users.id"))         
+      40 +    creator_id = Column(Integer, ForeignKey("users.id"))       
+      41      created_at = Column(DateTime, default=datetime.utcnow)
+      42  
+      43  
+      44 +class UserTicketProgress(Base):                                
+      45 +    """每个用户对某工单的独立进度。"""                         
+      46 +    __tablename__ = "user_ticket_progress"                     
+      47 +    __table_args__ = (UniqueConstraint("user_id", "ticket_id", 
+         +name="uq_user_ticket"),)                                       
+      48 +    id = Column(Integer, primary_key=True)                     
+      49 +    user_id = Column(Integer, ForeignKey("users.id"), index=Tru
+         +e)                                                             
+      50 +    ticket_id = Column(Integer, ForeignKey("tickets.id"), index
+         +=True)                                                         
+      51 +    status = Column(String(16), default="open")     # open / do
+         +ing / done / deleted                                           
+      52 +    step_done = Column(JSON, default=list)           # 已完成步
+         +骤 id 列表                                                     
+      53 +    is_creator = Column(Boolean, default=False)                
+      54 +    added_at = Column(DateTime, default=datetime.utcnow)       
+      55 +    completed_at = Column(DateTime)                            
+      56 +    deleted_at = Column(DateTime)                              
+      57 +    delete_reason = Column(String(256))                        
+      58 +                                                               
+      59 +                                                               
+      60 +class TicketEvent(Base):                                       
+      61 +    """工单时间线事件（按用户维度）。"""                       
+      62 +    __tablename__ = "ticket_events"                            
+      63 +    id = Column(Integer, primary_key=True)                     
+      64 +    ticket_id = Column(Integer, ForeignKey("tickets.id"), index
+         +=True)                                                         
+      65 +    user_id = Column(Integer, ForeignKey("users.id"), index=Tru
+         +e)                                                             
+      66 +    # created / added / step_completed / completed / deleted   
+      67 +    type = Column(String(24))                                  
+      68 +    detail = Column(JSON)                            # 如 {"ste
+         +pId": "step-1", "reason": "..."}                               
+      69 +    created_at = Column(DateTime, default=datetime.utcnow)     
+      70 +                                                               
+      71 +                                                               
+      72  class QALog(Base):
+      73      __tablename__ = "qa_logs"
+      74      id = Column(Integer, primary_key=True)
+
+  Thought for 6s (ctrl+o to expand)
+
+● Now a lightweight startup migration so the existing SQLite db gets the new
+  columns (create_all only adds new tables, not columns).
+
+● Write(backend/app/core/migrate.py)
+  ⎿  Wrote 48 lines to backend/app/core/migrate.py
+       2 轻量级启动迁移：SQLite 在 create_all 时只会新建缺失的表，不会为
+         已存在的表补列。
+       3 这里对已存在的表做 ADD COLUMN，保证旧库平滑升级（FIX5）。
+       4 新表（user_ticket_progress / ticket_events）由 Base.metadata.cre
+         ate_all 创建。
+       6 from sqlalchemy import inspect, text
+       7 from app.core.db import engine
+       8 
+       9 # 表 -> {列名: SQL 列定义}
+      10 _ADD_COLUMNS = {
+     … +43 lines (ctrl+o to expand)
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now I'll add role-guard helpers to security.py for backend authorization (item
+  18).
+
+● Update(backend/app/core/security.py)
+  ⎿  Added 18 lines
+      47      if user is None:
+      48          raise HTTPException(401, "用户不存在")
+      49      return user
+      50 +                                                               
+      51 +                                                               
+      52 +# 后端角色：worker / leader / auditor / admin。auditor 与 leade
+         +r 等价（审核员）。                                             
+      53 +def _is_auditor(role: str) -> bool:                            
+      54 +    return role in ("auditor", "leader", "admin")              
+      55 +                                                               
+      56 +                                                               
+      57 +def require_admin(user=Depends(get_current_user)):             
+      58 +    if user.role != "admin":                                   
+      59 +        raise HTTPException(403, "需要管理员权限")             
+      60 +    return user                                                
+      61 +                                                               
+      62 +                                                               
+      63 +def require_auditor(user=Depends(get_current_user)):           
+      64 +    """审核员或管理员可访问。"""                               
+      65 +    if not _is_auditor(user.role):                             
+      66 +        raise HTTPException(403, "需要审核员或管理员权限")     
+      67 +    return user                                                
+
+● Now the auth API: register forces worker, add /auth/me and
+  /auth/change-password, password length validation.
+
+● Write(backend/app/api/auth.py)
+  ⎿  Added 37 lines, removed 4 lines
+       2  from pydantic import BaseModel
+       3  from sqlalchemy.orm import Session
+       4  from app.core.db import get_db
+       5 -from app.core.security import hash_password, verify_password, c
+         -reate_token                                                    
+       5 +from app.core.security import hash_password, verify_password, c
+         +reate_token, get_current_user                                  
+       6  from app.models import User
+       7  
+       8  router = APIRouter(prefix="/api/auth", tags=["auth"])
+       9  
+      10 +MIN_PASSWORD_LEN = 6                                           
+      11  
+      12 +                                                               
+      13 +def _check_password(pw: str) -> None:                          
+      14 +    if not pw or len(pw) < MIN_PASSWORD_LEN:                   
+      15 +        raise HTTPException(400, f"密码长度不少于 {MIN_PASSWORD
+         +_LEN} 位")                                                     
+      16 +                                                               
+      17 +                                                               
+      18  class LoginIn(BaseModel):
+      19      username: str
+      20      password: str
+     ...
+      23  class TokenOut(BaseModel):
+      24      access_token: str
+      25      role: str
+      26 +    username: str                                              
+      27  
+      28  
+      29 +class ChangePasswordIn(BaseModel):                             
+      30 +    old_password: str                                          
+      31 +    new_password: str                                          
+      32 +                                                               
+      33 +                                                               
+      34  @router.post("/register", response_model=TokenOut)
+      35  def register(body: LoginIn, db: Session = Depends(get_db)):
+      36 +    """FIX5：注册一律创建员工账户（worker），忽略前端传入的任何
+         +角色字段。"""                                                  
+      37      if db.query(User).filter(User.username == body.username).fi
+          rst():
+      38          raise HTTPException(400, "用户名已存在")
+      25 -    u = User(username=body.username, password_hash=hash_passwor
+         -d(body.password))                                              
+      39 +    _check_password(body.password)                             
+      40 +    u = User(username=body.username, password_hash=hash_passwor
+         +d(body.password), role="worker")                               
+      41      db.add(u); db.commit(); db.refresh(u)
+      27 -    return TokenOut(access_token=create_token(u.username, u.rol
+         -e), role=u.role)                                               
+      42 +    return TokenOut(access_token=create_token(u.username, u.rol
+         +e), role=u.role, username=u.username)                          
+      43  
+      44  
+      45  @router.post("/login", response_model=TokenOut)
+     ...
+      47      u = db.query(User).filter(User.username == body.username).f
+          irst()
+      48      if not u or not verify_password(body.password, u.password_h
+          ash):
+      49          raise HTTPException(401, "账号或密码错误")
+      35 -    return TokenOut(access_token=create_token(u.username, u.rol
+         -e), role=u.role)                                               
+      50 +    return TokenOut(access_token=create_token(u.username, u.rol
+         +e), role=u.role, username=u.username)                          
+      51 +                                                               
+      52 +                                                               
+      53 +@router.get("/me")                                             
+      54 +def me(user: User = Depends(get_current_user)):                
+      55 +    """根据 token 回填当前用户信息（前端不再把用户资料写入 loca
+         +lStorage）。"""                                                
+      56 +    return {"id": user.id, "username": user.username, "role": u
+         +ser.role,                                                      
+      57 +            "isDefaultAdmin": bool(user.is_default_admin)}     
+      58 +                                                               
+      59 +                                                               
+      60 +@router.put("/change-password")                                
+      61 +def change_password(body: ChangePasswordIn, db: Session = Depen
+         +ds(get_db),                                                    
+      62 +                    user: User = Depends(get_current_user)):   
+      63 +    if not verify_password(body.old_password, user.password_has
+         +h):                                                            
+      64 +        raise HTTPException(400, "原密码不正确")               
+      65 +    _check_password(body.new_password)                         
+      66 +    user.password_hash = hash_password(body.new_password)      
+      67 +    db.commit()                                                
+      68 +    return {"ok": True}                                        
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now the admin API: full user CRUD, reset-password, delete-guard, and default
+  admin seeding with password 123456.
+
+● Write(backend/app/api/admin.py)
+  ⎿  Added 112 lines, removed 40 lines
+        1  """
+        2 -管理员接口（FIX4 第 4 项）                                    
+        2 +管理员接口（FIX5 第 1/3 部分）                                
+        3  
+        4 -- GET /api/admin/users  —— 列出用户（仅 admin）               
+        5 -- PUT /api/admin/users/{user_id}/role  —— 修改用户角色（仅 adm
+          -in）                                                          
+        6 -- 启动时若用户表为空或不存在 admin，则创建默认 admin / admin12
+          -3 账号                                                        
+        4 +- GET    /api/admin/users                      列出用户       
+        5 +- POST   /api/admin/users                      创建账户（员工/
+          +审查员/管理员）                                               
+        6 +- PUT    /api/admin/users/{id}                 修改用户名 / 角
+          +色                                                            
+        7 +- PUT    /api/admin/users/{id}/role            修改角色（兼容 
+          +旧前端）                                                      
+        8 +- PUT    /api/admin/users/{id}/reset-password  重置密码为 1234
+          +56                                                            
+        9 +- DELETE /api/admin/users/{id}                 删除账户（默认 
+          +admin 不可删）                                                
+       10 +                                                              
+       11 +启动时确保存在默认 admin / 123456（is_default_admin=True）。  
+       12  """
+       13  
+       14 +from typing import Optional                                   
+       15  from fastapi import APIRouter, Depends, HTTPException
+       16  from pydantic import BaseModel
+       17  from sqlalchemy.orm import Session
+       18  
+       19  from app.core.db import get_db
+       14 -from app.core.security import get_current_user, hash_password 
+       20 +from app.core.security import get_current_user, hash_password,
+          + require_admin                                                
+       21  from app.models import User
+       22  
+       23  router = APIRouter(prefix="/api/admin", tags=["admin"])
+       24  
+       19 -# 后端实际存储的合法角色（前端 role 映射在 src/api/auth.ts map
+          -BackendRole）                                                 
+       25 +DEFAULT_PASSWORD = "123456"                                   
+       26 +# 后端实际存储的合法角色（前端映射见 src/constants/roles.ts） 
+       27  VALID_ROLES = {"worker", "leader", "auditor", "admin"}
+       28  
+       29  
+       23 -def require_admin(user: User = Depends(get_current_user)) -> U
+          -ser:                                                          
+       24 -    if user.role != "admin":                                  
+       25 -        raise HTTPException(403, detail="需要管理员权限")     
+       26 -    return user                                               
+       30 +def _is_protected_admin(u: User) -> bool:                     
+       31 +    return bool(u.is_default_admin) or u.username == "admin"  
+       32  
+       33  
+       34 +def _user_out(u: User) -> dict:                               
+       35 +    return {                                                  
+       36 +        "id": u.id,                                           
+       37 +        "username": u.username,                               
+       38 +        "role": u.role,                                       
+       39 +        "isDefaultAdmin": _is_protected_admin(u),             
+       40 +        "createdAt": u.created_at.isoformat() if u.created_at 
+          +else None,                                                    
+       41 +    }                                                         
+       42 +                                                              
+       43 +                                                              
+       44  @router.get("/users")
+       45  def list_users(db: Session = Depends(get_db), _admin: User = D
+           epends(require_admin)):
+       46      rows = db.query(User).order_by(User.id.desc()).all()
+       32 -    return [                                                  
+       33 -        {                                                     
+       34 -            "id": u.id,                                       
+       35 -            "username": u.username,                           
+       36 -            "role": u.role,                                   
+       37 -            "createdAt": u.created_at.isoformat() if u.created
+          -_at else None,                                                
+       38 -        }                                                     
+       39 -        for u in rows                                         
+       40 -    ]                                                         
+       47 +    return [_user_out(u) for u in rows]                       
+       48  
+       49  
+       50 +class CreateUserIn(BaseModel):                                
+       51 +    username: str                                             
+       52 +    password: Optional[str] = None                            
+       53 +    role: str = "worker"                                      
+       54 +                                                              
+       55 +                                                              
+       56 +@router.post("/users")                                        
+       57 +def create_user(body: CreateUserIn, db: Session = Depends(get_
+          +db), _admin: User = Depends(require_admin)):                  
+       58 +    username = (body.username or "").strip()                  
+       59 +    if not username:                                          
+       60 +        raise HTTPException(400, "用户名不能为空")            
+       61 +    role = (body.role or "worker").strip().lower()            
+       62 +    if role not in VALID_ROLES:                               
+       63 +        raise HTTPException(400, f"非法角色：{body.role}")    
+       64 +    if db.query(User).filter(User.username == username).first(
+          +):                                                            
+       65 +        raise HTTPException(400, "用户名已存在")              
+       66 +    pw = body.password or DEFAULT_PASSWORD                    
+       67 +    if len(pw) < 6:                                           
+       68 +        raise HTTPException(400, "密码长度不少于 6 位")       
+       69 +    u = User(username=username, password_hash=hash_password(pw
+          +), role=role)                                                 
+       70 +    db.add(u); db.commit(); db.refresh(u)                     
+       71 +    return _user_out(u)                                       
+       72 +                                                              
+       73 +                                                              
+       74 +class UpdateUserIn(BaseModel):                                
+       75 +    username: Optional[str] = None                            
+       76 +    role: Optional[str] = None                                
+       77 +                                                              
+       78 +                                                              
+       79 +@router.put("/users/{user_id}")                               
+       80 +def update_user(user_id: int, body: UpdateUserIn, db: Session 
+          += Depends(get_db),                                            
+       81 +                admin: User = Depends(require_admin)):        
+       82 +    u = db.query(User).get(user_id)                           
+       83 +    if not u:                                                 
+       84 +        raise HTTPException(404, "用户不存在")                
+       85 +    if body.role is not None:                                 
+       86 +        role = body.role.strip().lower()                      
+       87 +        if role not in VALID_ROLES:                           
+       88 +            raise HTTPException(400, f"非法角色：{body.role}")
+       89 +        if u.id == admin.id and role != "admin":              
+       90 +            raise HTTPException(400, "不能降级当前登录的管理员
+          +账号")                                                        
+       91 +        if _is_protected_admin(u) and role != "admin":        
+       92 +            raise HTTPException(403, "默认管理员账户角色不可变
+          +更")                                                          
+       93 +        u.role = role                                         
+       94 +    if body.username is not None:                             
+       95 +        new_name = body.username.strip()                      
+       96 +        if not new_name:                                      
+       97 +            raise HTTPException(400, "用户名不能为空")        
+       98 +        if _is_protected_admin(u) and new_name != u.username: 
+       99 +            raise HTTPException(403, "默认管理员账户用户名不可
+          +变更")                                                        
+      100 +        dup = db.query(User).filter(User.username == new_name,
+          + User.id != u.id).first()                                     
+      101 +        if dup:                                               
+      102 +            raise HTTPException(400, "用户名已存在")          
+      103 +        u.username = new_name                                 
+      104 +    db.commit()                                               
+      105 +    return _user_out(u)                                       
+      106 +                                                              
+      107 +                                                              
+      108  class RoleIn(BaseModel):
+      109      role: str
+      110  
+      111  
+      112  @router.put("/users/{user_id}/role")
+       48 -def update_role(                                              
+       49 -    user_id: int,                                             
+       50 -    body: RoleIn,                                             
+       51 -    db: Session = Depends(get_db),                            
+       52 -    admin: User = Depends(require_admin),                     
+       53 -):                                                            
+       54 -    role = (body.role or "").strip().lower()                  
+       55 -    if role not in VALID_ROLES:                               
+       56 -        raise HTTPException(400, detail=f"非法角色：{body.role
+          -}")                                                           
+      113 +def update_role(user_id: int, body: RoleIn, db: Session = Depe
+          +nds(get_db),                                                  
+      114 +                admin: User = Depends(require_admin)):        
+      115 +    return update_user(user_id, UpdateUserIn(role=body.role), 
+          +db, admin)                                                    
+      116 +                                                              
+      117 +                                                              
+      118 +@router.put("/users/{user_id}/reset-password")                
+      119 +def reset_password(user_id: int, db: Session = Depends(get_db)
+          +, _admin: User = Depends(require_admin)):                     
+      120      u = db.query(User).get(user_id)
+      121      if not u:
+       59 -        raise HTTPException(404, detail="用户不存在")         
+       60 -    if u.id == admin.id and role != "admin":                  
+       61 -        # 防止管理员把自己降级，导致没人管这个系统            
+       62 -        raise HTTPException(400, detail="不能降级当前登录的管 
+          -理员账号")                                                    
+       63 -    u.role = role                                             
+      122 +        raise HTTPException(404, "用户不存在")                
+      123 +    u.password_hash = hash_password(DEFAULT_PASSWORD)         
+      124      db.commit()
+       65 -    return {"ok": True, "id": u.id, "role": u.role}           
+      125 +    return {"ok": True, "password": DEFAULT_PASSWORD}         
+      126  
+      127  
+      128 +@router.delete("/users/{user_id}")                            
+      129 +def delete_user(user_id: int, db: Session = Depends(get_db), a
+          +dmin: User = Depends(require_admin)):                         
+      130 +    u = db.query(User).get(user_id)                           
+      131 +    if not u:                                                 
+      132 +        raise HTTPException(404, "用户不存在")                
+      133 +    if _is_protected_admin(u):                                
+      134 +        raise HTTPException(403, "默认管理员账户不可删除")    
+      135 +    if u.id == admin.id:                                      
+      136 +        raise HTTPException(400, "不能删除当前登录的账号")    
+      137 +    db.delete(u); db.commit()                                 
+      138 +    return {"ok": True}                                       
+      139 +                                                              
+      140 +                                                              
+      141  def ensure_default_admin(db: Session) -> None:
+       69 -    """启动时调用：保证存在至少一个 admin 账号（默认 admin / a
+          -dmin123）。"""                                                
+       70 -    has_admin = db.query(User).filter(User.role == "admin").fi
+          -rst()                                                         
+       71 -    if has_admin:                                             
+       72 -        return                                                
+      142 +    """启动时调用：保证存在默认 admin / 123456，且标记 is_defa
+          +ult_admin。"""                                                
+      143      existing = db.query(User).filter(User.username == "admin")
+           .first()
+      144      if existing:
+       75 -        # 已有同名账号但角色不是 admin → 改成 admin           
+      145          existing.role = "admin"
+      146 +        if not existing.is_default_admin:                     
+      147 +            existing.is_default_admin = True                  
+      148          db.commit()
+      149          return
+      150      seed = User(
+      151          username="admin",
+       81 -        password_hash=hash_password("admin123"),              
+      152 +        password_hash=hash_password(DEFAULT_PASSWORD),        
+      153          role="admin",
+      154 +        is_default_admin=True,                                
+      155      )
+      156      db.add(seed)
+      157      db.commit()
+
+  Thought for 6s (ctrl+o to expand)
+
+● Now I need a Chroma removal helper in rag.py for review/delete flows.
+
+● Update(backend/app/services/rag.py)
+  ⎿  Removed 1 line
+      31  
+      32  
+      33  def search(query: str, k: int = 5) -> List[dict]:
+      34 -    q_vec = embed([query])[0]                                  
+      34      res = _col.query(query_embeddings=[q_vec], n_results=k)
+      35      out = []
+      36      for i in range(len(res["ids"][0])):
+
+  Thought for 7s (ctrl+o to expand)
+
+● That edit accidentally removed a line. Let me fix rag.py properly by adding
+  the removal helper without breaking search.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(backend/app/services/rag.py)
+  ⎿  Added 9 lines
+      30      return len(chunks)
+      31  
+      32  
+      33 +def remove_document(doc_id: int) -> None:                      
+      34 +    """从向量库移除某文档的全部切片（驳回 / 下架 / 删除时调用）
+         +。"""                                                          
+      35 +    try:                                                       
+      36 +        _col.delete(where={"doc_id": doc_id})                  
+      37 +    except Exception:                                          
+      38 +        pass                                                   
+      39 +                                                               
+      40 +                                                               
+      41  def search(query: str, k: int = 5) -> List[dict]:
+      42 +    q_vec = embed([query])[0]                                  
+      43      res = _col.query(query_embeddings=[q_vec], n_results=k)
+      44      out = []
+      45      for i in range(len(res["ids"][0])):
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now the kb.py knowledge-base API with review workflow, role-aware ingestion,
+  text/experience upload, detail, and export.
+
+● Write(backend/app/api/kb.py)
+  ⎿  Added 220 lines, removed 21 lines
+        1 -import os, shutil                                             
+        2 -from fastapi import APIRouter, Depends, UploadFile, File, HTTP
+          -Exception                                                     
+        1 +import os, shutil, io                                         
+        2 +from typing import Optional                                   
+        3 +from fastapi import APIRouter, Depends, UploadFile, File, HTTP
+          +Exception, Query                                              
+        4 +from fastapi.responses import StreamingResponse               
+        5 +from pydantic import BaseModel                                
+        6  from sqlalchemy.orm import Session
+        7 +from datetime import datetime                                 
+        8 +                                                              
+        9  from app.core.db import get_db
+       10  from app.core.config import settings
+        6 -from app.core.security import get_current_user                
+        7 -from app.models import Document                               
+       11 +from app.core.security import get_current_user, require_audito
+          +r, _is_auditor                                                
+       12 +from app.models import Document, User                         
+       13  from app.services.parser import read_any
+        9 -from app.services.rag import ingest_document                  
+       14 +from app.services.rag import ingest_document, remove_document 
+       15  
+       16  router = APIRouter(prefix="/api/kb", tags=["knowledge"])
+       17  
+       18  os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+       19  
+       20 +# 允许上传的扩展名（FIX5 第 18 项：拒绝可执行文件）           
+       21 +ALLOWED_EXT = (".pdf", ".docx", ".txt", ".md")                
+       22 +MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB                   
+       23  
+       24 +                                                              
+       25 +def _doc_out(d: Document, uploader_name: Optional[str] = None)
+          + -> dict:                                                     
+       26 +    return {                                                  
+       27 +        "id": d.id,                                           
+       28 +        "title": d.title,                                     
+       29 +        "type": d.type,                                       
+       30 +        "category": d.category or "manual",                   
+       31 +        "status": d.status,                                   
+       32 +        "reason": d.review_reason,                            
+       33 +        "uploaderId": d.uploader_id,                          
+       34 +        "uploader": uploader_name,                            
+       35 +        "created_at": d.created_at.isoformat() if d.created_at
+          + else None,                                                   
+       36 +    }                                                         
+       37 +                                                              
+       38 +                                                              
+       39 +def _uploader_name_map(db: Session, docs) -> dict:            
+       40 +    ids = {d.uploader_id for d in docs if d.uploader_id}      
+       41 +    if not ids:                                               
+       42 +        return {}                                             
+       43 +    rows = db.query(User).filter(User.id.in_(ids)).all()      
+       44 +    return {u.id: u.username for u in rows}                   
+       45 +                                                              
+       46 +                                                              
+       47  @router.post("/upload")
+       17 -async def upload(file: UploadFile = File(...), db: Session = D
+          -epends(get_db), _=Depends(get_current_user)):                 
+       18 -    if not file.filename.lower().endswith((".pdf", ".docx", ".
+          -txt", ".md")):                                                
+       19 -        raise HTTPException(400, "仅支持 PDF / DOCX / TXT / MD
+          -")                                                            
+       20 -    path = os.path.join(settings.UPLOAD_DIR, file.filename)   
+       48 +async def upload(file: UploadFile = File(...), db: Session = D
+          +epends(get_db),                                               
+       49 +                 user: User = Depends(get_current_user)):     
+       50 +    fname = file.filename or ""                               
+       51 +    if not fname.lower().endswith(ALLOWED_EXT):               
+       52 +        raise HTTPException(400, "仅支持 PDF / DOCX / TXT / MD
+          + 文件")                                                       
+       53 +    data = await file.read()                                  
+       54 +    if len(data) > MAX_UPLOAD_BYTES:                          
+       55 +        raise HTTPException(400, "文件大小超过 50MB 限制")    
+       56 +    path = os.path.join(settings.UPLOAD_DIR, fname)           
+       57      with open(path, "wb") as f:
+       22 -        shutil.copyfileobj(file.file, f)                      
+       23 -    doc = Document(title=file.filename, file_path=path, type=f
+          -ile.filename.split(".")[-1])                                  
+       24 -    db.add(doc); db.commit(); db.refresh(doc)                 
+       58 +        f.write(data)                                         
+       59      text = read_any(path)
+       26 -    n = ingest_document(doc.id, doc.title, text)              
+       27 -    return {"doc_id": doc.id, "chunks": n}                    
+       60 +    # 管理员/审查员上传直接入库（approved）；员工上传进入待审 
+          +（pending）                                                   
+       61 +    approved = _is_auditor(user.role)                         
+       62 +    doc = Document(                                           
+       63 +        title=fname, file_path=path, type=fname.split(".")[-1]
+          +.lower(),                                                     
+       64 +        category="manual", content=text[:20000] if text else "
+          +",                                                            
+       65 +        status="approved" if approved else "pending",         
+       66 +        uploader_id=user.id,                                  
+       67 +    )                                                         
+       68 +    db.add(doc); db.commit(); db.refresh(doc)                 
+       69 +    n = 0                                                     
+       70 +    if approved:                                              
+       71 +        n = ingest_document(doc.id, doc.title, text)          
+       72 +    return {"doc_id": doc.id, "chunks": n, "status": doc.statu
+          +s}                                                            
+       73  
+       74  
+       75 +class TextDocIn(BaseModel):                                   
+       76 +    title: str                                                
+       77 +    content: str                                              
+       78 +    category: Optional[str] = "experience"                    
+       79 +                                                              
+       80 +                                                              
+       81 +@router.post("/text")                                         
+       82 +def upload_text(body: TextDocIn, db: Session = Depends(get_db)
+          +,                                                             
+       83 +                user: User = Depends(get_current_user)):      
+       84 +    """员工经验分享 / 文本知识录入。员工 → pending；审查员/管 
+          +理员 → approved。"""                                          
+       85 +    title = (body.title or "").strip()                        
+       86 +    content = (body.content or "").strip()                    
+       87 +    if not title or not content:                              
+       88 +        raise HTTPException(400, "标题和正文不能为空")        
+       89 +    approved = _is_auditor(user.role)                         
+       90 +    # 员工只能创建经验分享类目；审查员/管理员可指定类目       
+       91 +    category = (body.category or "experience") if approved els
+          +e "experience"                                                
+       92 +    doc = Document(                                           
+       93 +        title=title, file_path=None, type="experience",       
+       94 +        category=category, content=content,                   
+       95 +        status="approved" if approved else "pending",         
+       96 +        uploader_id=user.id,                                  
+       97 +    )                                                         
+       98 +    db.add(doc); db.commit(); db.refresh(doc)                 
+       99 +    n = 0                                                     
+      100 +    if approved:                                              
+      101 +        n = ingest_document(doc.id, doc.title, content)       
+      102 +    return {"doc_id": doc.id, "chunks": n, "status": doc.statu
+          +s}                                                            
+      103 +                                                              
+      104 +                                                              
+      105  @router.get("/list")
+       31 -def list_docs(db: Session = Depends(get_db), _=Depends(get_cur
+          -rent_user)):                                                  
+       32 -    return [                                                  
+       33 -        {"id": d.id, "title": d.title, "type": d.type, "status
+          -": d.status, "created_at": d.created_at}                      
+       34 -        for d in db.query(Document).order_by(Document.id.desc(
+          -)).all()                                                      
+       35 -    ]                                                         
+      106 +def list_docs(status: Optional[str] = Query(None), uploader: O
+          +ptional[str] = Query(None),                                   
+      107 +              db: Session = Depends(get_db), user: User = Depe
+          +nds(get_current_user)):                                       
+      108 +    q = db.query(Document)                                    
+      109 +    if uploader == "me":                                      
+      110 +        q = q.filter(Document.uploader_id == user.id)         
+      111 +    if status:                                                
+      112 +        q = q.filter(Document.status == status)               
+      113 +    # 普通员工浏览列表时仅可见已入库文档（除非查自己的上传）  
+      114 +    elif uploader != "me" and not _is_auditor(user.role):     
+      115 +        q = q.filter(Document.status.in_(["approved", "ready"]
+          +))                                                            
+      116 +    docs = q.order_by(Document.id.desc()).all()               
+      117 +    names = _uploader_name_map(db, docs)                      
+      118 +    return [_doc_out(d, names.get(d.uploader_id)) for d in doc
+          +s]                                                            
+      119  
+      120  
+      121 +@router.get("/{doc_id}")                                      
+      122 +def get_doc(doc_id: int, db: Session = Depends(get_db), user: 
+          +User = Depends(get_current_user)):                            
+      123 +    d = db.query(Document).get(doc_id)                        
+      124 +    if not d:                                                 
+      125 +        raise HTTPException(404, "文档不存在")                
+      126 +    if d.status not in ("approved", "ready") and not _is_audit
+          +or(user.role) and d.uploader_id != user.id:                   
+      127 +        raise HTTPException(403, "无权查看该文档")            
+      128 +    names = _uploader_name_map(db, [d])                       
+      129 +    out = _doc_out(d, names.get(d.uploader_id))               
+      130 +    out["content"] = d.content or ""                          
+      131 +    return out                                                
+      132 +                                                              
+      133 +                                                              
+      134 +class ReviewIn(BaseModel):                                    
+      135 +    action: str            # approve / reject / take_down     
+      136 +    reason: Optional[str] = None                              
+      137 +                                                              
+      138 +                                                              
+      139 +@router.post("/review/{doc_id}")                              
+      140 +def review_doc(doc_id: int, body: ReviewIn, db: Session = Depe
+          +nds(get_db),                                                  
+      141 +               user: User = Depends(require_auditor)):        
+      142 +    d = db.query(Document).get(doc_id)                        
+      143 +    if not d:                                                 
+      144 +        raise HTTPException(404, "文档不存在")                
+      145 +    action = (body.action or "").lower()                      
+      146 +    if action == "approve":                                   
+      147 +        d.status = "approved"                                 
+      148 +        d.review_reason = None                                
+      149 +        text = d.content or (read_any(d.file_path) if d.file_p
+          +ath else "")                                                  
+      150 +        if text:                                              
+      151 +            remove_document(d.id)                             
+      152 +            ingest_document(d.id, d.title, text)              
+      153 +    elif action in ("reject", "take_down"):                   
+      154 +        if not (body.reason or "").strip():                   
+      155 +            raise HTTPException(400, "请填写理由")            
+      156 +        d.status = "rejected" if action == "reject" else "take
+          +n_down"                                                       
+      157 +        d.review_reason = body.reason.strip()                 
+      158 +        remove_document(d.id)                                 
+      159 +    else:                                                     
+      160 +        raise HTTPException(400, f"非法操作：{body.action}")  
+      161 +    d.reviewer_id = user.id                                   
+      162 +    d.reviewed_at = datetime.utcnow()                         
+      163 +    db.commit()                                               
+      164 +    return {"ok": True, "status": d.status}                   
+      165 +                                                              
+      166 +                                                              
+      167  @router.delete("/{doc_id}")
+       39 -def delete_doc(doc_id: int, db: Session = Depends(get_db), _=D
+          -epends(get_current_user)):                                    
+      168 +def delete_doc(doc_id: int, db: Session = Depends(get_db), _us
+          +er: User = Depends(require_auditor)):                         
+      169      d = db.query(Document).get(doc_id)
+       41 -    if not d: raise HTTPException(404)                        
+      170 +    if not d:                                                 
+      171 +        raise HTTPException(404, "文档不存在")                
+      172 +    remove_document(d.id)                                     
+      173      db.delete(d); db.commit()
+      174      return {"ok": True}
+      175 +                                                              
+      176 +                                                              
+      177 +def _doc_full_text(d: Document) -> str:                       
+      178 +    if d.content:                                             
+      179 +        return d.content                                      
+      180 +    if d.file_path and os.path.exists(d.file_path):           
+      181 +        return read_any(d.file_path)                          
+      182 +    return ""                                                 
+      183 +                                                              
+      184 +                                                              
+      185 +@router.get("/{doc_id}/export")                               
+      186 +def export_doc(doc_id: int, format: str = Query("md"), db: Ses
+          +sion = Depends(get_db),                                       
+      187 +               user: User = Depends(get_current_user)):       
+      188 +    d = db.query(Document).get(doc_id)                        
+      189 +    if not d:                                                 
+      190 +        raise HTTPException(404, "文档不存在")                
+      191 +    if d.status not in ("approved", "ready") and not _is_audit
+          +or(user.role) and d.uploader_id != user.id:                   
+      192 +        raise HTTPException(403, "无权导出该文档")            
+      193 +    text = _doc_full_text(d)                                  
+      194 +    fmt = (format or "md").lower()                            
+      195 +    safe_title = "".join(c for c in d.title if c not in '\\/:*
+          +?"<>|').strip() or f"doc-{d.id}"                              
+      196 +                                                              
+      197 +    if fmt == "md":                                           
+      198 +        body = f"# {d.title}\n\n{text}\n"                     
+      199 +        return StreamingResponse(                             
+      200 +            io.BytesIO(body.encode("utf-8")),                 
+      201 +            media_type="text/markdown; charset=utf-8",        
+      202 +            headers={"Content-Disposition": f"attachment; file
+          +name*=UTF-8''{safe_title}.md"},                               
+      203 +        )                                                     
+      204 +    if fmt == "pdf":                                          
+      205 +        pdf_bytes = _render_pdf(d.title, text)                
+      206 +        return StreamingResponse(                             
+      207 +            io.BytesIO(pdf_bytes),                            
+      208 +            media_type="application/pdf",                     
+      209 +            headers={"Content-Disposition": f"attachment; file
+          +name*=UTF-8''{safe_title}.pdf"},                              
+      210 +        )                                                     
+      211 +    raise HTTPException(400, "format 仅支持 md / pdf")        
+      212 +                                                              
+      213 +                                                              
+      214 +def _render_pdf(title: str, text: str) -> bytes:              
+      215 +    """用 reportlab 生成 PDF；使用内置 CJK 字体 STSong-Light  
+          +支持中文，无需外部字体文件。"""                               
+      216 +    from reportlab.lib.pagesizes import A4                    
+      217 +    from reportlab.lib.units import mm                        
+      218 +    from reportlab.pdfbase import pdfmetrics                  
+      219 +    from reportlab.pdfbase.cidfonts import UnicodeCIDFont     
+      220 +    from reportlab.lib.styles import getSampleStyleSheet, Para
+          +graphStyle                                                    
+      221 +    from reportlab.platypus import SimpleDocTemplate, Paragrap
+          +h, Spacer                                                     
+      222 +                                                              
+      223 +    try:                                                      
+      224 +        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light")
+          +)                                                             
+      225 +        font_name = "STSong-Light"                            
+      226 +    except Exception:                                         
+      227 +        font_name = "Helvetica"                               
+      228 +                                                              
+      229 +    buf = io.BytesIO()                                        
+      230 +    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * m
+          +m, bottomMargin=20 * mm)                                      
+      231 +    styles = getSampleStyleSheet()                            
+      232 +    title_style = ParagraphStyle("CJKTitle", parent=styles["Ti
+          +tle"], fontName=font_name, fontSize=18, leading=24)           
+      233 +    body_style = ParagraphStyle("CJKBody", parent=styles["Norm
+          +al"], fontName=font_name, fontSize=11, leading=18)            
+      234 +                                                              
+      235 +    def esc(s: str) -> str:                                   
+      236 +        return s.replace("&", "&amp;").replace("<", "&lt;").re
+          +place(">", "&gt;")                                            
+      237 +                                                              
+      238 +    flow = [Paragraph(esc(title), title_style), Spacer(1, 8 * 
+          +mm)]                                                          
+      239 +    for line in (text or "").split("\n"):                     
+      240 +        flow.append(Paragraph(esc(line) if line.strip() else "
+          +&nbsp;", body_style))                                         
+      241 +    doc.build(flow)                                           
+      242 +    return buf.getvalue()                                     
+
+● Add reportlab to requirements:
+
+● Update(backend/requirements.txt)
+  ⎿  Added 3 lines
+      28  pypdf>=4.2                       # PDF 文本抽取
+      29  python-docx>=1.1
+      30  ##               # DOCX 文本抽取
+      31 +                                                               
+      32 +# ===== 文档导出 =====                                         
+      33 +reportlab>=4.0                   # PDF 导出（内置 CJK 字体 STSo
+         +ng-Light 支持中文）                                            
+
+  Thought for 19s (ctrl+o to expand)
+
+● Now the ticket system — the largest backend change: platform-level tickets
+  with per-user progress, timeline, sharing, recommend, and delete-with-reason.
+
+● Write(backend/app/api/ticket.py)
+  ⎿  Added 270 lines, removed 21 lines
+       1 +from typing import Optional, List                              
+       2 +from datetime import datetime                                  
+       3 +from difflib import SequenceMatcher                            
+       4  from fastapi import APIRouter, Depends, HTTPException
+       5  from pydantic import BaseModel
+       6  from sqlalchemy.orm import Session
+       7  from app.core.db import get_db
+       5 -from app.core.security import get_current_user                 
+       6 -from app.models import Ticket                                  
+       8 +from app.core.security import get_current_user, _is_auditor    
+       9 +from app.models import Ticket, UserTicketProgress, TicketEvent,
+         + User                                                          
+      10  from app.services.llm import chat_text
+      11  import json, re
+      12  
+     ...
+      22      fault: str
+      23  
+      24  
+      25 +class ProgressIn(BaseModel):                                   
+      26 +    stepDone: Optional[List[str]] = None                       
+      27 +    status: Optional[str] = None                               
+      28 +                                                               
+      29 +                                                               
+      30 +class DeleteIn(BaseModel):                                     
+      31 +    reason: Optional[str] = None                               
+      32 +                                                               
+      33 +                                                               
+      34 +class RecommendIn(BaseModel):                                  
+      35 +    device: str = ""                                           
+      36 +    fault: str = ""                                            
+      37 +                                                               
+      38 +                                                               
+      39  # FIX4 第 2 项：返回大步骤+子步骤的结构化 JSON
+      40  SOP_SYSTEM = (
+      41      "你是设备检修标准作业流程（SOP）专家。"
+     ...
+      63  
+      64  
+      65  def _parse_steps(raw: str):
+      49 -    """尽力把 LLM 返回的 JSON 字符串解析成数组；失败返回 None，
+         -由前端按 raw 文本继续兼容。"""                                 
+      66      if not raw:
+      67          return None
+      68      s = raw.strip()
+      53 -    # 去掉常见的 ```json ... ``` 包裹                          
+      69      s = re.sub(r"^```(?:json)?\s*", "", s)
+      70      s = re.sub(r"\s*```$", "", s)
+      56 -    # 截取首个 [ 到末尾的 ]                                    
+      71      lb = s.find("[")
+      72      rb = s.rfind("]")
+      73      if lb >= 0 and rb > lb:
+      60 -        s = s[lb : rb + 1]                                     
+      74 +        s = s[lb: rb + 1]                                      
+      75      try:
+      76          data = json.loads(s)
+      77          if isinstance(data, list):
+     ...
+       81      return None
+       82  
+       83  
+       84 +def _step_ids(t: Ticket) -> List[str]:                        
+       85 +    steps = t.steps if isinstance(t.steps, list) else []      
+       86 +    return [str(s.get("id")) for s in steps if isinstance(s, d
+          +ict) and s.get("id")]                                         
+       87 +                                                              
+       88 +                                                              
+       89 +def _add_event(db: Session, ticket_id: int, user_id: int, type
+          +_: str, detail=None):                                         
+       90 +    db.add(TicketEvent(ticket_id=ticket_id, user_id=user_id, t
+          +ype=type_, detail=detail))                                    
+       91 +                                                              
+       92 +                                                              
+       93 +def _progress(db: Session, ticket_id: int, user_id: int) -> Op
+          +tional[UserTicketProgress]:                                   
+       94 +    return db.query(UserTicketProgress).filter(               
+       95 +        UserTicketProgress.ticket_id == ticket_id,            
+       96 +        UserTicketProgress.user_id == user_id,                
+       97 +    ).first()                                                 
+       98 +                                                              
+       99 +                                                              
+      100 +def _creator_name_map(db: Session, tickets) -> dict:          
+      101 +    ids = {t.creator_id for t in tickets if t.creator_id}     
+      102 +    if not ids:                                               
+      103 +        return {}                                             
+      104 +    rows = db.query(User).filter(User.id.in_(ids)).all()      
+      105 +    return {u.id: u.username for u in rows}                   
+      106 +                                                              
+      107 +                                                              
+      108 +def _summary(t: Ticket, prog: Optional[UserTicketProgress], cr
+          +eator_name: Optional[str]) -> dict:                           
+      109 +    total = len(_step_ids(t))                                 
+      110 +    done = len(prog.step_done or []) if prog and isinstance(pr
+          +og.step_done, list) else 0                                    
+      111 +    return {                                                  
+      112 +        "id": t.id,                                           
+      113 +        "device": t.device,                                   
+      114 +        "fault": t.fault,                                     
+      115 +        "creatorId": t.creator_id,                            
+      116 +        "creator": creator_name,                              
+      117 +        "isCreator": bool(prog and prog.is_creator),          
+      118 +        "added": bool(prog and prog.status != "deleted"),     
+      119 +        "status": (prog.status if prog else "open"),          
+      120 +        "totalSteps": total,                                  
+      121 +        "doneSteps": done,                                    
+      122 +        "createdAt": t.created_at.isoformat() if t.created_at 
+          +else None,                                                    
+      123 +        "addedAt": prog.added_at.isoformat() if prog and prog.
+          +added_at else None,                                           
+      124 +        "completedAt": prog.completed_at.isoformat() if prog a
+          +nd prog.completed_at else None,                               
+      125 +    }                                                         
+      126 +                                                              
+      127 +                                                              
+      128  @router.post("")
+       71 -def create(body: TicketIn, db: Session = Depends(get_db), _=De
+          -pends(get_current_user)):                                     
+      129 +def create(body: TicketIn, db: Session = Depends(get_db), user
+          +: User = Depends(get_current_user)):                          
+      130      prompt = (
+      131          f"设备：{body.device}\n"
+      132          f"故障描述：{body.fault}\n\n"
+     ...
+      134      )
+      135      raw = chat_text(SOP_SYSTEM, prompt)
+      136      parsed = _parse_steps(raw)
+       79 -    # 解析成功就把结构化数组直接落库；解析失败保留 raw 文本由 
+          -前端兜底                                                      
+      137      steps = parsed if parsed is not None else {"raw": raw}
+       81 -    t = Ticket(device=body.device, fault=body.fault, steps=ste
+          -ps, owner_id=_.id)                                            
+      138 +    t = Ticket(device=body.device, fault=body.fault, steps=ste
+          +ps, creator_id=user.id)                                       
+      139      db.add(t); db.commit(); db.refresh(t)
+      140 +    prog = UserTicketProgress(user_id=user.id, ticket_id=t.id,
+          + status="open",                                               
+      141 +                              step_done=[], is_creator=True)  
+      142 +    db.add(prog)                                              
+      143 +    _add_event(db, t.id, user.id, "created")                  
+      144 +    db.commit()                                               
+      145      return {"id": t.id, "steps": t.steps}
+      146  
+      147  
+      148  @router.get("")
+       87 -def list_(db: Session = Depends(get_db), _=Depends(get_current
+          -_user)):                                                      
+       88 -    return [{"id": t.id, "device": t.device, "fault": t.fault,
+          - "status": t.status} for t in db.query(Ticket).all()]         
+      149 +def list_(db: Session = Depends(get_db), user: User = Depends(
+          +get_current_user)):                                           
+      150 +    """返回 { mine, recommended }：mine 为我已添加（未删除）的
+          +工单，recommended 为他人创建我未添加的。"""                   
+      151 +    tickets = db.query(Ticket).order_by(Ticket.id.desc()).all(
+          +)                                                             
+      152 +    names = _creator_name_map(db, tickets)                    
+      153 +    my_progs = {p.ticket_id: p for p in db.query(UserTicketPro
+          +gress).filter(                                                
+      154 +        UserTicketProgress.user_id == user.id).all()}         
+      155 +    mine, recommended = [], []                                
+      156 +    for t in tickets:                                         
+      157 +        prog = my_progs.get(t.id)                             
+      158 +        if prog and prog.status != "deleted":                 
+      159 +            mine.append(_summary(t, prog, names.get(t.creator_
+          +id)))                                                         
+      160 +        elif not prog:                                        
+      161 +            recommended.append(_summary(t, None, names.get(t.c
+          +reator_id)))                                                  
+      162 +    return {"mine": mine, "recommended": recommended}         
+      163  
+      164  
+       91 -@router.patch("/{tid}")                                       
+       92 -def update(tid: int, body: TicketStatusIn, db: Session = Depen
+          -ds(get_db), _=Depends(get_current_user)):                     
+      165 +@router.post("/recommend")                                    
+      166 +def recommend(body: RecommendIn, db: Session = Depends(get_db)
+          +, user: User = Depends(get_current_user)):                    
+      167 +    """工单创建前的相似推荐：对 device+fault 做相似度匹配，返 
+          +回我尚未添加的相似工单。"""                                   
+      168 +    query = f"{body.device} {body.fault}".strip()             
+      169 +    if not query:                                             
+      170 +        return []                                             
+      171 +    tickets = db.query(Ticket).order_by(Ticket.id.desc()).all(
+          +)                                                             
+      172 +    names = _creator_name_map(db, tickets)                    
+      173 +    my_ids = {p.ticket_id for p in db.query(UserTicketProgress
+          +).filter(                                                     
+      174 +        UserTicketProgress.user_id == user.id,                
+      175 +        UserTicketProgress.status != "deleted").all()}        
+      176 +    scored = []                                               
+      177 +    for t in tickets:                                         
+      178 +        if t.id in my_ids:                                    
+      179 +            continue                                          
+      180 +        target = f"{t.device} {t.fault}".strip()              
+      181 +        score = SequenceMatcher(None, query, target).ratio()  
+      182 +        # 关键词命中加权                                      
+      183 +        for kw in re.split(r"\s+", query):                    
+      184 +            if kw and kw in target:                           
+      185 +                score += 0.15                                 
+      186 +        if score >= 0.45:                                     
+      187 +            item = _summary(t, None, names.get(t.creator_id)) 
+      188 +            item["score"] = round(min(score, 1.0), 3)         
+      189 +            scored.append(item)                               
+      190 +    scored.sort(key=lambda x: -x["score"])                    
+      191 +    return scored[:5]                                         
+      192 +                                                              
+      193 +                                                              
+      194 +@router.get("/history")                                       
+      195 +def history(db: Session = Depends(get_db), user: User = Depend
+          +s(get_current_user)):                                         
+      196 +    """个人中心-历史工单：我已完成或已删除的工单记录。"""     
+      197 +    progs = db.query(UserTicketProgress).filter(              
+      198 +        UserTicketProgress.user_id == user.id,                
+      199 +        UserTicketProgress.status.in_(["done", "deleted"]),   
+      200 +    ).order_by(UserTicketProgress.id.desc()).all()            
+      201 +    out = []                                                  
+      202 +    for p in progs:                                           
+      203 +        t = db.query(Ticket).get(p.ticket_id)                 
+      204 +        if not t:                                             
+      205 +            continue                                          
+      206 +        names = _creator_name_map(db, [t])                    
+      207 +        item = _summary(t, p, names.get(t.creator_id))        
+      208 +        item["deletedAt"] = p.deleted_at.isoformat() if p.dele
+          +ted_at else None                                              
+      209 +        item["deleteReason"] = p.delete_reason                
+      210 +        out.append(item)                                      
+      211 +    return out                                                
+      212 +                                                              
+      213 +                                                              
+      214 +@router.post("/{tid}/add")                                    
+      215 +def add_to_mine(tid: int, db: Session = Depends(get_db), user:
+          + User = Depends(get_current_user)):                           
+      216 +    """把他人创建的工单添加到我的作业指引，进度从零开始。"""  
+      217      t = db.query(Ticket).get(tid)
+       94 -    if not t: raise HTTPException(404)                        
+       95 -    t.status = body.status; db.commit()                       
+       96 -    return {"ok": True, "status": t.status}                   
+      218 +    if not t:                                                 
+      219 +        raise HTTPException(404, "工单不存在")                
+      220 +    prog = _progress(db, tid, user.id)                        
+      221 +    if prog and prog.status != "deleted":                     
+      222 +        return {"ok": True, "id": tid}                        
+      223 +    if prog:  # 之前删除过，重新添加：重置进度                
+      224 +        prog.status = "open"; prog.step_done = []; prog.added_
+          +at = datetime.utcnow()                                        
+      225 +        prog.completed_at = None; prog.deleted_at = None; prog
+          +.delete_reason = None                                         
+      226 +    else:                                                     
+      227 +        prog = UserTicketProgress(user_id=user.id, ticket_id=t
+          +id, status="open",                                            
+      228 +                                  step_done=[], is_creator=(t.
+          +creator_id == user.id))                                       
+      229 +        db.add(prog)                                          
+      230 +    _add_event(db, tid, user.id, "added")                     
+      231 +    db.commit()                                               
+      232 +    return {"ok": True, "id": tid}                            
+      233  
+      234  
+      235  @router.get("/{tid}")
+      100 -def detail(tid: int, db: Session = Depends(get_db), _=Depends(
+          -get_current_user)):                                           
+      236 +def detail(tid: int, db: Session = Depends(get_db), user: User
+          + = Depends(get_current_user)):                                
+      237      t = db.query(Ticket).get(tid)
+      102 -    if not t: raise HTTPException(404, detail="工单不存在")   
+      103 -    return {"id": t.id, "device": t.device, "fault": t.fault, 
+          -"steps": t.steps, "status": t.status, "created_at": t.created_
+          -at.isoformat()}                                               
+      238 +    if not t:                                                 
+      239 +        raise HTTPException(404, detail="工单不存在")         
+      240 +    prog = _progress(db, tid, user.id)                        
+      241 +    names = _creator_name_map(db, [t])                        
+      242 +    return {                                                  
+      243 +        "id": t.id, "device": t.device, "fault": t.fault, "ste
+          +ps": t.steps,                                                 
+      244 +        "created_at": t.created_at.isoformat() if t.created_at
+          + else None,                                                   
+      245 +        "creator": names.get(t.creator_id),                   
+      246 +        "isCreator": bool(prog and prog.is_creator),          
+      247 +        "added": bool(prog and prog.status != "deleted"),     
+      248 +        "progress": {                                         
+      249 +            "status": prog.status if prog else "open",        
+      250 +            "stepDone": (prog.step_done or []) if prog else []
+          +,                                                             
+      251 +            "addedAt": prog.added_at.isoformat() if prog and p
+          +rog.added_at else None,                                       
+      252 +            "completedAt": prog.completed_at.isoformat() if pr
+          +og and prog.completed_at else None,                           
+      253 +        },                                                    
+      254 +    }                                                         
+      255  
+      256  
+      106 -# FIX4 第 2 项：工具清单 + 关联手册（同时挂在 /api/ticket 与 /
+          -api/workflow 下，兼容前端旧路径）                             
+      257 +def _ensure_progress(db: Session, tid: int, user: User) -> Use
+          +rTicketProgress:                                              
+      258 +    prog = _progress(db, tid, user.id)                        
+      259 +    if not prog or prog.status == "deleted":                  
+      260 +        t = db.query(Ticket).get(tid)                         
+      261 +        if not t:                                             
+      262 +            raise HTTPException(404, "工单不存在")            
+      263 +        if prog:                                              
+      264 +            prog.status = "open"; prog.step_done = []; prog.ad
+          +ded_at = datetime.utcnow()                                    
+      265 +            prog.deleted_at = None; prog.delete_reason = None 
+      266 +        else:                                                 
+      267 +            prog = UserTicketProgress(user_id=user.id, ticket_
+          +id=tid, status="open",                                        
+      268 +                                      step_done=[], is_creator
+          +=(t.creator_id == user.id))                                   
+      269 +            db.add(prog)                                      
+      270 +        _add_event(db, tid, user.id, "added")                 
+      271 +    return prog                                               
+      272 +                                                              
+      273 +                                                              
+      274 +@router.patch("/{tid}/progress")                              
+      275 +def update_progress(tid: int, body: ProgressIn, db: Session = 
+          +Depends(get_db),                                              
+      276 +                    user: User = Depends(get_current_user)):  
+      277 +    t = db.query(Ticket).get(tid)                             
+      278 +    if not t:                                                 
+      279 +        raise HTTPException(404, "工单不存在")                
+      280 +    prog = _ensure_progress(db, tid, user)                    
+      281 +    if body.stepDone is not None:                             
+      282 +        prev = set(prog.step_done or [])                      
+      283 +        new = [s for s in body.stepDone]                      
+      284 +        prog.step_done = new                                  
+      285 +        for sid in new:                                       
+      286 +            if sid not in prev:                               
+      287 +                _add_event(db, tid, user.id, "step_completed",
+          + {"stepId": sid})                                             
+      288 +        if prog.status == "open" and new:                     
+      289 +            prog.status = "doing"                             
+      290 +    if body.status:                                           
+      291 +        prog.status = body.status                             
+      292 +        if body.status == "done":                             
+      293 +            prog.completed_at = datetime.utcnow()             
+      294 +            _add_event(db, tid, user.id, "completed")         
+      295 +    db.commit()                                               
+      296 +    return {"ok": True, "status": prog.status}                
+      297 +                                                              
+      298 +                                                              
+      299 +@router.patch("/{tid}")                                       
+      300 +def update(tid: int, body: TicketStatusIn, db: Session = Depen
+          +ds(get_db),                                                   
+      301 +           user: User = Depends(get_current_user)):           
+      302 +    """兼容旧前端：PATCH /api/ticket/{id} {status:'done'} → 标
+          +记我的进度完成。"""                                           
+      303 +    return update_progress(tid, ProgressIn(status=body.status)
+          +, db, user)                                                   
+      304 +                                                              
+      305 +                                                              
+      306 +@router.delete("/{tid}")                                      
+      307 +def delete_mine(tid: int, body: DeleteIn = DeleteIn(), db: Ses
+          +sion = Depends(get_db),                                       
+      308 +                user: User = Depends(get_current_user)):      
+      309 +    """删除我的工单：已完成默认理由"已完成"；未完成必须填写理 
+          +由。完成记录永久保留。"""                                     
+      310 +    prog = _progress(db, tid, user.id)                        
+      311 +    if not prog or prog.status == "deleted":                  
+      312 +        raise HTTPException(404, "未找到该工单进度")          
+      313 +    if prog.status == "done":                                 
+      314 +        reason = (body.reason or "").strip() or "已完成"      
+      315 +    else:                                                     
+      316 +        reason = (body.reason or "").strip()                  
+      317 +        if not reason:                                        
+      318 +            raise HTTPException(400, "未完成工单删除必须填写理
+          +由")                                                          
+      319 +    prog.status = "deleted"                                   
+      320 +    prog.deleted_at = datetime.utcnow()                       
+      321 +    prog.delete_reason = reason                               
+      322 +    _add_event(db, tid, user.id, "deleted", {"reason": reason}
+          +)                                                             
+      323 +    db.commit()                                               
+      324 +    return {"ok": True}                                       
+      325 +                                                              
+      326 +                                                              
+      327 +def _timeline_for(db: Session, tid: int, user_id: int) -> List
+          +[dict]:                                                       
+      328 +    rows = db.query(TicketEvent).filter(                      
+      329 +        TicketEvent.ticket_id == tid, TicketEvent.user_id == u
+          +ser_id                                                        
+      330 +    ).order_by(TicketEvent.id.asc()).all()                    
+      331 +    return [{"type": e.type, "detail": e.detail,              
+      332 +             "at": e.created_at.isoformat() if e.created_at el
+          +se None} for e in rows]                                       
+      333 +                                                              
+      334 +                                                              
+      335 +@router.get("/{tid}/timeline")                                
+      336 +def timeline(tid: int, db: Session = Depends(get_db), user: Us
+          +er = Depends(get_current_user)):                              
+      337 +    t = db.query(Ticket).get(tid)                             
+      338 +    if not t:                                                 
+      339 +        raise HTTPException(404, "工单不存在")                
+      340 +    if _is_auditor(user.role):                                
+      341 +        # 审查员/管理员：按用户分组展示所有人的时间线         
+      342 +        rows = db.query(TicketEvent).filter(TicketEvent.ticket
+          +_id == tid).order_by(TicketEvent.id.asc()).all()              
+      343 +        uids = {e.user_id for e in rows}                      
+      344 +        names = {u.id: u.username for u in db.query(User).filt
+          +er(User.id.in_(uids)).all()} if uids else {}                  
+      345 +        grouped: dict = {}                                    
+      346 +        for e in rows:                                        
+      347 +            grouped.setdefault(e.user_id, []).append(         
+      348 +                {"type": e.type, "detail": e.detail,          
+      349 +                 "at": e.created_at.isoformat() if e.created_a
+          +t else None})                                                 
+      350 +        return {"grouped": [{"userId": uid, "user": names.get(
+          +uid), "events": evs}                                          
+      351 +                            for uid, evs in grouped.items()]} 
+      352 +    # 员工：只看自己                                          
+      353 +    return {"events": _timeline_for(db, tid, user.id)}        
+      354 +                                                              
+      355 +                                                              
+      356 +# ---- 工具清单 + 关联手册（同时挂 /api/ticket 与 /api/workflo
+          +w）----                                                       
+      357  def _get_ticket_or_404(tid: int, db: Session):
+      358      t = db.query(Ticket).get(tid)
+      359      if not t:
+     ...
+      408      return _list_manuals_for(_get_ticket_or_404(tid, db))
+      409  
+      410  
+      161 -# 同时挂 /api/workflow/{id}/(tools|manuals) 给前端使用        
+      411  workflow_router = APIRouter(prefix="/api/workflow", tags=["wor
+           kflow"])
+      412  
+      413  
+
+  Thought for 6s (ctrl+o to expand)
+● Now chat.py — add recommended_tickets to the search response (item 13).
+
+● Update(backend/app/api/chat.py)
+  ⎿  Added 36 lines, removed 3 lines
+       7  from app.core.security import get_current_user
+       8  from app.services.llm import vl_describe
+       9  from app.services.rag import rag_answer
+      10 -from app.models import QALog                                   
+      10 +from app.models import QALog, Ticket, UserTicketProgress, User 
+      11 +from difflib import SequenceMatcher                            
+      12  
+      13  router = APIRouter(prefix="/api/chat", tags=["chat"])
+      14  
+      15  
+      16 +def _recommend_tickets(db: Session, user_id: int, question: str
+         +, img_desc: str = ""):                                         
+      17 +    """在工单库中按相似度推荐工单（FIX5 第 13 项）。"""        
+      18 +    query = f"{question} {img_desc}".strip()                   
+      19 +    if not query:                                              
+      20 +        return []                                              
+      21 +    tickets = db.query(Ticket).order_by(Ticket.id.desc()).limit
+         +(200).all()                                                    
+      22 +    my_ids = {p.ticket_id for p in db.query(UserTicketProgress)
+         +.filter(                                                       
+      23 +        UserTicketProgress.user_id == user_id,                 
+      24 +        UserTicketProgress.status != "deleted").all()}         
+      25 +    scored = []                                                
+      26 +    for t in tickets:                                          
+      27 +        target = f"{t.device} {t.fault}".strip()               
+      28 +        if not target:                                         
+      29 +            continue                                           
+      30 +        score = SequenceMatcher(None, query, target).ratio()   
+      31 +        for kw in (t.device or "", t.fault or ""):             
+      32 +            if kw and kw in query:                             
+      33 +                score += 0.2                                   
+      34 +        if score >= 0.3:                                       
+      35 +            scored.append({                                    
+      36 +                "id": t.id,                                    
+      37 +                "device": t.device,                            
+      38 +                "fault": t.fault,                              
+      39 +                "summary": (t.fault or "")[:60],               
+      40 +                "added": t.id in my_ids,                       
+      41 +                "score": round(min(score, 1.0), 3),            
+      42 +            })                                                 
+      43 +    scored.sort(key=lambda x: -x["score"])                     
+      44 +    return scored[:4]                                          
+      45 +                                                               
+      46 +                                                               
+      47  @router.post("/query")
+      48  async def query(
+      49      question: str = Form(...),
+      50      image: Optional[UploadFile] = File(None),
+      51      db: Session = Depends(get_db),
+      20 -    _=Depends(get_current_user),                               
+      52 +    user: User = Depends(get_current_user),                    
+      53  ):
+      54      img_desc = ""
+      55      if image is not None:
+     ...
+      61          img_desc = vl_describe(f"file://{os.path.abspath(local)
+          }")
+      62  
+      63      answer, hits = rag_answer(question, img_desc)
+      32 -    log = QALog(question=question, answer=answer, sources=[h["m
+         -etadata"] for h in hits])                                      
+      64 +    log = QALog(question=question, answer=answer, sources=[h["m
+         +etadata"] for h in hits], user_id=user.id)                     
+      65      db.add(log); db.commit()
+      66      return {
+      67          "answer": answer,
+      68          "image_observation": img_desc,
+      69          "sources": [{"title": h["metadata"].get("title"), "snip
+          pet": h["content"][:120]} for h in hits],
+      70 +        "recommended_tickets": _recommend_tickets(db, user.id, 
+         +question, img_desc),                                           
+      71      }
+
+  Thought for 7s (ctrl+o to expand)
+
+● Now wire migrations into startup in main.py.
+
+● Update(backend/app/main.py)
+  ⎿  Added 4 lines, removed 1 line
+       4  from app.core.config import settings
+       5  from app.api import auth, kb, chat, ticket, kg, admin
+       6  from app import models  # noqa: register
+       7 +from app.core.migrate import run_migrations                    
+       8  
+       9  Base.metadata.create_all(bind=engine)
+      10 +# 旧库平滑升级：为已存在的表补充 FIX5 新增列                   
+      11 +run_migrations()                                               
+      12  
+      10 -# FIX4 第 4 项：启动时确保有默认 admin 账号（admin / admin123）
+      13 +# 启动时确保有默认 admin 账号（admin / 123456，不可删除）      
+      14  def _seed_default_admin():
+      15      db = SessionLocal()
+      16      try:
+
+  Thought for 6s (ctrl+o to expand)
+
+● Let me syntax-check the backend files.
+
+● Bash(cd /home/chen/Documents/software2026/backend && python3 -m py_compile
+      app/main.py app/core/migrate.py app/core/security.py app/api/auth.py
+      app/api/admin.py app/…)
+  ⎿  PY_COMPILE_OK
+
+  Thought for 6s (ctrl+o to expand)
+
+● Backend compiles. Let me verify imports resolve (deps installed) by attempting
+  to import the app.
+
+● Bash(python3 -c "import fastapi, sqlalchemy, reportlab; print('deps ok')" 2>&1
+      | head -5)
+  ⎿  Traceback (most recent call last):
+       File "<string>", line 1, in <module>
+     ModuleNotFoundError: No module named 'fastapi'
+
+  Thought for 6s (ctrl+o to expand)
+
+● Bash(ls -d venv .venv env 2>/dev/null; which python3; python3 --version; pip
+      list 2>/dev/null | grep -iE "fastapi|reportlab|sqlalchemy" | head)
+  ⎿  /home/chen/anaconda3/bin/python3
+     Python 3.12.7
+
+  Thought for 12s (ctrl+o to expand)
+
+● Backend foundation is complete and compiles. Now the frontend — starting with
+  role unification (item 17).
+
+● Write(src/constants/roles.ts)
+  ⎿  Wrote 52 lines to src/constants/roles.ts
+      2  * 角色枚举单一来源（FIX5 第 17 项）
+      3  * - 前端角色：frontline | auditor | admin | guest
+      4  * - 后端角色：worker | leader | auditor | admin
+      5  * 所有角色相关的映射、标签、菜单权限都从这里派生，避免散落硬编码
+        。
+      7  */
+      8 export type FrontendRole = 'frontline' | 'auditor' | 'admin' | 'g
+        uest'
+      9 export type BackendRole = 'worker' | 'leader' | 'auditor' | 'admi
+        n'
+     … +47 lines (ctrl+o to expand)
+
+  Thought for 29s (ctrl+o to expand)
+
+● Now update permission.ts to source roles from the new constants and rebuild
+  the menu for the new pages.
+
+● Write(src/utils/permission.ts)
+  ⎿  Added 22 lines, removed 26 lines
+       1 -export type Role = 'frontline' | 'auditor' | 'admin' | 'guest' 
+       1 +import {                                                       
+       2 +  type FrontendRole,                                           
+       3 +  type Role,                                                   
+       4 +  ROLE_LABEL,                                                  
+       5 +  mapBackendRole,                                              
+       6 +  mapFrontendRole,                                             
+       7 +  ASSIGNABLE_ROLES,                                            
+       8 +  isAuditorRole,                                               
+       9 +} from '@/constants/roles'                                     
+      10  
+       3 -export const ROLE_LABEL: Record<Role, string> = {              
+       4 -  frontline: '一线检修员',                                     
+       5 -  auditor:   '知识审核员',                                     
+       6 -  admin:     '系统管理员',                                     
+       7 -  guest:     '访客'                                            
+       8 -}                                                              
+      11 +// 兼容旧引用：从单一来源 re-export（FIX5 第 17 项）           
+      12 +export type { Role, FrontendRole }                             
+      13 +export { ROLE_LABEL, mapBackendRole, mapFrontendRole, ASSIGNABL
+         +E_ROLES, isAuditorRole }                                       
+      14  
+      15  export interface MenuItem {
+      16    path: string
+     ...
+      22  
+      23  /** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 
+          */
+      24  export const MENU_ITEMS: MenuItem[] = [
+      20 -  { path: '/search',           label: '多模态检索', highlight: 
+         -true },                                                        
+      21 -  { path: '/workflow',         label: '作业指引' },            
+      22 -  { path: '/knowledge/upload', label: '知识上传' },            
+      23 -  { path: '/audit/knowledge',  label: '知识审查', roles: ['audi
+         -tor', 'admin'] },                                              
+      24 -  { path: '/audit',            label: '案例审核', roles: ['audi
+         -tor', 'admin'] },                                              
+      25 -  { path: '/admin/knowledge',  label: '知识库管理', roles: ['ad
+         -min'] },                                                       
+      26 -  { path: '/admin/user',       label: '用户管理',   roles: ['ad
+         -min'] },                                                       
+      27 -  { path: '/kg',               label: '知识图谱' },            
+      28 -  { path: '/history',          label: '历史与收藏' },          
+      29 -  { path: '/profile',          label: '个人中心' },            
+      30 -  { path: '/admin',            label: '系统管理', roles: ['admi
+         -n'] }                                                          
+      25 +  { path: '/search',            label: '多模态检索', highlight:
+         + true },                                                       
+      26 +  { path: '/workflow',          label: '作业指引' },           
+      27 +  { path: '/knowledge/browse',  label: '知识库' },             
+      28 +  { path: '/knowledge/upload',  label: '经验分享',   roles: ['f
+         +rontline'] },                                                  
+      29 +  { path: '/auditor/review',    label: '待审核',     roles: ['a
+         +uditor', 'admin'] },                                           
+      30 +  { path: '/auditor/knowledge', label: '知识库管理', roles: ['a
+         +uditor', 'admin'] },                                           
+      31 +  { path: '/admin/user',        label: '用户管理',   roles: ['a
+         +dmin'] },                                                      
+      32 +  { path: '/kg',                label: '知识图谱' },           
+      33 +  { path: '/history',           label: '历史与收藏' },         
+      34 +  { path: '/profile',           label: '个人中心' },           
+      35  ]
+      36  
+      37  /** 权限判断:无 allow 视为公共菜单 */
+     ...
+      49  export function getVisibleMenuItems(role: Role | undefined): Me
+          nuItem[] {
+      50    return MENU_ITEMS.filter(it => hasPermission(role, it.roles))
+      51  }
+      48 -                                                               
+      49 -/** 演示用预设账户(同时支持登录页"角色选择"快速切换) */        
+      50 -export const DEMO_ACCOUNTS: Record<Role, { name: string; worksh
+         -op: string; avatar?: string }> = {                             
+      51 -  frontline: { name: '李师傅 · 检修员演示', workshop: '一号车间
+         -·热轧线' },                                                    
+      52 -  auditor:   { name: '王工 · 审核员演示',   workshop: '设备技术
+         -部' },                                                         
+      53 -  admin:     { name: '张主管 · 管理员演示', workshop: '系统管理
+         -中心' },                                                       
+      54 -  guest:     { name: '访客演示',            workshop: '访客通道
+         -' }                                                            
+      55 -}                                                              
+
+  Thought for 9s (ctrl+o to expand)
+
+● Now rewrite auth.ts to remove mock fallbacks (item 16) and add
+  me/changePassword.
+
+● Write(src/api/auth.ts)
+  ⎿  Added 38 lines, removed 80 lines
+       1  import { AxiosError } from 'axios'
+       2 -import { request } from './request'                            
+       3 -import type { Role } from '@/utils/permission'                 
+       4 -import { DEMO_ACCOUNTS } from '@/utils/permission'             
+       2 +import { request, put } from './request'                       
+       3 +import type { Role } from '@/constants/roles'                  
+       4 +import { mapBackendRole } from '@/constants/roles'             
+       5  
+       6 -export interface LoginPayload { username: string; password: str
+         -ing; remember?: boolean; role?: Role }                         
+       6 +export interface LoginPayload { username: string; password: str
+         +ing; remember?: boolean }                                      
+       7  export interface LoginResult {
+       8    token: string
+       9 -  user: { id: string; name: string; role: Role; workshop?: stri
+         -ng; avatar?: string }                                          
+       9 +  user: { id: string; name: string; role: Role }               
+      10  }
+      11  
+      12  /** 后端 access_token / role 响应体 */
+      13  interface BackendTokenOut {
+      14    access_token: string
+      15 -  role: string  // worker / leader / admin                     
+      15 +  role: string  // worker / leader / auditor / admin           
+      16 +  username: string                                             
+      17  }
+      18  
+      18 -/** 后端 role 字段 → 前端权限角色 */                           
+      19 -const mapBackendRole = (r: string | undefined): Role => {      
+      20 -  switch ((r || '').toLowerCase()) {                           
+      21 -    case 'admin':   return 'admin'                             
+      22 -    case 'leader':  return 'auditor'                           
+      23 -    case 'auditor': return 'auditor'                           
+      24 -    case 'guest':   return 'guest'                             
+      25 -    case 'worker':                                             
+      26 -    case 'frontline':                                          
+      27 -    default:        return 'frontline'                         
+      28 -  }                                                            
+      29 -}                                                              
+      30 -                                                               
+      31 -/** 没拿到真实后端时的本地 fallback —— 用预设账户撑起演示态 */ 
+      32 -function pickRole(p: LoginPayload): Role {                     
+      33 -  if (p.role) return p.role                                    
+      34 -  const u = (p.username || '').toLowerCase().trim()            
+      35 -  if (u.startsWith('admin'))   return 'admin'                  
+      36 -  if (u.startsWith('auditor') || u.startsWith('leader')) return
+         - 'auditor'                                                     
+      37 -  if (u.startsWith('guest'))   return 'guest'                  
+      38 -  if (u.startsWith('worker') || u.startsWith('frontline') || u 
+         -=== 'lishifu') return 'frontline'                              
+      39 -  return 'frontline'                                           
+      40 -}                                                              
+      41 -                                                               
+      42 -function buildMockResult(p: LoginPayload): LoginResult {       
+      43 -  const role = pickRole(p)                                     
+      44 -  const demo = DEMO_ACCOUNTS[role]                             
+      45 -  return {                                                     
+      46 -    token: 'mock-token-' + role + '-' + Date.now(),            
+      47 -    user: {                                                    
+      48 -      id: 'u-' + role,                                         
+      49 -      name: p.username && p.username !== 'lishifu' ? p.username
+         - : demo.name,                                                  
+      50 -      role,                                                    
+      51 -      workshop: demo.workshop                                  
+      52 -    }                                                          
+      53 -  }                                                            
+      54 -}                                                              
+      55 -                                                               
+      19  /**
+      20   * 错误归一化：
+      58 - * - 网络错误 / 后端不可达：抛 NETWORK 标志，调用方决定是否降级
+         - mock                                                          
+      59 - * - HTTP 业务错误（如 401 / 400）：抛后端 detail 文本，UI 直接
+         -展示                                                           
+      21 + * - 网络错误 / 后端不可达：isNetwork=true，UI 提示"服务不可用"
+      22 + * - HTTP 业务错误（401 / 400）：抛后端 detail 文本，UI 直接展 
+         +示                                                             
+      23   */
+      24  class ApiError extends Error {
+      25    isNetwork: boolean
+     ...
+      33  
+      34  function normalizeError(e: unknown): ApiError {
+      35    if (e instanceof AxiosError) {
+      73 -    if (!e.response) return new ApiError('后端不可达', true)   
+      36 +    if (!e.response) return new ApiError('服务不可用，请检查后 
+         +端连接', true)                                                 
+      37      const data = e.response.data as any
+      38      const detail = (data && (data.detail || data.message)) || `
+          请求失败（${e.response.status}）`
+      39      return new ApiError(String(detail), false, e.response.statu
+          s)
+     ...
+       41    return new ApiError((e as Error)?.message || '未知错误', fal
+           se)
+       42  }
+       43  
+       81 -/**                                                           
+       82 - * 登录：先打真实后端；                                       
+       83 - * - 后端 401 / 400 → 抛后端 message，UI 显示"账号或密码错误" 
+       84 - * - 网络不可达 → 静默降级 mock，让演示态可用                 
+       85 - */                                                           
+       44 +/** 登录：失败时抛出明确错误，不再降级 mock（FIX5 第 16 项） *
+          +/                                                             
+       45  export const login = async (p: LoginPayload): Promise<LoginRes
+           ult> => {
+       46    try {
+       47      const { data } = await request.post<BackendTokenOut>('/aut
+           h/login', {
+       48        username: p.username, password: p.password
+       49      })
+       91 -    const role = mapBackendRole(data.role)                    
+       92 -    const demo = DEMO_ACCOUNTS[role]                          
+       50      return {
+       51        token: data.access_token,
+       95 -      user: {                                                 
+       96 -        id: 'u-' + p.username,                                
+       97 -        name: p.username || demo.name,                        
+       98 -        role,                                                 
+       99 -        workshop: demo?.workshop                              
+      100 -      }                                                       
+       52 +      user: { id: data.username, name: data.username, role: ma
+          +pBackendRole(data.role) }                                     
+       53      }
+       54    } catch (e) {
+      103 -    const err = normalizeError(e)                             
+      104 -    if (err.isNetwork) {                                      
+      105 -      if (import.meta.env.DEV) console.warn('[auth.login] back
+          -end unreachable, fallback to mock')                           
+      106 -      return buildMockResult(p)                               
+      107 -    }                                                         
+      108 -    throw err                                                 
+       55 +    throw normalizeError(e)                                   
+       56    }
+       57  }
+       58  
+      112 -/** 注册：HTTP 错误（用户名已存在等）抛给 UI；网络不可达走 moc
+          -k */                                                          
+      113 -export const register = async (p: LoginPayload & { phone?: str
+          -ing }): Promise<LoginResult> => {                             
+       59 +/** 注册：后端固定创建员工账户（worker），失败抛出明确错误 */ 
+       60 +export const register = async (p: LoginPayload): Promise<Login
+          +Result> => {                                                  
+       61    try {
+       62      const { data } = await request.post<BackendTokenOut>('/aut
+           h/register', {
+       63        username: p.username, password: p.password
+       64      })
+      118 -    const role = mapBackendRole(data.role)                    
+      119 -    const demo = DEMO_ACCOUNTS[role]                          
+       65      return {
+       66        token: data.access_token,
+      122 -      user: { id: 'u-' + p.username, name: p.username, role, w
+          -orkshop: demo?.workshop }                                     
+       67 +      user: { id: data.username, name: data.username, role: ma
+          +pBackendRole(data.role) }                                     
+       68      }
+       69    } catch (e) {
+      125 -    const err = normalizeError(e)                             
+      126 -    if (err.isNetwork) {                                      
+      127 -      if (import.meta.env.DEV) console.warn('[auth.register] b
+          -ackend unreachable, fallback to mock')                        
+      128 -      return buildMockResult(p)                               
+      129 -    }                                                         
+      130 -    throw err                                                 
+       70 +    throw normalizeError(e)                                   
+       71    }
+       72  }
+       73  
+       74 +interface MeOut { id: number; username: string; role: string; 
+          +isDefaultAdmin?: boolean }                                    
+       75 +                                                              
+       76 +/** 用 token 回填当前用户信息（前端不再把用户资料写入 localSto
+          +rage） */                                                     
+       77 +export const fetchMe = async (): Promise<LoginResult['user'] &
+          + { isDefaultAdmin: boolean }> => {                            
+       78 +  const { data } = await request.get<MeOut>('/auth/me')       
+       79 +  return {                                                    
+       80 +    id: data.username,                                        
+       81 +    name: data.username,                                      
+       82 +    role: mapBackendRole(data.role),                          
+       83 +    isDefaultAdmin: !!data.isDefaultAdmin,                    
+       84 +  }                                                           
+       85 +}                                                             
+       86 +                                                              
+       87 +/** 修改自己的密码 */                                         
+       88 +export const changePassword = async (oldPassword: string, newP
+          +assword: string): Promise<{ ok: boolean }> => {               
+       89 +  const { data } = await put<{ ok: boolean }>('/auth/change-pa
+          +ssword', {                                                    
+       90 +    old_password: oldPassword, new_password: newPassword      
+       91 +  }) as any                                                   
+       92 +  return data ?? { ok: true }                                 
+       93 +}                                                             
+       94 +                                                              
+       95  /** 后端没有登出接口，纯前端清 token 即可（store 已经处理） */
+       96  export const logout = async () => ({ ok: true })
+       97  
+      137 -/** SSO 接口：后端尚未实现，保留空实现便于后续替换 */         
+      138 -export const ssoLogin = async () => ({ ok: true })            
+      139 -                                                              
+       98  export { ApiError }
+
+  Thought for 7s (ctrl+o to expand)
+
+● Update(src/api/auth.ts)
+  ⎿  Added 1 line, removed 1 line
+      1  import { AxiosError } from 'axios'
+      2 -import { request, put } from './request'                        
+      2 +import { request } from './request'                             
+      3  import type { Role } from '@/constants/roles'
+      4  import { mapBackendRole } from '@/constants/roles'
+      5  
+
+● Update(src/api/auth.ts)
+  ⎿  Added 8 lines, removed 4 lines
+      86  
+      87  /** 修改自己的密码 */
+      88  export const changePassword = async (oldPassword: string, newPa
+          ssword: string): Promise<{ ok: boolean }> => {
+      89 -  const { data } = await put<{ ok: boolean }>('/auth/change-pas
+         -sword', {                                                      
+      90 -    old_password: oldPassword, new_password: newPassword       
+      91 -  }) as any                                                    
+      92 -  return data ?? { ok: true }                                  
+      89 +  try {                                                        
+      90 +    const { data } = await request.put<{ ok: boolean }>('/auth/
+         +change-password', {                                            
+      91 +      old_password: oldPassword, new_password: newPassword     
+      92 +    })                                                         
+      93 +    return data ?? { ok: true }                                
+      94 +  } catch (e) {                                                
+      95 +    throw normalizeError(e)                                    
+      96 +  }                                                            
+      97  }
+      98  
+      99  /** 后端没有登出接口，纯前端清 token 即可（store 已经处理） */
+
+  Thought for 22s (ctrl+o to expand)
+● Now update request.ts to drop fallback defaults (item 16): both wrappers throw
+  on failure.
+
+● Update(src/api/request.ts)
+  ⎿  Added 12 lines, removed 25 lines
+      41    }
+      42  )
+      43  
+      44 -/** 包装：始终返回 data；失败回退到 fallback（用于演示态） */  
+      44 +/**                                                            
+      45 + * 包装：返回 {code,msg,data} 信封中的 data；失败抛出错误（FIX5
+         + 第 16 项：不再 mock 兜底）。                                  
+      46 + * 注意：本项目后端多数接口直接返回 JSON 体，请优先使用 rawCall
+         +。                                                             
+      47 + */                                                            
+      48  export async function safeCall<T>(
+      46 -  fn: () => Promise<{ data: ApiResponse<T> }>,                 
+      47 -  fallback: T                                                  
+      49 +  fn: () => Promise<{ data: ApiResponse<T> }>                  
+      50  ): Promise<T> {
+      49 -  try {                                                        
+      50 -    const { data } = await fn()                                
+      51 -    if (data?.code === 0 && data?.data !== undefined) return da
+         -ta.data                                                        
+      52 -    return fallback                                            
+      53 -  } catch (e) {                                                
+      54 -    if (import.meta.env.DEV) console.warn('[api] fallback used:
+         -', e)                                                          
+      55 -    return fallback                                            
+      56 -  }                                                            
+      51 +  const { data } = await fn()                                  
+      52 +  if (data?.code === 0) return data.data                       
+      53 +  throw new Error(data?.msg || '请求失败')                     
+      54  }
+      55  
+      56  /**
+      57   * 真实后端调用：FastAPI 直接返回 JSON 体本身（不裹 {code,msg,d
+          ata}）。
+      61 - * 第二参数 fallback 用于网络/后端不可用时的演示降级。         
+      62 - * 失败时若没有 fallback 会向上抛错，调用方自行 try/catch。    
+      58 + * 失败时抛错，由调用方 try/catch 并展示错误状态（FIX5 第 16 项
+         +：不再 mock 兜底）。                                           
+      59   */
+      60  export async function rawCall<T>(
+      65 -  fn: () => Promise<{ data: T }>,                              
+      66 -  fallback?: T                                                 
+      61 +  fn: () => Promise<{ data: T }>                               
+      62  ): Promise<T> {
+      68 -  try {                                                        
+      69 -    const { data } = await fn()                                
+      70 -    return data as T                                           
+      71 -  } catch (e) {                                                
+      72 -    if (fallback !== undefined) {                              
+      73 -      if (import.meta.env.DEV) console.warn('[api] raw fallback
+         - used:', e)                                                    
+      74 -      return fallback                                          
+      75 -    }                                                          
+      76 -    throw e                                                    
+      77 -  }                                                            
+      63 +  const { data } = await fn()                                  
+      64 +  return data as T                                             
+      65  }
+      66  
+      67  export function get<T = unknown>(url: string, params?: object, 
+          cfg?: AxiosRequestConfig) {
+
+  Thought for 7s (ctrl+o to expand)
+
+● This requires rewriting the API files to match the new backend and drop mocks.
+  Let me read them all.
+
+  Thought for 9s, read 4 files (ctrl+o to expand)
+
+● Now rewriting the API files to match the new backend and drop fallback args.
+  Starting with kb.ts (add detail, export, text upload).
+
+● Write(src/api/kb.ts)
+  ⎿  Added 46 lines, removed 37 lines
+      1  import { request, rawCall } from './request'
+      2  
+      3  /**
+      4 - * 知识库文档（FIX3 第 7 项扩展）                               
+      5 - * - 新增 status: pending / approved / rejected / taken_down 审 
+        -批语义                                                          
+      6 - * - 兼容旧后端 ready / parsing / failed 字面量                 
+      4 + * 知识库文档（FIX5）                                           
+      5 + * - status: pending / approved / rejected / taken_down         
+      6 + * - 兼容旧后端 ready 字面量（视为 approved）                   
+      7   */
+      8  export type KbStatus =
+      9    | 'pending'      // 待审
+     ...
+      11    | 'rejected'     // 已驳回
+      12    | 'taken_down'   // 已下架
+      13    | 'ready'        // 旧后端「已就绪」=> 视为 approved
+      14 -  | 'parsing'      // 解析中                                   
+      15 -  | 'failed'       // 解析失败                                 
+      14    | string
+      15  
+      16  export interface KbDoc {
+      17    id: number
+      18    title: string
+      19    type: string
+      20 +  category?: string                                            
+      21    status: KbStatus
+      22    created_at: string
+      24 -  /** 上传人（FIX3 第 7.3 项要求按 uploader 过滤） */          
+      23 +  uploaderId?: number                                          
+      24    uploader?: string
+      26 -  /** 驳回原因 / 下架原因 */                                   
+      25    reason?: string
+      26  }
+      27  
+      28 +export interface KbDocDetail extends KbDoc {                   
+      29 +  content: string                                              
+      30 +}                                                              
+      31 +                                                               
+      32  export interface KbUploadResult {
+      33    doc_id: number
+      34    chunks: number
+      35    status?: KbStatus
+      36  }
+      37  
+      36 -/**                                                            
+      37 - * 上传文档：worker 角色上传后默认 status=pending（后端落库时由
+         - JWT 角色判定）                                                
+      38 - */                                                            
+      38 +/** 上传文件：员工 → pending；管理员/审查员 → approved（后端按 
+         +JWT 角色判定） */                                              
+      39  export const uploadDoc = (file: File): Promise<KbUploadResult> 
+          => {
+      40    const form = new FormData()
+      41    form.append('file', file)
+     ...
+       47    )
+       48  }
+       49  
+       50 -/**                                                           
+       51 - * 文档列表（FIX3 第 7.2 项）                                 
+       52 - *  - status：可选筛选条件                                    
+       53 - *  - uploader：传 'me' 后端按 token 内的 sub 自动过滤；也可显
+          -式传用户 id                                                   
+       54 - */                                                           
+       50 +/** 文本知识 / 员工经验分享录入 */                            
+       51 +export const uploadText = (body: { title: string; content: str
+          +ing; category?: string }) =>                                  
+       52 +  rawCall<KbUploadResult>(() => request.post<KbUploadResult>('
+          +/kb/text', body))                                             
+       53 +                                                              
+       54 +/** 文档列表 */                                               
+       55  export const listDocs = (params?: {
+       56 -  status?: 'pending' | 'approved' | 'rejected' | 'taken_down' 
+          -| 'all'                                                       
+       56 +  status?: 'pending' | 'approved' | 'rejected' | 'taken_down' 
+       57    uploader?: string
+       58  }): Promise<KbDoc[]> =>
+       59 -  rawCall<KbDoc[]>(() =>                                      
+       60 -    request.get<KbDoc[]>('/kb/list', { params }), []          
+       61 -  )                                                           
+       59 +  rawCall<KbDoc[]>(() => request.get<KbDoc[]>('/kb/list', { pa
+          +rams }))                                                      
+       60  
+       63 -/** 删除文档（hard delete，仅 admin） */                      
+       61 +/** 文档详情（含正文） */                                     
+       62 +export const getDoc = (id: number) =>                         
+       63 +  rawCall<KbDocDetail>(() => request.get<KbDocDetail>(`/kb/${i
+          +d}`))                                                         
+       64 +                                                              
+       65 +/** 删除文档（hard delete，仅 admin/auditor） */              
+       66  export const deleteDoc = (id: number) =>
+       65 -  rawCall<{ ok: boolean }>(() =>                              
+       66 -    request.delete<{ ok: boolean }>(`/kb/${id}`), { ok: false 
+          -}                                                             
+       67 -  )                                                           
+       67 +  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean 
+          +}>(`/kb/${id}`))                                              
+       68  
+       69 -/**                                                           
+       70 - * 知识审批（FIX3 第 7.2 项）                                 
+       71 - *  POST /api/kb/review/{doc_id}                              
+       72 - *  body { action, reason? }                                  
+       73 - */                                                           
+       69  export type ReviewAction = 'approve' | 'reject' | 'take_down'
+       70  
+       71 +/** 知识审批 POST /api/kb/review/{doc_id} */                  
+       72  export const reviewDoc = (id: number, action: ReviewAction, re
+           ason?: string) =>
+       73    rawCall<{ ok: boolean; status: KbStatus }>(() =>
+       78 -    request.post<{ ok: boolean; status: KbStatus }>(`/kb/revie
+          -w/${id}`, { action, reason }),                                
+       79 -    { ok: false, status: 'pending' }                          
+       80 -  )                                                           
+       74 +    request.post<{ ok: boolean; status: KbStatus }>(`/kb/revie
+          +w/${id}`, { action, reason }))                                
+       75  
+       82 -/** 显示语义化文案（FIX3 第 7.3 项） */                       
+       76 +/** 导出文档为 PDF / Markdown，触发浏览器下载 */              
+       77 +export const exportDoc = async (id: number, format: 'pdf' | 'm
+          +d', filename: string) => {                                    
+       78 +  const res = await request.get(`/kb/${id}/export`, {         
+       79 +    params: { format },                                       
+       80 +    responseType: 'blob'                                      
+       81 +  })                                                          
+       82 +  const blob = new Blob([res.data as BlobPart], {             
+       83 +    type: format === 'pdf' ? 'application/pdf' : 'text/markdow
+          +n'                                                            
+       84 +  })                                                          
+       85 +  const url = URL.createObjectURL(blob)                       
+       86 +  const a = document.createElement('a')                       
+       87 +  a.href = url                                                
+       88 +  a.download = `${filename}.${format}`                        
+       89 +  document.body.appendChild(a)                                
+       90 +  a.click()                                                   
+       91 +  a.remove()                                                  
+       92 +  URL.revokeObjectURL(url)                                    
+       93 +}                                                             
+       94 +                                                              
+       95  export const STATUS_LABEL: Record<string, string> = {
+       96    pending: '待审',
+       97    approved: '已通过',
+       98    rejected: '已驳回',
+       99    taken_down: '已下架',
+       88 -  ready: '已通过',                                            
+       89 -  parsing: '解析中',                                          
+       90 -  failed: '解析失败'                                          
+      100 +  ready: '已通过'                                             
+      101  }
+      102  
+       93 -export const isApprovedStatus = (s: KbStatus) =>              
+       94 -  s === 'approved' || s === 'ready'                           
+      103 +export const isApprovedStatus = (s: KbStatus) => s === 'approv
+          +ed' || s === 'ready'                                          
+
+● Now admin.ts — full user CRUD aligned to backend, sourcing role maps from
+  constants:
+
+● Write(src/api/admin.ts)
+  ⎿  Added 27 lines, removed 48 lines
+       1 -import { request, rawCall, safeCall, get, post } from './reques
+         -t'                                                             
+       2 -import type { Role } from '@/utils/permission'                 
+       1 +import { request, rawCall } from './request'                   
+       2 +import type { FrontendRole, BackendRole } from '@/constants/rol
+         +es'                                                            
+       3 +import { mapFrontendRole, mapBackendRole } from '@/constants/ro
+         +les'                                                           
+       4  
+       4 -/**                                                            
+       5 - * 后端用户角色（与数据库一致）                                
+       6 - *  - worker / leader / auditor / admin                        
+       7 - */                                                            
+       8 -export type BackendRole = 'worker' | 'leader' | 'auditor' | 'ad
+         -min'                                                           
+       9 -                                                               
+       5  export interface SysUser {
+       6    id: number
+       7    username: string
+       8    role: BackendRole
+       9 +  isDefaultAdmin: boolean                                      
+      10    createdAt: string | null
+      11  }
+      12  
+      17 -/** 前端 Role → 后端角色（提交时用） */                        
+      18 -export function frontendRoleToBackend(r: Role): BackendRole {  
+      19 -  switch (r) {                                                 
+      20 -    case 'admin':     return 'admin'                           
+      21 -    case 'auditor':   return 'auditor'                         
+      22 -    case 'frontline': return 'worker'                          
+      23 -    case 'guest':     return 'worker'                          
+      24 -  }                                                            
+      25 -}                                                              
+      13 +// 兼容旧引用名（统一来源在 src/constants/roles.ts）           
+      14 +export const frontendRoleToBackend = (r: FrontendRole): Backend
+         +Role => mapFrontendRole(r)                                     
+      15 +export const backendRoleToFrontend = (r: string): FrontendRole 
+         +=> mapBackendRole(r)                                           
+      16 +export type { BackendRole }                                    
+      17  
+      27 -/** 后端 → 前端角色（展示时用） */                             
+      28 -export function backendRoleToFrontend(r: string): Role {       
+      29 -  switch ((r || '').toLowerCase()) {                           
+      30 -    case 'admin':   return 'admin'                             
+      31 -    case 'auditor': return 'auditor'                           
+      32 -    case 'leader':  return 'auditor'                           
+      33 -    default:        return 'frontline'                         
+      34 -  }                                                            
+      35 -}                                                              
+      18 +/** GET /api/admin/users（仅 admin） */                        
+      19 +export const listUsers = (): Promise<SysUser[]> =>             
+      20 +  rawCall<SysUser[]>(() => request.get<SysUser[]>('/admin/users
+         +'))                                                            
+      21  
+      37 -/**                                                            
+      38 - * GET /api/admin/users（仅 admin）                            
+      39 - *  - 后端 401/403/网络错误 → rawCall 兜底为空数组（UI 自行渲染
+         -空态）                                                         
+      40 - *  - 不再返回任何业务 mock 数据                               
+      41 - */                                                            
+      42 -export const listUsers = async (): Promise<SysUser[]> => {     
+      43 -  return rawCall<SysUser[]>(() => request.get<SysUser[]>('/admi
+         -n/users'), [])                                                 
+      44 -}                                                              
+      22 +/** 创建账户（员工/审查员/管理员） */                          
+      23 +export const createUser = (body: { username: string; password?:
+         + string; role: BackendRole }) =>                               
+      24 +  rawCall<SysUser>(() => request.post<SysUser>('/admin/users', 
+         +body))                                                         
+      25  
+      46 -/**                                                            
+      47 - * PUT /api/admin/users/{userId}/role                          
+      48 - *  - body: { role: 'worker' | 'auditor' | 'admin' | 'leader' }
+      49 - */                                                            
+      26 +/** 修改用户名 / 角色 */                                       
+      27 +export const updateUser = (userId: number, body: { username?: s
+         +tring; role?: BackendRole }) =>                                
+      28 +  rawCall<SysUser>(() => request.put<SysUser>(`/admin/users/${u
+         +serId}`, body))                                                
+      29 +                                                               
+      30 +/** 仅改角色（兼容旧调用） */                                  
+      31  export const updateUserRole = (userId: number, role: BackendRol
+          e) =>
+      51 -  request.put<{ ok: boolean; id: number; role: BackendRole }>( 
+      52 -    `/admin/users/${userId}/role`,                             
+      53 -    { role }                                                   
+      54 -  ).then(r => r.data)                                          
+      32 +  rawCall<SysUser>(() => request.put<SysUser>(`/admin/users/${u
+         +serId}/role`, { role }))                                       
+      33  
+      56 -/* ===== 兼容旧接口（设备库 / SOP 模板 占位）===== */          
+      57 -export interface DeviceModel { id: string; model: string; vendo
+         -r: string; category: string; updatedAt: string }               
+      58 -export interface SopTpl { id: string; name: string; deviceModel
+         -: string; level: number; steps: number; updatedAt: string }    
+      34 +/** 重置密码为 123456 */                                       
+      35 +export const resetPassword = (userId: number) =>               
+      36 +  rawCall<{ ok: boolean; password: string }>(() =>             
+      37 +    request.put<{ ok: boolean; password: string }>(`/admin/user
+         +s/${userId}/reset-password`, {}))                              
+      38  
+      60 -export const listDevices = () => safeCall<DeviceModel[]>(() => 
+         -get('/admin/devices'), [])                                     
+      61 -export const listSops    = () => safeCall<SopTpl[]>(() => get('
+         -/admin/sops'),       [])                                       
+      62 -export const saveSop     = (p: object) => safeCall(() => post('
+         -/admin/sop', p), { ok: true })                                 
+      39 +/** 删除账户（默认 admin 不可删） */                           
+      40 +export const deleteUser = (userId: number) =>                  
+      41 +  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }
+         +>(`/admin/users/${userId}`))                                   
+
+  Thought for 7s (ctrl+o to expand)
+
+● Now ticket.ts — the big one, matching the new platform-level +
+  per-user-progress backend:
+
+● Write(src/api/ticket.ts)
+  ⎿  Added 92 lines, removed 48 lines
+        1  import { request, rawCall } from './request'
+        2  
+        3 -/**                                                           
+        4 - * 工单状态（FIX3 第 8 项）                                   
+        5 - * - 仅保留 `pending` / `done` 两种语义；后端若返回 `open` / `
+          -doing` 等，统一映射到 `pending`                               
+        6 - * - 旧 `doing`（检修中）已废弃                               
+        7 - */                                                           
+        8 -export type TicketStatus = 'pending' | 'done'                 
+        3 +/** 用户维度的工单状态 */                                     
+        4 +export type TicketStatus = 'open' | 'doing' | 'done' | 'delete
+          +d'                                                            
+        5  
+       10 -/** 后端可能返回的旧状态字面量，仅用于反向映射 */             
+       11 -type RawTicketStatus = 'open' | 'doing' | 'done' | 'pending' |
+          - string                                                       
+       12 -                                                              
+       13 -export const normalizeStatus = (s: RawTicketStatus | undefined
+          -): TicketStatus =>                                            
+       14 -  s === 'done' ? 'done' : 'pending'                           
+       15 -                                                              
+       16 -/** 列表项（GET /api/ticket 返回每条的字段） */               
+        6 +/** 列表项 / 摘要（含当前用户的进度） */                      
+        7  export interface TicketSummary {
+        8    id: number
+        9    device: string
+       10    fault: string
+       11 +  creatorId?: number                                          
+       12 +  creator?: string | null                                     
+       13 +  isCreator: boolean                                          
+       14 +  added: boolean                                              
+       15    status: TicketStatus
+       16 +  totalSteps: number                                          
+       17 +  doneSteps: number                                           
+       18 +  createdAt?: string | null                                   
+       19 +  addedAt?: string | null                                     
+       20 +  completedAt?: string | null                                 
+       21 +  score?: number                                              
+       22  }
+       23  
+       24 -/** 详情（GET /api/ticket/{id} 返回） */                      
+       25 -export interface TicketDetail extends TicketSummary {         
+       26 -  steps: { raw: string } | Record<string, unknown> | null     
+       27 -  created_at: string                                          
+       24 +/** 历史工单记录 */                                           
+       25 +export interface TicketHistoryItem extends TicketSummary {    
+       26 +  deletedAt?: string | null                                   
+       27 +  deleteReason?: string | null                                
+       28  }
+       29  
+       30 -/** 创建工单返回（POST /api/ticket） */                       
+       30 +/** 工单详情 */                                               
+       31 +export interface TicketDetail {                               
+       32 +  id: number                                                  
+       33 +  device: string                                              
+       34 +  fault: string                                               
+       35 +  steps: { raw: string } | Record<string, unknown> | unknown[]
+          + | null                                                       
+       36 +  created_at: string | null                                   
+       37 +  creator?: string | null                                     
+       38 +  isCreator: boolean                                          
+       39 +  added: boolean                                              
+       40 +  progress: {                                                 
+       41 +    status: TicketStatus                                      
+       42 +    stepDone: string[]                                        
+       43 +    addedAt?: string | null                                   
+       44 +    completedAt?: string | null                               
+       45 +  }                                                           
+       46 +}                                                             
+       47 +                                                              
+       48  export interface TicketCreateResult {
+       49    id: number
+       33 -  steps: { raw: string } | Record<string, unknown> | null     
+       50 +  steps: { raw: string } | Record<string, unknown> | unknown[]
+          + | null                                                       
+       51  }
+       52  
+       36 -export const createTicket = (body: { device: string; fault: st
+          -ring }) =>                                                    
+       37 -  rawCall<TicketCreateResult>(() => request.post<TicketCreateR
+          -esult>('/ticket', body, {                                     
+       38 -    timeout: 60_000                                           
+       39 -  }))                                                         
+       40 -                                                              
+       41 -/**                                                           
+       42 - * 拉取真实工单列表，并把 status 映射到 `pending` / `done`。  
+       43 - */                                                           
+       44 -export const listTickets = async (): Promise<TicketSummary[]> 
+          -=> {                                                          
+       45 -  const raw = await rawCall<Array<TicketSummary & { status: Ra
+          -wTicketStatus }>>(() =>                                       
+       46 -    request.get<TicketSummary[]>('/ticket')                   
+       47 -  )                                                           
+       48 -  return (raw || []).map(t => ({ ...t, status: normalizeStatus
+          -(t.status) }))                                                
+       53 +export interface TicketListResult {                           
+       54 +  mine: TicketSummary[]                                       
+       55 +  recommended: TicketSummary[]                                
+       56  }
+       57  
+       51 -export const getTicket = async (id: number | string): Promise<
+          -TicketDetail | null> => {                                     
+       52 -  const raw = await rawCall<(TicketDetail & { status: RawTicke
+          -tStatus }) | null>(() =>                                      
+       53 -    request.get<TicketDetail>(`/ticket/${id}`), null          
+       54 -  )                                                           
+       55 -  if (!raw) return null                                       
+       56 -  return { ...raw, status: normalizeStatus(raw.status) }      
+       58 +/** 时间线事件 */                                             
+       59 +export interface TicketEvent {                                
+       60 +  type: 'created' | 'added' | 'step_completed' | 'completed' |
+          + 'deleted' | string                                           
+       61 +  detail?: { stepId?: string; reason?: string } | null        
+       62 +  at: string | null                                           
+       63  }
+       64 +export interface TimelineResult {                             
+       65 +  events?: TicketEvent[]                                      
+       66 +  grouped?: { userId: number; user: string | null; events: Tic
+          +ketEvent[] }[]                                                
+       67 +}                                                             
+       68  
+       69 +export const createTicket = (body: { device: string; fault: st
+          +ring }) =>                                                    
+       70 +  rawCall<TicketCreateResult>(() =>                           
+       71 +    request.post<TicketCreateResult>('/ticket', body, { timeou
+          +t: 60_000 }))                                                 
+       72 +                                                              
+       73 +/** 列表：{ mine, recommended } */                            
+       74 +export const listTickets = () =>                              
+       75 +  rawCall<TicketListResult>(() => request.get<TicketListResult
+          +>('/ticket'))                                                 
+       76 +                                                              
+       77 +/** 创建前的相似工单推荐 */                                   
+       78 +export const recommendTickets = (body: { device: string; fault
+          +: string }) =>                                                
+       79 +  rawCall<TicketSummary[]>(() => request.post<TicketSummary[]>
+          +('/ticket/recommend', body))                                  
+       80 +                                                              
+       81 +/** 历史工单（已完成 / 已删除） */                            
+       82 +export const listTicketHistory = () =>                        
+       83 +  rawCall<TicketHistoryItem[]>(() => request.get<TicketHistory
+          +Item[]>('/ticket/history'))                                   
+       84 +                                                              
+       85 +/** 把他人工单添加到我的作业指引 */                           
+       86 +export const addTicketToMine = (id: number | string) =>       
+       87 +  rawCall<{ ok: boolean; id: number }>(() => request.post(`/ti
+          +cket/${id}/add`, {}))                                         
+       88 +                                                              
+       89 +export const getTicket = (id: number | string) =>             
+       90 +  rawCall<TicketDetail>(() => request.get<TicketDetail>(`/tick
+          +et/${id}`))                                                   
+       91 +                                                              
+       92 +/** 更新我的进度（步骤完成 / 状态） */                        
+       93 +export const updateProgress = (id: number | string, body: { st
+          +epDone?: string[]; status?: TicketStatus }) =>                
+       94 +  rawCall<{ ok: boolean; status: TicketStatus }>(() =>        
+       95 +    request.patch(`/ticket/${id}/progress`, body))            
+       96 +                                                              
+       97 +/** 完成工单 */                                               
+       98 +export const completeTicket = (id: number | string) => updateP
+          +rogress(id, { status: 'done' })                               
+       99 +                                                              
+      100 +/** 兼容旧调用 */                                             
+      101 +export const updateTicketStatus = (id: number | string, status
+          +: TicketStatus) =>                                            
+      102 +  updateProgress(id, { status })                              
+      103 +                                                              
+      104  /**
+       60 - * 更新状态：前端只允许 `pending` / `done`。                  
+       61 - * 后端如果不识别 `pending`，退回到 `open`（同义）。          
+      105 + * 删除我的工单：                                             
+      106 + * - 已完成：无需理由（后端默认"已完成"）                     
+      107 + * - 未完成：必须传 reason                                    
+      108   */
+       63 -export const updateTicketStatus = (id: number | string, status
+          -: TicketStatus) =>                                            
+       64 -  rawCall<{ ok: boolean; status: TicketStatus }>(() =>        
+       65 -    request.patch<{ ok: boolean; status: TicketStatus }>(`/tic
+          -ket/${id}`, {                                                 
+       66 -      status: status === 'done' ? 'done' : 'open'             
+       67 -    })                                                        
+       68 -  , { ok: false, status })                                    
+      109 +export const deleteTicket = (id: number | string, reason?: str
+          +ing) =>                                                       
+      110 +  rawCall<{ ok: boolean }>(() =>                              
+      111 +    request.delete(`/ticket/${id}`, { data: reason ? { reason 
+          +} : {} }))                                                    
+      112  
+       70 -/** 完成工单：FIX3 第 8.3 项 */                               
+       71 -export const completeTicket = (id: number | string) => updateT
+          -icketStatus(id, 'done')                                       
+      113 +/** 工单时间线 */                                             
+      114 +export const getTimeline = (id: number | string) =>           
+      115 +  rawCall<TimelineResult>(() => request.get<TimelineResult>(`/
+          +ticket/${id}/timeline`))                                      
+
+  Thought for 8s (ctrl+o to expand)
+
+● Now kg.ts and search.ts — drop fallback args:
+
+● Write(src/api/kg.ts)
+  ⎿  Added 9 lines, removed 34 lines
+       1  import { request, rawCall } from './request'
+       2 -import { listDocs } from './kb'                                
+       2 +import { listDocs, isApprovedStatus } from './kb'              
+       3  
+       4  /**
+       5 - * 知识图谱（FIX3 第 5 项）                                    
+       6 - * - 严禁前端硬编码 mockGraphNodes / mockGraphEdges            
+       7 - * - 必须传已通过审核的 doc_id 列表给后端，缺接口时返回空图（UI
+         - 显示空态）                                                    
+       5 + * 知识图谱（基于已审通过的真实文档，无 mock）                 
+       6   */
+       7  export type KGType = 'device' | 'part' | 'fault' | 'method' | '
+          case' | 'manual'
+       8  
+     ...
+      14    desc?: string
+      15    status?: string
+      16    manualRef?: string
+      19 -  /** 节点对应的源文档（FIX3 第 5.2 项） */                    
+      17    docId?: string
+      18    chunkId?: string
+      19  }
+     ...
+      23  const EMPTY_GRAPH: KGGraph = { nodes: [], edges: [] }
+      24  
+      25  /**
+      29 - * 拉取图谱：把已审通过的 doc_ids 传给后端                     
+      30 - * - 入参缺省时自动从 /api/kb/list 取 status=ready/approved 的 
+         -文档                                                           
+      31 - * - 后端不可达时返回空图（UI 提示"暂无可视化的图谱数据"）     
+      26 + * 拉取图谱：把已审通过的 doc_ids 传给后端。                   
+      27 + * 缺省入参时自动取 status=approved/ready 的文档；无文档则返回 
+         +空图（不触发请求）。                                           
+      28   */
+      29  export const getGraph = async (docIds?: string[]): Promise<KGGr
+          aph> => {
+      30    let ids = docIds
+      31    if (!ids) {
+      36 -    try {                                                      
+      37 -      const docs = await listDocs()                            
+      38 -      ids = docs                                               
+      39 -        .filter(d => d.status === 'ready' || (d as any).status 
+         -=== 'approved')                                                
+      40 -        .map(d => String(d.id))                                
+      41 -    } catch {                                                  
+      42 -      ids = []                                                 
+      43 -    }                                                          
+      32 +    const docs = await listDocs()                              
+      33 +    ids = docs.filter(d => isApprovedStatus(d.status)).map(d =>
+         + String(d.id))                                                 
+      34    }
+      35    if (!ids.length) return EMPTY_GRAPH
+      36    return rawCall<KGGraph>(() =>
+      47 -    request.get<KGGraph>('/kg/graph', { params: { doc_ids: ids!
+         -.join(',') } }),                                               
+      48 -    EMPTY_GRAPH                                                
+      49 -  )                                                            
+      37 +    request.get<KGGraph>('/kg/graph', { params: { doc_ids: ids!
+         +.join(',') } }))                                               
+      38  }
+      39  
+      52 -/** 拉取实体详细信息（关联节点） */                            
+      53 -export const getEntity = (id: string) =>                       
+      54 -  rawCall<{ id: string; props: Record<string, unknown>; related
+         -: KGNode[] }>(() =>                                            
+      55 -    request.get(`/kg/entity/${id}`),                           
+      56 -    { id, props: {}, related: [] }                             
+      57 -  )                                                            
+      58 -                                                               
+      59 -/**                                                            
+      60 - * 拉取节点对应的原文片段（FIX3 第 5.2 项）                    
+      61 - * GET /api/kb/{docId}/chunk/{chunkId}                         
+      62 - */                                                            
+      40 +/** 节点对应原文片段 GET /api/kb/{docId}/chunk/{chunkId} */    
+      41  export interface ChunkContent {
+      42    docId: string
+      43    chunkId: string
+     ...
+      46    title?: string
+      47  }
+      48  export const getChunk = (docId: string, chunkId: string) =>
+      71 -  rawCall<ChunkContent | null>(() =>                           
+      72 -    request.get<ChunkContent>(`/kb/${docId}/chunk/${chunkId}`),
+      73 -    null                                                       
+      74 -  )                                                            
+      49 +  rawCall<ChunkContent>(() => request.get<ChunkContent>(`/kb/${
+         +docId}/chunk/${chunkId}`))                                     
+
+  Thought for 26s, read 2 files (ctrl+o to expand)
+
+● workflow.ts needs restructuring around the new ticket model. Let me rewrite
+  it, preserving the SOP step-parsing logic but removing mocks.
+
+● Write(src/api/workflow.ts)
+  ⎿  Added 42 lines, removed 117 lines
+      1 -import { post, safeCall, rawCall, request } from './request'    
+      1 +import { rawCall, request } from './request'                    
+      2  import {
+      3 -  listTickets, getTicket, completeTicket,                       
+      3 +  listTickets, getTicket, completeTicket, updateProgress,       
+      4    type TicketSummary, type TicketDetail, type TicketStatus
+      5  } from './ticket'
+      6  
+     ...
+      11    imageUrl?: string
+      12  }
+      13  
+      14 -/**                                                            
+      15 - * 子步骤（FIX4 第 2 项）—— 大步骤内必须按顺序完成的最小执行单 
+         -元                                                             
+      16 - *  - 后端 SOP_SYSTEM 约束 LLM 输出 { id, content }            
+      17 - *  - 前端按顺序渲染为 checkbox；只有前一项打钩，后一项才可用  
+      18 - */                                                            
+      14 +/** 子步骤（FIX4 第 2 项） */                                  
+      15  export interface SubStep {
+      16    id: string
+      17    content: string
+     ...
+      19  
+      20  export interface SopStep {
+      21    id: string
+      26 -  index?: number          // 1-based                           
+      22 +  index?: number                                               
+      23    name: string
+      24    desc: string
+      25    estMinutes: number
+      26    hazardous?: boolean
+      27    safetyNote?: string
+      32 -  tools?: string[]        // 兼容旧字段（字符串数组）          
+      33 -  toolItems?: ToolItem[]  // 新字段（结构化）                  
+      28 +  tools?: string[]                                             
+      29 +  toolItems?: ToolItem[]                                       
+      30    materials?: string[]
+      31    manualRef?: string
+      32    acceptance?: string
+      33    checkPoints: string[]
+      38 -  /** FIX4 第 2 项：大步骤下面的有序子步骤 */                  
+      34    subSteps?: SubStep[]
+      35  }
+      36  
+     ...
+      42    steps: SopStep[]
+      43  }
+      44  
+      50 -/**                                                            
+      51 - * 工单状态（FIX3 第 8 项）                                    
+      52 - *  - 前端只显示「待办 / 已完成」两个语义                      
+      53 - */                                                            
+      45  export type WorkItemStatus = '待办' | '已完成'
+      46  
+      47  export interface WorkItem {
+      57 -  id: string                                                   
+      48 +  id: string                 // 形如 't-12'                    
+      49 +  ticketId: number                                             
+      50    name: string
+      51    deviceModel: string
+      52    difficulty: '初级' | '中级' | '高级'
+     ...
+       56    hazardous?: boolean
+       57    updatedAt: number
+       58    workshop?: string
+       67 -  /** true = 仅作为 demo 兜底展示，UI 不允许"完成" */         
+       68 -  demo?: boolean                                              
+       59 +  // FIX5：共享/推荐 + 进度                                   
+       60 +  added: boolean                                              
+       61 +  isCreator: boolean                                          
+       62 +  creator?: string | null                                     
+       63 +  totalSteps: number                                          
+       64 +  doneSteps: number                                           
+       65  }
+       66  
+       71 -/**                                                           
+       72 - * 离线兜底用的示例工单（FIX3 第 4.3 项要求只保留 1 条带"示例"
+          -标记的兜底）                                                  
+       73 - */                                                           
+       74 -const MOCK_LIST: WorkItem[] = [                               
+       75 -  {                                                           
+       76 -    id: 'sop-demo',                                           
+       77 -    name: '示例·热轧主电机异响二级检修',                      
+       78 -    deviceModel: 'YKK630-4',                                  
+       79 -    difficulty: '中级',                                       
+       80 -    estimatedMinutes: 128,                                    
+       81 -    status: '待办',                                           
+       82 -    level: 2,                                                 
+       83 -    hazardous: true,                                          
+       84 -    updatedAt: Date.now() - 30 * 60_000,                      
+       85 -    workshop: '一号车间·热轧线',                              
+       86 -    demo: true                                                
+       87 -  }                                                           
+       88 -]                                                             
+       89 -                                                              
+       90 -const TICKET_STATUS_MAP: Record<TicketStatus, WorkItemStatus> 
+          -= {                                                           
+       91 -  pending: '待办',                                            
+       92 -  done:    '已完成'                                           
+       93 -}                                                             
+       94 -                                                              
+       95 -/** 真实工单 → WorkItem */                                    
+       67  function ticketToWorkItem(t: TicketSummary): WorkItem {
+       68    return {
+       69      id: 't-' + t.id,
+       70 +    ticketId: t.id,                                           
+       71      name: t.fault || `工单 #${t.id}`,
+       72      deviceModel: t.device || '未指定',
+       73      difficulty: '中级',
+       74      estimatedMinutes: 60,
+      103 -    status: TICKET_STATUS_MAP[t.status] || '待办',            
+       75 +    status: t.status === 'done' ? '已完成' : '待办',          
+       76      level: 2,
+       77      updatedAt: Date.now(),
+      106 -    workshop: 'AI 工单'                                       
+       78 +    workshop: t.creator ? `创建人 · ${t.creator}` : 'AI 工单',
+       79 +    added: t.added,                                           
+       80 +    isCreator: t.isCreator,                                   
+       81 +    creator: t.creator,                                       
+       82 +    totalSteps: t.totalSteps,                                 
+       83 +    doneSteps: t.doneSteps                                    
+       84    }
+       85  }
+       86  
+     ...
+       90    if (!raw) return []
+       91    if (Array.isArray(raw)) {
+       92      return raw.map((s: any, i: number) => {
+      116 -      // FIX4 第 2 项：标准化 subSteps，支持后端 [{id, content
+          -}] 或 [{ id, title, ... }] 多种字段                           
+       93        const rawSubs = s.subSteps || s.sub_steps || s.substeps
+       94        const subSteps: SubStep[] | undefined = Array.isArray(ra
+           wSubs) && rawSubs.length
+       95          ? rawSubs.map((ss: any, j: number) => ({
+     ...
+      179    }
+      180  }
+      181  
+      206 -/** 列表返回包：UI 据此判断"真实空" vs "离线模式"。 */        
+      182 +/** 列表：我的工单 + 推荐工单（其他人创建、我未添加） */      
+      183  export interface FlowsResult {
+      208 -  items: WorkItem[]                                           
+      209 -  /** true = 后端不可达，items 为示例 mock；false = 真实数据（
+          -可能为空数组） */                                             
+      210 -  offline: boolean                                            
+      184 +  mine: WorkItem[]                                            
+      185 +  recommended: WorkItem[]                                     
+      186  }
+      187  
+      213 -/**                                                           
+      214 - * 列表加载策略（FIX2/FIX3）：                                
+      215 - * - 后端可用 → 仅展示真实工单                                
+      216 - * - 后端不可用 → 退回 1 条示例 mock + offline=true           
+      217 - */                                                           
+      188  export const listFlows = async (): Promise<FlowsResult> => {
+      219 -  try {                                                       
+      220 -    const tickets = await listTickets()                       
+      221 -    return { items: tickets.map(ticketToWorkItem), offline: fa
+          -lse }                                                         
+      222 -  } catch (e) {                                               
+      223 -    if (import.meta.env.DEV) console.warn('[workflow.listFlows
+          -] backend unavailable, fallback to demo:', e)                 
+      224 -    return { items: MOCK_LIST.slice(0, 1), offline: true }    
+      189 +  const { mine, recommended } = await listTickets()           
+      190 +  return {                                                    
+      191 +    mine: (mine || []).map(ticketToWorkItem),                 
+      192 +    recommended: (recommended || []).map(ticketToWorkItem)    
+      193    }
+      194  }
+      195  
+      228 -/**                                                           
+      229 - * 详情：t- 前缀走真实工单接口；其它一律视为示例 demo。       
+      230 - * 真实工单失败时给一个占位 SopFlow，避免 UI 卡死。           
+      231 - */                                                           
+      196 +/** 详情：仅支持真实工单（t- 前缀）。失败时抛错由 UI 处理。 */
+      197  export const getFlow = async (id?: string): Promise<SopFlow> =
+           > {
+      233 -  if (id && id.startsWith('t-')) {                            
+      234 -    const tid = id.slice(2)                                   
+      235 -    const detail = await getTicket(tid)                       
+      236 -    if (detail) return ticketToFlow(detail)                   
+      237 -    return {                                                  
+      238 -      id, name: '工单加载失败', deviceModel: '—', level: 2,   
+      239 -      steps: [{ id: 's1', index: 1, name: '加载失败', desc: ' 
+          -无法获取工单详情，请稍后重试。', estMinutes: 0, checkPoints: [
+          -] }]                                                          
+      240 -    }                                                         
+      241 -  }                                                           
+      242 -  // 示例工单 fallback —— 仅一条                              
+      243 -  return {                                                    
+      244 -    id: id || 'sop-demo',                                     
+      245 -    name: '示例·热轧主电机异响二级检修',                      
+      246 -    deviceModel: 'YKK630-4',                                  
+      247 -    level: 2,                                                 
+      248 -    steps: [                                                  
+      249 -      { id: 's1', index: 1, name: '设备停机与挂牌锁定 (LOTO)',
+      250 -        desc: '断开主电源,挂检修牌,装锁具,确认无电压。',      
+      251 -        estMinutes: 8, hazardous: true, manualRef: '安全规程 §
+          -2.1',                                                         
+      252 -        checkPoints: ['已断开主电源开关', '已挂检修牌并装锁', 
+          -'验电确认无电压'] },                                          
+      253 -      { id: 's2', index: 2, name: '冷却与降温',               
+      254 -        desc: '等待电机自然冷却至 40℃ 以下,严禁强制降温。',   
+      255 -        estMinutes: 30, manualRef: '检修手册 §4.1',           
+      256 -        checkPoints: ['电机外壳温度 ≤ 40℃'] }                 
+      257 -    ]                                                         
+      258 -  }                                                           
+      198 +  if (!id || !id.startsWith('t-')) throw new Error('无效的工单
+          +编号')                                                        
+      199 +  const tid = id.slice(2)                                     
+      200 +  const detail = await getTicket(tid)                         
+      201 +  return ticketToFlow(detail)                                 
+      202  }
+      203  
+      261 -export const reportStep = (flowId: string, stepId: string, pay
+          -load: object) =>                                              
+      262 -  safeCall(() => post('/workflow/step', { flowId, stepId, ...p
+          -ayload }), { ok: true })                                      
+      204 +/** 同步步骤完成进度到后端（按用户维度） */                   
+      205 +export const syncStepProgress = (id: string, stepDone: string[
+          +]) => {                                                       
+      206 +  const tid = id.startsWith('t-') ? id.slice(2) : id          
+      207 +  return updateProgress(tid, { stepDone })                    
+      208 +}                                                             
+      209  
+      264 -export const submitReport = (payload: object) =>              
+      265 -  safeCall(() => post('/workflow/report', payload), { reportId
+          -: 'R-' + Date.now() })                                        
+      266 -                                                              
+      267 -/* ===========================================================
+          -=                                                             
+      268 - *  FIX3 第 4 项：工具清单 + 关联手册（真实接口，不回退到假数 
+          -据）                                                          
+      269 - * ===========================================================
+          -= */                                                          
+      270 -                                                              
+      210  export interface ManualRef {
+      211    docId: string
+      212    title: string
+     ...
+      214    score: number
+      215  }
+      216  
+      278 -/**                                                           
+      279 - * 拉取工单关联的工具清单（GET /api/workflow/{id}/tools）     
+      280 - * - 接口未实现时返回空数组（UI 显示"暂未提供工具清单"）      
+      281 - */                                                           
+      217  export const getWorkflowTools = async (id: string): Promise<To
+           olItem[]> => {
+      283 -  // sop-demo 等本地示例没有真实工单 ID                       
+      218    if (!id || !id.startsWith('t-')) return []
+      219    const tid = id.slice(2)
+      286 -  return rawCall<ToolItem[]>(() =>                            
+      287 -    request.get<ToolItem[]>(`/workflow/${tid}/tools`), []     
+      288 -  )                                                           
+      220 +  return rawCall<ToolItem[]>(() => request.get<ToolItem[]>(`/w
+          +orkflow/${tid}/tools`))                                       
+      221  }
+      222  
+      291 -/**                                                           
+      292 - * 拉取关联手册（GET /api/workflow/{id}/manuals）             
+      293 - * - 接口未实现 / 无匹配时返回空（UI 显示"暂未关联到任何手册" 
+          -）                                                            
+      294 - */                                                           
+      223  export const getWorkflowManuals = async (id: string): Promise<
+           ManualRef[]> => {
+      224    if (!id || !id.startsWith('t-')) return []
+      225    const tid = id.slice(2)
+      298 -  return rawCall<ManualRef[]>(() =>                           
+      299 -    request.get<ManualRef[]>(`/workflow/${tid}/manuals`), []  
+      300 -  )                                                           
+      226 +  return rawCall<ManualRef[]>(() => request.get<ManualRef[]>(`
+          +/workflow/${tid}/manuals`))                                   
+      227  }
+      228  
+      303 -/** 重新导出，方便页面直接调用创建 / 完成工单 */              
+      304 -export { createTicket, updateTicketStatus, completeTicket } fr
+          -om './ticket'                                                 
+      229 +export { createTicket, completeTicket, type TicketStatus } fro
+          +m './ticket'                                                  
+
+  Thought for 6s (ctrl+o to expand)
+
+● Now search.ts — add recommendedTickets and drop the mock suggest/feedback:
+
+● Update(src/api/search.ts)
+  ⎿  Added 1 line, removed 1 line
+      1 -import { post, get, request, rawCall, safeCall } from './request
+        -'                                                               
+      1 +import { request, rawCall } from './request'                    
+      2  
+      3  export type SearchMode = 'precise' | 'smart' | 'explore'
+      4  export type SourceType = 'manual' | 'case' | 'graph'
+
+● Update(src/api/search.ts)
+  ⎿  Added 13 lines, removed 9 lines
+      25    meta?: Record<string, unknown>
+      26  }
+      27  
+      28 +export interface RecommendedTicket {                           
+      29 +  id: number                                                   
+      30 +  device: string                                               
+      31 +  fault: string                                                
+      32 +  summary: string                                              
+      33 +  added: boolean                                               
+      34 +  score: number                                                
+      35 +}                                                              
+      36 +                                                               
+      37  export interface SearchResult {
+      38    summary: string
+      39    /** 后端目前不返回原因 Top3，前端根据问题展示空数组或保留默认
+           */
+     ...
+      41    hits: SearchHit[]
+      42    /** 多模态场景下后端返回的图片观察文本（无图为空） */
+      43    imageObservation?: string
+      44 +  /** FIX5 第 13 项：检索结果中的推荐工单 */                   
+      45 +  recommendedTickets: RecommendedTicket[]                      
+      46  }
+      47  
+      37 -/** 后端 /api/chat/query 返回结构（FIX3 第 3.2 项：sources 与回
+         -答强绑定） */                                                  
+      48 +/** 后端 /api/chat/query 返回结构 */                           
+      49  interface BackendChatResp {
+      50    answer: string
+      51    image_observation: string
+      52    sources: { id?: string; doc_id?: string | number; title: stri
+          ng; snippet: string; page?: number; score?: number }[]
+      53 +  recommended_tickets?: RecommendedTicket[]                    
+      54  }
+      55  
+      44 -const FALLBACK: SearchResult = {                               
+      45 -  summary: '',                                                 
+      46 -  causes: [],                                                  
+      47 -  hits: [],                                                    
+      48 -  imageObservation: ''                                         
+      49 -}                                                              
+      50 -void FALLBACK                                                  
+      51 -                                                               
+      56  /**
+      57   * 多模态检索：实际调用 /api/chat/query。
+      58   * - question 取自 text + deviceModel 拼接
+
+● Update(src/api/search.ts)
+  ⎿  Added 2 lines, removed 9 lines
+       95      summary: data.answer || '',
+       96      causes: [],
+       97      hits,
+       98 -    imageObservation: data.image_observation || ''            
+       98 +    imageObservation: data.image_observation || '',           
+       99 +    recommendedTickets: data.recommended_tickets || []        
+      100    }
+      101  }
+      101 -                                                              
+      102 -export const suggest = (q: string) =>                         
+      103 -  safeCall<string[]>(() => get('/search/suggest', { q }), [   
+      104 -    `${q}-振动异常`, `${q}-温度过高`, `${q}-异响排查`         
+      105 -  ])                                                          
+      106 -                                                              
+      107 -export const feedback = (id: string, useful: boolean) =>      
+      108 -  safeCall(() => post('/search/feedback', { id, useful }), { o
+          -k: true })                                                    
+
+  Thought for 9s (ctrl+o to expand)
+
+● Now let me find all usages of the symbols I've removed or changed, so I know
+  which views need updating.
+
+● Bash(cd /home/chen/Documents/software2026 && echo "=== suggest/feedback ==="
+      && grep -rn "suggest\|feedback" src/views src/components | grep -v "//" ;
+      echo "=== audi…)
+  ⎿  === suggest/feedback ===
+     === audit.ts/knowledge.ts importers ===
+     src/views/audit/Mobile.vue
+     … +10 lines (ctrl+o to expand)
+
+  Thought for 58s, searched for 1 pattern (ctrl+o to expand)
+
+● This is a large view-update surface. Let me finish the cross-cutting
+  foundation first (user store, main boot, router), then run typecheck to map
+  the breakage. Updating the user store: remove app:user, hydrate via /auth/me.
+
+● Write(src/stores/user.ts)
+  ⎿  Added 30 lines, removed 13 lines
+       2  import { ref, computed } from 'vue'
+       3  import * as authApi from '@/api/auth'
+       4  import { storage } from '@/utils/storage'
+       5 -import type { Role } from '@/utils/permission'                 
+       5 +import type { Role } from '@/constants/roles'                  
+       6  import { TOKEN_STORAGE_KEY } from '@/api/request'
+       7  
+       8  interface UserInfo {
+       9    id: string
+      10    name: string
+      11    role: Role
+      12 -  workshop?: string                                            
+      13 -  avatar?: string                                              
+      12 +  isDefaultAdmin?: boolean                                     
+      13  }
+      14  
+      15  export const useUserStore = defineStore('user', () => {
+      16 +  // FIX5 第 18 项：localStorage 只保存 token，不保存明文用户资
+         +料                                                             
+      17    const token = ref<string>(storage.get<string>(TOKEN_STORAGE_K
+          EY) || '')
+      18 -  const info = ref<UserInfo | null>(storage.get<UserInfo>('app:
+         -user') || null)                                                
+      18 +  const info = ref<UserInfo | null>(null)                      
+      19  
+      20    const isLoggedIn = computed(() => !!token.value)
+      21    const role = computed<Role>(() => info.value?.role || 'guest'
+          )
+     ...
+      23    const isAuditor = computed(() => role.value === 'auditor' || 
+          role.value === 'admin')
+      24    const isWorker = computed(() => role.value === 'frontline')
+      25    const isGuest = computed(() => role.value === 'guest')
+      26 +  const isDefaultAdmin = computed(() => !!info.value?.isDefault
+         +Admin)                                                         
+      27  
+      27 -  const login = async (username: string, password: string, reme
+         -mber = false, roleHint?: Role) => {                            
+      28 -    const res = await authApi.login({ username, password, remem
+         -ber, role: roleHint })                                         
+      28 +  const login = async (username: string, password: string, _rem
+         +ember = false) => {                                            
+      29 +    const res = await authApi.login({ username, password })    
+      30      token.value = res.token
+      30 -    info.value = res.user                                      
+      31      storage.set(TOKEN_STORAGE_KEY, res.token)
+      32 -    storage.set('app:user', res.user)                          
+      32 +    // 用 token 拉取权威用户信息（含 isDefaultAdmin）          
+      33 +    await hydrate()                                            
+      34 +    if (!info.value) info.value = { ...res.user }              
+      35      return res
+      36    }
+      37  
+      36 -  /** 注册：成功后只保存账号回显，不自动登录（按 FIX2 要求注册 
+         -成功 → 跳回登录） */                                           
+      37 -  const register = async (username: string, password: string, _
+         -role?: Role) => {                                              
+      38 +  /** 注册：成功后不自动登录（跳回登录页） */                  
+      39 +  const register = async (username: string, password: string) =
+         +> {                                                            
+      40      return authApi.register({ username, password })
+      41    }
+      42  
+      43 +  /** 用已存的 token 回填当前用户（页面刷新后调用） */         
+      44 +  const hydrate = async () => {                                
+      45 +    if (!token.value) return                                   
+      46 +    try {                                                      
+      47 +      const me = await authApi.fetchMe()                       
+      48 +      info.value = { id: me.id, name: me.name, role: me.role, i
+         +sDefaultAdmin: me.isDefaultAdmin }                             
+      49 +    } catch {                                                  
+      50 +      // token 失效：清理（路由守卫会跳登录）                  
+      51 +      token.value = ''                                         
+      52 +      info.value = null                                        
+      53 +      storage.remove(TOKEN_STORAGE_KEY)                        
+      54 +    }                                                          
+      55 +  }                                                            
+      56 +                                                               
+      57    const logout = async () => {
+      58      try { await authApi.logout() } catch {}
+      59      token.value = ''
+      60      info.value = null
+      61      storage.remove(TOKEN_STORAGE_KEY)
+      46 -    storage.remove('app:user')                                 
+      47 -    // FIX3 第 3.4 项：清空本会话内存中的检索/历史缓存（不删别 
+         -的用户的本地数据）                                             
+      62      try {
+      63        const { useChatHistoryStore } = await import('@/stores/ch
+          atHistory')
+      64        useChatHistoryStore().reset()
+      65      } catch {}
+      66    }
+      67  
+      54 -  return { token, info, isLoggedIn, role, isAdmin, isAuditor, i
+         -sWorker, isGuest, login, register, logout }                    
+      68 +  return {                                                     
+      69 +    token, info, isLoggedIn, role, isAdmin, isAuditor, isWorker
+         +, isGuest, isDefaultAdmin,                                     
+      70 +    login, register, hydrate, logout                           
+      71 +  }                                                            
+      72  })
+● Now main.ts — hydrate the user on boot. Let me read it.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/main.ts)
+  ⎿  Added 4 lines
+      23  
+      24  app.mount('#app')
+      25  
+      26 +// 刷新后用已存的 token 回填当前用户信息（用户资料不再写 localS
+         +torage）                                                       
+      27 +import { useUserStore } from '@/stores/user'                   
+      28 +useUserStore().hydrate()                                       
+      29 +                                                               
+      30  // 启动屏移除
+      31  const splash = document.getElementById('splash')
+      32  if (splash) {
+
+  Thought for 12s (ctrl+o to expand)
+
+● Now rewrite the router with the new pages, role guards, and retiring the
+  mock-only case-audit page.
+
+● Write(src/router/index.ts)
+  ⎿  Added 25 lines, removed 17 lines
+       5  const routes: RouteRecordRaw[] = [
+       6    { path: '/login',     component: () => import('@/views/login/
+          index.vue'),     meta: { layout: 'blank', title: '登录' } },
+       7  
+       8 -  // 首页 = 多模态检索（FIX2 第 6 项）                         
+       8 +  // 首页 = 多模态检索                                         
+       9    { path: '/',          redirect: '/search' },
+      10  
+      11    // 检索
+      12    { path: '/search',    component: () => import('@/views/search
+          /index.vue'),    meta: { layout: 'app', title: '多模态检索' } }
+          ,
+      13    { path: '/search/:id',component: () => import('@/views/search
+          /Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
+      14  
+      15 -  // 历史详情（FIX3 第 2 项 —— 完整渲染原消息流）              
+      15 +  // 历史详情                                                  
+      16    { path: '/history/:id', component: () => import('@/views/hist
+          ory/Detail.vue'), meta: { layout: 'app', title: '历史详情' } },
+      17  
+      18    // 工单 / 作业指引
+      19    { path: '/workflow',  component: () => import('@/views/workfl
+          ow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
+      20    { path: '/workflow/:id', component: () => import('@/views/wor
+          kflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情
+          ' } },
+      21  
+      22 -  // 知识库                                                    
+      23 -  { path: '/knowledge/upload', component: () => import('@/views
+         -/knowledge/Upload.vue'), meta: { layout: 'app', title: '知识上 
+         -传' } },                                                       
+      22 +  // 知识库浏览（所有登录角色只读预览）                        
+      23 +  { path: '/knowledge/browse', component: () => import('@/views
+         +/knowledge/Browse.vue'), meta: { layout: 'app', title: '知识库'
+         + } },                                                          
+      24 +  // 员工经验分享上传                                          
+      25 +  { path: '/knowledge/upload', component: () => import('@/views
+         +/knowledge/Upload.vue'), meta: { layout: 'app', title: '经验分 
+         +享', roles: ['frontline'] } },                                 
+      26    { path: '/kb/preview/:docId', component: () => import('@/view
+          s/knowledge/Preview.vue'), meta: { layout: 'app', title: '文档
+          预览' } },
+      27  
+      26 -  // 管理员-知识库管理（FIX2 第 4 项）                         
+      27 -  { path: '/admin/knowledge', component: () => import('@/views/
+         -admin/KnowledgeAdmin.vue'),                                    
+      28 -    meta: { layout: 'app', title: '知识库管理', roles: ['admin'
+         -] } },                                                         
+      28 +  // 审查员：待审核列表                                        
+      29 +  { path: '/auditor/review', component: () => import('@/views/a
+         +udit/KnowledgeReview.vue'),                                    
+      30 +    meta: { layout: 'app', title: '待审核', roles: ['auditor', 
+         +'admin'] } },                                                  
+      31 +  // 审查员 / 管理员：知识库管理                               
+      32 +  { path: '/auditor/knowledge', component: () => import('@/view
+         +s/knowledge/KnowledgeManage.vue'),                             
+      33 +    meta: { layout: 'app', title: '知识库管理', roles: ['audito
+         +r', 'admin'] } },                                              
+      34 +  // 管理员知识库管理（兼容旧路径）                            
+      35 +  { path: '/admin/knowledge', redirect: '/auditor/knowledge' },
+      36  
+      30 -  // 案例审核                                                  
+      31 -  { path: '/audit',     component: () => import('@/views/audit/
+         -index.vue'),     meta: { layout: 'app', title: '案例审核', role
+         -s: ['auditor', 'admin'] } },                                   
+      32 -                                                               
+      33 -  // 知识审查（FIX3 第 7 项）—— 上传文档审批                   
+      34 -  { path: '/audit/knowledge', component: () => import('@/views/
+         -audit/KnowledgeReview.vue'),                                   
+      35 -    meta: { layout: 'app', title: '知识审查', roles: ['auditor'
+         -, 'admin'] } },                                                
+      36 -                                                               
+      37    // 知识图谱
+      38    { path: '/kg',        component: () => import('@/views/kg/ind
+          ex.vue'),        meta: { layout: 'app', title: '知识图谱' } },
+      39  
+     ...
+      41    { path: '/history',   component: () => import('@/views/histor
+          y/index.vue'),   meta: { layout: 'app', title: '历史与收藏' } }
+          ,
+      42    { path: '/profile',   component: () => import('@/views/profil
+          e/index.vue'),   meta: { layout: 'app', title: '用户中心' } },
+      43  
+      44 -  // 工作台已下线（FIX3 第 1 项）—— 一律 301 到首页            
+      44 +  // 旧入口重定向                                              
+      45    { path: '/workspace', redirect: '/search' },
+      46    { path: '/dashboard', redirect: '/search' },
+      47 +  { path: '/audit',     redirect: '/auditor/review' },         
+      48 +  { path: '/audit/knowledge', redirect: '/auditor/review' },   
+      49  
+      48 -  // 系统管理                                                  
+      50 +  // 系统管理（用户管理）                                      
+      51 +  { path: '/admin/user', component: () => import('@/views/admin
+         +/index.vue'), meta: { layout: 'app', title: '用户管理', roles: 
+         +['admin'] } },                                                 
+      52    { path: '/admin/:sub?', component: () => import('@/views/admi
+          n/index.vue'),   meta: { layout: 'app', title: '系统管理', role
+          s: ['admin'], mobileReadonly: true } },
+      53  
+      54    { path: '/:pathMatch(.*)*', redirect: '/search' }
+     ...
+      60    scrollBehavior: () => ({ top: 0 })
+      61  })
+      62  
+      60 -router.beforeEach((to, _from, next) => {                       
+      63 +router.beforeEach(async (to, _from, next) => {                 
+      64    const u = useUserStore()
+      65    document.title = `${to.meta?.title || ''} · 设备检修知识检索
+          系统`
+      66  
+      67    if (to.path !== '/login' && !u.isLoggedIn) {
+      68      return next('/login')
+      69    }
+      70 +  // 已登录但用户信息尚未回填（刷新后），先 hydrate 以便角色守 
+         +卫生效                                                         
+      71 +  if (u.isLoggedIn && !u.info) {                               
+      72 +    await u.hydrate()                                          
+      73 +    if (!u.isLoggedIn) return next('/login')                   
+      74 +  }                                                            
+      75    // 角色守卫
+      76    const allowed = (to.meta?.roles as string[]) || []
+      77    if (allowed.length && !allowed.includes(u.role)) {
+
+  Thought for 12s (ctrl+o to expand)
+
+● Now I'll retire the mock-only case-audit page and its mock APIs (no backend
+  exists for them; KnowledgeReview replaces it).
+
+● Bash(rm -f src/api/audit.ts src/api/knowledge.ts src/views/audit/index.vue
+      src/views/audit/Pc.vue src/views/audit/Mobile.vue && echo "removed" && ls
+      src/views/audit)
+  ⎿  removed
+     KnowledgeReview.vue
+
+  Thought for 19s (ctrl+o to expand)
+
+● Let me check available libs and read key reference files (markdown util,
+  EmptyState, KnowledgeAdmin for reuse, Upload, profile) before creating new
+  views.
+
+● Bash(echo "=== deps ===" && node -e "const p=require('./package.json');console
+      .log(JSON.stringify({...p.dependencies,...p.devDependencies},null,0))" &&
+      echo "=== dom…)
+  ⎿  === deps ===
+     {
+       "axios": "^1.6.7",
+     … +21 lines (ctrl+o to expand)
+
+  Thought for 1m 54s (ctrl+o to expand)
+
+● dompurify isn't installed and markdown-it already runs with html:false (raw
+  HTML disabled) — I'll add DOMPurify as a hardening pass during the security
+  step.
+
+  The remaining work is a large set of view rewrites across disjoint files. I'll
+  parallelize them across subagents with the exact new API contracts, then do
+  the cross-cutting cleanup/security myself and run the final typecheck.
+  Launching four agents on non-overlapping file sets:
+
+● 2 agents finished (ctrl+o to expand)
+   ├ Rewrite account/permission views · 56 tool uses · 0 tokens
+   │ ⎿  Done
+   └ Build knowledge/doc views · 30 tool uses · 0 tokens
+     ⎿  Done
+
+● API Error: Request rejected (429) · You have exceeded the 5-hour usage
+  quota. It will reset at 2026-06-21 20:09:11 +0800 CST. We recommend 
+  upgrading your plan for more quota, or waiting for the reset. Request 
+  id: 021782029328676ffa263910bfaab0198f27d0234753c49266d56
+
+✻ Churned for 45m 25s

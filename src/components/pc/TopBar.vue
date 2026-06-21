@@ -8,6 +8,7 @@ import {
 import { useUserStore } from '@/stores/user'
 import { useUiStore } from '@/stores/ui'
 import { useTheme } from '@/composables/useTheme'
+import { ROLE_LABEL } from '@/utils/permission'
 
 const router = useRouter()
 const user = useUserStore()
@@ -150,7 +151,7 @@ const toggleUser = () => {
                class="absolute right-0 top-full mt-2 w-56 industrial-card text-text shadow-float overflow-hidden">
             <div class="p-3 border-b border-border">
               <div class="font-semibold">{{ user.info?.name }}</div>
-              <div class="text-xs text-text-2 mt-0.5">{{ user.info?.workshop }}</div>
+              <div class="text-xs text-text-2 mt-0.5">{{ ROLE_LABEL[user.role] }}</div>
             </div>
             <button @click="router.push('/profile'); showUser = false"
                     class="w-full text-left px-3 h-10 hover:bg-bg flex items-center gap-2 text-sm">
