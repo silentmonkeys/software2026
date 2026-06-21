@@ -47,10 +47,6 @@ const toggleUser = () => {
         <svg viewBox="0 0 24 24" class="w-5 h-5 text-white"><path fill="currentColor" d="M12 4l8 4.5v7L12 20l-8-4.5v-7L12 4zm0 2.3L6 9.7v4.6l6 3.4l6-3.4V9.7L12 6.3z"/></svg>
       </div>
       <div class="font-semibold tracking-wide">检修助手</div>
-      <span class="xinchuang-badge !bg-white/10 !border-white/30">
-        <span class="dot"></span>
-        LoongArch | 银河麒麟
-      </span>
     </div>
 
     <!-- 全局搜索 / ⌘K 触发 -->

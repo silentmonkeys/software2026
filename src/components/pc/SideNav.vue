@@ -50,7 +50,7 @@ const isActive = (p: string) => route.path === p || route.path.startsWith(p + '/
       </button>
     </nav>
 
-    <!-- 底部信创信息卡 -->
+    <!-- 底部 AI 引擎状态卡 -->
     <div class="p-3 border-t border-border">
       <div class="bg-gradient-to-br from-primary to-primary-2 text-on-dark p-3 rounded-card text-xs">
         <div class="flex items-center gap-1 font-semibold mb-1">
