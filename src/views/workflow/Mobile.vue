@@ -253,35 +253,48 @@ const openManual = (m: ManualRef) => {
             </div>
             <div v-if="s.desc" class="md-body text-sm" v-html="renderMarkdown(s.desc)"></div>
 
-            <!-- FIX4 第 2 项 · 子步骤（按顺序勾选） -->
+            <!-- FIX6-resume F1：子步骤——按钮放大、点击区分明 -->
             <div v-if="s.subSteps?.length" class="pt-2 border-t border-border">
-              <div class="text-[11px] font-semibold mb-1.5 flex items-center gap-1">
+              <div class="text-[11px] font-semibold mb-2 flex items-center gap-1">
                 <ListChecks class="w-3 h-3 text-accent" />
                 子步骤（顺序完成）
+                <span class="ml-auto mono text-text-2">
+                  {{ subProgress(s.id)?.done ?? 0 }} / {{ s.subSteps.length }}
+                </span>
               </div>
-              <ol class="space-y-1.5">
+              <ol class="space-y-2">
                 <li v-for="(ss, si) in s.subSteps" :key="ss.id">
-                  <label class="flex items-start gap-2 px-2 py-1.5 rounded-btn border text-sm"
-                         :class="[
-                           wf.subDone[s.id]?.[ss.id]
-                             ? 'border-success/30 bg-success/5'
-                             : (wf.canCheckSub(i, si)
-                                 ? 'border-border active:bg-bg cursor-pointer'
-                                 : 'border-border bg-bg/40 opacity-60')
-                         ]">
-                    <input type="checkbox"
-                           :checked="!!wf.subDone[s.id]?.[ss.id]"
-                           @change="onToggleSub(i, si)"
-                           :disabled="isDemo || (!wf.canCheckSub(i, si) && !wf.subDone[s.id]?.[ss.id])"
-                           class="w-4 h-4 mt-0.5 accent-success flex-shrink-0" />
-                    <span class="mono text-[10px] text-text-2 mt-0.5">{{ i + 1 }}.{{ si + 1 }}</span>
-                    <span class="flex-1 leading-snug"
-                          :class="wf.subDone[s.id]?.[ss.id] ? 'text-text-2 line-through' : ''">
+                  <div class="flex items-stretch gap-2 rounded-card border-2 overflow-hidden"
+                       :class="[
+                         wf.subDone[s.id]?.[ss.id]
+                           ? 'border-success/40 bg-success/5'
+                           : (wf.canCheckSub(i, si)
+                               ? 'border-border bg-card'
+                               : 'border-border bg-bg/40 opacity-60')
+                       ]">
+                    <div class="w-10 flex-shrink-0 flex items-center justify-center font-bold mono text-sm"
+                         :class="wf.subDone[s.id]?.[ss.id]
+                                  ? 'bg-success/10 text-success'
+                                  : (wf.canCheckSub(i, si) ? 'bg-accent/10 text-accent' : 'bg-bg text-text-2')">
+                      {{ i + 1 }}.{{ si + 1 }}
+                    </div>
+                    <div class="flex-1 min-w-0 py-2.5 pr-2 text-sm leading-snug self-center"
+                         :class="wf.subDone[s.id]?.[ss.id] ? 'text-text-2 line-through' : ''">
                       {{ ss.content }}
-                    </span>
-                    <Lock v-if="!wf.canCheckSub(i, si) && !wf.subDone[s.id]?.[ss.id]"
-                          class="w-3 h-3 text-text-2 mt-1 flex-shrink-0" />
-                  </label>
+                    </div>
+                    <button
+                      @click="onToggleSub(i, si)"
+                      :disabled="isDemo || (!wf.canCheckSub(i, si) && !wf.subDone[s.id]?.[ss.id])"
+                      class="flex-shrink-0 w-20 flex flex-col items-center justify-center gap-0.5 text-xs font-semibold border-l disabled:opacity-40"
+                      :class="wf.subDone[s.id]?.[ss.id]
+                                ? 'bg-success/10 text-success border-success/30'
+                                : 'bg-accent text-white border-accent active:bg-accent-2'">
+                      <Check v-if="wf.subDone[s.id]?.[ss.id]" class="w-4 h-4" />
+                      <Lock v-else-if="!wf.canCheckSub(i, si)" class="w-4 h-4" />
+                      <span v-else class="w-4 h-4 rounded-full border-2 border-current"></span>
+                      <span>{{ wf.subDone[s.id]?.[ss.id] ? '已完成' : (wf.canCheckSub(i, si) ? '完成' : '未解锁') }}</span>
+                    </button>
+                  </div>
                 </li>
               </ol>
             </div>
@@ -377,5 +390,5 @@ const openManual = (m: ManualRef) => {
   </div>
   <div v-else class="p-12 text-center text-text-2">流程加载中…</div>
 
-  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" @close="showTimeline = false" />
+  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" :steps="wf.flow?.steps" @close="showTimeline = false" />
 </template>

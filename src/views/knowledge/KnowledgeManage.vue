@@ -20,7 +20,7 @@ import {
   ShieldCheck, AlertTriangle, FileType2, ArrowDown, Edit3, Send, Sparkles, Download, Share2
 } from 'lucide-vue-next'
 import {
-  listDocs, uploadDoc, uploadText, deleteDoc, reviewDoc, getDoc, exportDoc,
+  listDocs, uploadDoc, uploadText, deleteDoc, reviewDoc, getDoc, exportDoc, updateDoc,
   type KbDoc, type ReviewAction, STATUS_LABEL
 } from '@/api/kb'
 import { multimodalSearch } from '@/api/search'
@@ -248,6 +248,48 @@ const doExport = async (d: KbDoc, format: 'pdf' | 'md') => {
   }
 }
 
+/* ---------- FIX6 第 6 项：编辑文档（包括 AI 自动入库的） ---------- */
+const showEdit = ref(false)
+const editDoc = ref<KbDoc | null>(null)
+const editTitle = ref('')
+const editContent = ref('')
+const editCategory = ref('')
+const editSubmitting = ref(false)
+
+const openEdit = async (d: KbDoc) => {
+  editDoc.value = d
+  editTitle.value = d.title
+  editCategory.value = d.category || 'manual'
+  editContent.value = ''
+  showEdit.value = true
+  try {
+    const det = await getDoc(d.id)
+    editContent.value = det.content || ''
+  } catch {
+    showFailToast('加载文档内容失败')
+  }
+}
+
+const submitEdit = async () => {
+  if (!editDoc.value) return
+  if (!editTitle.value.trim()) { showFailToast('标题不能为空'); return }
+  editSubmitting.value = true
+  try {
+    await updateDoc(editDoc.value.id, {
+      title: editTitle.value.trim(),
+      content: editContent.value,
+      category: editCategory.value
+    })
+    showToast({ type: 'success', message: '已保存' })
+    showEdit.value = false
+    await refresh()
+  } catch {
+    showFailToast('保存失败')
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 /* ---------- AI 辅助分析 ---------- */
 const analyzeDoc = async (d: KbDoc) => {
   aiDoc.value = d
@@ -447,6 +489,10 @@ const isApproved = (s: string) => s === 'approved' || s === 'ready'
                         title="AI 辅助分析" @click="analyzeDoc(d)">
                   <Sparkles class="w-4 h-4" />
                 </button>
+                <button class="w-8 h-8 rounded hover:bg-accent/10 flex items-center justify-center text-text-2 hover:text-accent"
+                        title="编辑文档" @click="openEdit(d)">
+                  <Edit3 class="w-4 h-4" />
+                </button>
                 <button class="w-8 h-8 rounded hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent disabled:opacity-50"
                         title="导出 PDF" :disabled="exportingId === d.id" @click="doExport(d, 'pdf')">
                   <Loader v-if="exportingId === d.id" class="w-4 h-4 animate-spin" />
@@ -539,6 +585,9 @@ const isApproved = (s: string) => s === 'approved' || s === 'ready'
         <div class="mt-2 flex flex-wrap gap-1.5">
           <button class="h-7 px-2.5 rounded-btn border border-border text-ai text-xs flex items-center gap-1" @click="analyzeDoc(d)">
             <Sparkles class="w-3.5 h-3.5" /> AI 分析
+          </button>
+          <button class="h-7 px-2.5 rounded-btn border border-border text-accent text-xs flex items-center gap-1" @click="openEdit(d)">
+            <Edit3 class="w-3.5 h-3.5" /> 编辑
           </button>
           <button class="h-7 px-2.5 rounded-btn border border-border text-text-2 text-xs flex items-center gap-1 disabled:opacity-50"
                   :disabled="exportingId === d.id" @click="doExport(d, 'pdf')">
@@ -633,6 +682,47 @@ const isApproved = (s: string) => s === 'approved' || s === 'ready'
         </div>
         <div v-else class="md-body" v-html="renderMarkdown(aiResult)"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ==================== FIX6 第 6 项：编辑文档对话框 ==================== -->
+  <div v-if="showEdit" class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4"
+       @click.self="!editSubmitting && (showEdit = false)">
+    <div class="industrial-card w-full max-w-2xl bg-card overflow-hidden flex flex-col" style="max-height: 88vh;">
+      <header class="px-5 py-3 border-b border-border flex items-center gap-2">
+        <Edit3 class="w-4 h-4 text-accent" />
+        <span class="font-semibold flex-1 truncate">编辑文档 · {{ editDoc?.title }}</span>
+        <button class="text-text-2 hover:text-danger" :disabled="editSubmitting" @click="showEdit = false">
+          <X class="w-4 h-4" />
+        </button>
+      </header>
+      <div class="p-5 space-y-3 overflow-auto">
+        <div>
+          <div class="text-sm text-text-2 mb-1">标题</div>
+          <input v-model="editTitle" :disabled="editSubmitting"
+                 class="w-full h-10 px-3 rounded-btn border border-border bg-bg outline-none focus:border-accent" />
+        </div>
+        <div>
+          <div class="text-sm text-text-2 mb-1">分类</div>
+          <input v-model="editCategory" :disabled="editSubmitting"
+                 class="w-full h-10 px-3 rounded-btn border border-border bg-bg outline-none focus:border-accent" />
+        </div>
+        <div>
+          <div class="text-sm text-text-2 mb-1">正文（Markdown）</div>
+          <textarea v-model="editContent" rows="14" :disabled="editSubmitting"
+                    class="w-full px-3 py-2 rounded-btn border border-border bg-bg outline-none focus:border-accent text-sm leading-relaxed"></textarea>
+          <div class="text-[11px] text-text-2 mt-1">保存后将自动重建向量索引（仅对已通过文档生效）</div>
+        </div>
+      </div>
+      <footer class="px-5 py-3 border-t border-border flex justify-end gap-2">
+        <button class="h-9 px-4 rounded-btn border border-border" :disabled="editSubmitting" @click="showEdit = false">取消</button>
+        <button class="h-9 px-5 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
+                :disabled="editSubmitting" @click="submitEdit">
+          <Loader v-if="editSubmitting" class="w-4 h-4 animate-spin" />
+          <Check v-else class="w-4 h-4" />
+          {{ editSubmitting ? '保存中…' : '保存' }}
+        </button>
+      </footer>
     </div>
   </div>
 </template>

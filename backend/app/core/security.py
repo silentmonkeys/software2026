@@ -19,10 +19,12 @@ def verify_password(p: str, hashed: str) -> bool:
     return bcrypt.checkpw(p.encode("utf-8"), hashed.encode("utf-8"))
 
 
-def create_token(sub: str, role: str) -> str:
+def create_token(sub: str, role: str, token_version: int = 1) -> str:
+    """FIX6 第 10 项：payload 中嵌入 token_version，配合 User.token_version 实现单点登录。"""
     payload = {
         "sub": sub,
         "role": role,
+        "tv": token_version,
         "exp": datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRE_MIN),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
@@ -46,6 +48,14 @@ def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(sec
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise HTTPException(401, "用户不存在")
+    # FIX6 第 10 项：单点登录 —— 校验 token_version 与当前用户记录是否一致
+    token_tv = payload.get("tv")
+    current_tv = getattr(user, "token_version", 1) or 1
+    # 兼容旧 token（无 tv 字段）：视作版本 1
+    if token_tv is None:
+        token_tv = 1
+    if int(token_tv) != int(current_tv):
+        raise HTTPException(401, "账号已在其他设备登录，请重新登录")
     return user
 
 

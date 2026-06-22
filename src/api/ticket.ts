@@ -58,7 +58,14 @@ export interface TicketListResult {
 /** 时间线事件 */
 export interface TicketEvent {
   type: 'created' | 'added' | 'step_completed' | 'completed' | 'deleted' | string
-  detail?: { stepId?: string; reason?: string } | null
+  // FIX6 第 4 项：扩展事件 detail 字段，覆盖后端 _add_event 的所有附加信息
+  detail?: {
+    stepId?: string
+    stepIndex?: number | null
+    reason?: string
+    from?: string
+    [k: string]: any
+  } | null
   at: string | null
 }
 export interface TimelineResult {

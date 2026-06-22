@@ -10,6 +10,8 @@ from app.core.db import engine
 _ADD_COLUMNS = {
     "users": {
         "is_default_admin": "BOOLEAN DEFAULT 0",
+        # FIX6 第 10 项：单点登录会话版本号
+        "token_version": "INTEGER DEFAULT 1",
     },
     "documents": {
         "category": "VARCHAR(32) DEFAULT 'manual'",
@@ -17,6 +19,8 @@ _ADD_COLUMNS = {
         "review_reason": "TEXT",
         "reviewer_id": "INTEGER",
         "reviewed_at": "DATETIME",
+        # FIX6 第 5 项：经验分享附件关联主条目
+        "parent_id": "INTEGER",
     },
     "tickets": {
         "creator_id": "INTEGER",

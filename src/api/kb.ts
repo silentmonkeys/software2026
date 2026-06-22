@@ -23,6 +23,8 @@ export interface KbDoc {
   uploaderId?: number
   uploader?: string
   reason?: string
+  // FIX6 第 5 项：主条目下挂的附件子文档（仅主条目存在该字段）
+  attachments?: KbDoc[]
 }
 
 export interface KbDocDetail extends KbDoc {
@@ -35,10 +37,13 @@ export interface KbUploadResult {
   status?: KbStatus
 }
 
-/** 上传文件：员工 → pending；管理员/审查员 → approved（后端按 JWT 角色判定） */
-export const uploadDoc = (file: File): Promise<KbUploadResult> => {
+/** FIX6 第 5 项：上传文件时可指定 parent_id 关联到主条目 */
+export const uploadDoc = (file: File, parentId?: number): Promise<KbUploadResult> => {
   const form = new FormData()
   form.append('file', file)
+  if (parentId !== undefined) {
+    form.append('parent_id', String(parentId))
+  }
   return rawCall<KbUploadResult>(() =>
     request.post<KbUploadResult>('/kb/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -50,6 +55,31 @@ export const uploadDoc = (file: File): Promise<KbUploadResult> => {
 /** 文本知识 / 员工经验分享录入 */
 export const uploadText = (body: { title: string; content: string; category?: string }) =>
   rawCall<KbUploadResult>(() => request.post<KbUploadResult>('/kb/text', body))
+
+/**
+ * FIX6-resume O3：经验 + 附件原子提交
+ * 一次 multipart 请求，后端事务内建 parent + children；附件失败整体回滚。
+ */
+export interface KbTextWithFilesResult extends KbUploadResult {
+  attachments: { id: number; title: string }[]
+  attachment_chunks: number
+}
+export const uploadTextWithFiles = (
+  body: { title: string; content: string; category?: string },
+  files: File[]
+): Promise<KbTextWithFilesResult> => {
+  const form = new FormData()
+  form.append('title', body.title)
+  form.append('content', body.content)
+  if (body.category) form.append('category', body.category)
+  for (const f of files) form.append('files', f)
+  return rawCall<KbTextWithFilesResult>(() =>
+    request.post<KbTextWithFilesResult>('/kb/text-with-files', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 180_000
+    })
+  )
+}
 
 /** 文档列表 */
 export const listDocs = (params?: {
@@ -65,6 +95,21 @@ export const getDoc = (id: number) =>
 /** 删除文档（hard delete，仅 admin/auditor） */
 export const deleteDoc = (id: number) =>
   rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }>(`/kb/${id}`))
+
+/** FIX6 第 2 项：以 Blob URL 形式预览原始文件（PDF 等二进制）。调用方负责 URL.revokeObjectURL */
+export const fetchDocBlobUrl = async (id: number): Promise<string> => {
+  const res = await request.get(`/kb/${id}/download`, { responseType: 'blob' })
+  const blob = res.data as Blob
+  return URL.createObjectURL(blob)
+}
+
+/** FIX6 第 6 项：审查员 / 管理员编辑文档 */
+export const updateDoc = (
+  id: number,
+  body: { title?: string; content?: string; category?: string; status?: string }
+) => rawCall<{ ok: boolean; id: number; status: string }>(() =>
+  request.put<{ ok: boolean; id: number; status: string }>(`/kb/${id}`, body)
+)
 
 export type ReviewAction = 'approve' | 'reject' | 'take_down'
 

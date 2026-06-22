@@ -1,5 +1,5 @@
 """
-知识图谱 API（FIX4 第 3 项）
+知识图谱 API（FIX4 第 3 项 / FIX6 第 6 项 / FIX6 第 8 项）
 
 约束：
 - 图谱必须基于已审核（status=ready/approved）的真实文档构建，禁止 mock。
@@ -7,17 +7,21 @@
 - 实体抽取使用 **关键字+正则** 的轻量启发式（设备 / 部件 / 故障 / 维修方法），
   在演示环境无 LLM 调用成本，且可控。
 - 边由"同一切片内共现"自动生成；同一关系对会按出现次数累计权重，超过阈值才落入图。
+- FIX6 第 6 项：审查员 / 管理员可以对节点 label/desc 做修正、删除节点或边；
+  改动持久化在 kg_overrides 表，在每次构图后叠加。
+- FIX6 第 8 项：节点回填 source_docs（来源文档列表）+ 支持按文档筛选。
 """
 
 from __future__ import annotations
 import re
-from typing import Iterable
+from typing import Iterable, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import get_current_user
-from app.models import Document
+from app.core.security import get_current_user, require_auditor
+from app.models import Document, KGOverride, User
 from app.services.rag import _col  # 直接复用 Chroma 集合
 
 router = APIRouter(tags=["kg"])
@@ -127,16 +131,41 @@ def _approved_doc_ids(db: Session, requested: list[int]) -> list[int]:
     return out
 
 
+def _load_overrides(db: Session):
+    """加载所有图谱编辑覆盖：返回 {target_id: {op, payload}} 和 deleted_target_ids 集合。"""
+    rows = db.query(KGOverride).all()
+    node_updates: dict[str, dict] = {}
+    deleted_nodes: set[str] = set()
+    edge_updates: dict[str, dict] = {}
+    deleted_edges: set[tuple[str, str]] = set()
+    for r in rows:
+        if r.kind == "node":
+            if r.op == "delete":
+                deleted_nodes.add(r.target_id)
+            elif r.op == "update" and r.payload:
+                node_updates[r.target_id] = r.payload
+        elif r.kind == "edge":
+            if r.op == "delete":
+                a, b = r.target_id.split("|", 1)
+                deleted_edges.add((a, b))
+            elif r.op == "update" and r.payload:
+                edge_updates[r.target_id] = r.payload
+    return node_updates, deleted_nodes, edge_updates, deleted_edges
+
+
 @router.get("/api/kg/graph")
 def get_graph(
     doc_ids: str = Query("", description="逗号分隔的已审 doc_id 列表"),
+    filter_doc_id: Optional[int] = Query(None, description="FIX6 第 8 项：按文档筛选"),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
     """
-    GET /api/kg/graph?doc_ids=1,2,3
+    GET /api/kg/graph?doc_ids=1,2,3&filter_doc_id=5
     返回基于已审文档的 { nodes, edges }。
     无文档 / 无实体时返回空图。
+    FIX6 第 8 项：节点回填 source_docs（来源文档列表）。
+    FIX6 第 6 项：叠加人工编辑覆盖层。
     """
     raw_ids: list[int] = []
     for s in (doc_ids or "").split(","):
@@ -154,20 +183,21 @@ def get_graph(
     if not valid_ids:
         return {"nodes": [], "edges": []}
 
+    node_overrides, deleted_nodes, edge_overrides, deleted_edges = _load_overrides(db)
+
     # node_id 用 "{cat}:{label}"，保证跨文档同名实体合并
-    node_meta: dict[str, dict] = {}        # node_id -> { label, type, docId, chunkId, weight }
+    node_meta: dict[str, dict] = {}        # node_id -> { label, type, docId, chunkId, weight, sourceDocIds }
     pair_count: dict[tuple[str, str], dict] = {}  # (a,b) -> { rel, weight }
 
     for did in valid_ids:
         chunks = _query_doc_chunks(did)
         for ch in chunks:
             ents_by_cat = _extract_entities(ch["content"])
-            # 把本切片所有实体扁平为 (cat, label)
             flat: list[tuple[str, str]] = []
             for cat, names in ents_by_cat.items():
                 for n in names:
                     flat.append((cat, n))
-            # 注册节点（首次出现时记录 docId/chunkId 供前端跳转）
+            # 注册节点 + 跟踪 source_doc_ids
             for cat, name in flat:
                 nid = f"{cat}:{name}"
                 if nid not in node_meta:
@@ -178,10 +208,12 @@ def get_graph(
                         "docId": str(did),
                         "chunkId": ch["id"],
                         "weight": 1,
+                        "sourceDocIds": {did},
                     }
                 else:
                     node_meta[nid]["weight"] += 1
-            # 共现成边（同切片内两两组合，去自环）
+                    node_meta[nid]["sourceDocIds"].add(did)
+            # 共现成边
             seen_pair: set[tuple[str, str]] = set()
             for i in range(len(flat)):
                 for j in range(i + 1, len(flat)):
@@ -191,7 +223,7 @@ def get_graph(
                         continue
                     key = (a, b) if a < b else (b, a)
                     if key in seen_pair:
-                        continue  # 同切片内同对仅算一次
+                        continue
                     seen_pair.add(key)
                     rec = pair_count.setdefault(key, {
                         "rel": _rel_label(flat[i][0], flat[j][0]),
@@ -199,8 +231,19 @@ def get_graph(
                     })
                     rec["weight"] += 1
 
+    # 应用人工编辑覆盖（FIX6 第 6 项）
+    for nid, p in node_overrides.items():
+        if nid in node_meta:
+            if "label" in p:
+                node_meta[nid]["label"] = p["label"]
+            if "desc" in p:
+                node_meta[nid]["desc"] = p["desc"]
+
     # 节点裁剪 + 排序
-    nodes = sorted(node_meta.values(), key=lambda x: -x["weight"])[:_MAX_NODES]
+    nodes = sorted(
+        [n for n in node_meta.values() if n["id"] not in deleted_nodes],
+        key=lambda x: -x["weight"]
+    )[:_MAX_NODES]
     keep_ids = {n["id"] for n in nodes}
 
     edges = []
@@ -209,14 +252,119 @@ def get_graph(
             continue
         if a not in keep_ids or b not in keep_ids:
             continue
+        if (a, b) in deleted_edges or (b, a) in deleted_edges:
+            continue
+        edge_key = f"{a}|{b}" if a < b else f"{b}|{a}"
+        rel = rec["rel"]
+        if edge_key in edge_overrides and "rel" in edge_overrides[edge_key]:
+            rel = edge_overrides[edge_key]["rel"]
         edges.append({
             "source": a,
             "target": b,
-            "rel": rec["rel"],
+            "rel": rel,
             "weight": rec["weight"],
         })
 
+    # FIX6 第 8 项：按文档筛选
+    if filter_doc_id is not None:
+        keep_ids = {n["id"] for n in nodes if filter_doc_id in n.get("sourceDocIds", set())}
+        nodes = [n for n in nodes if n["id"] in keep_ids]
+        edges = [e for e in edges if e["source"] in keep_ids and e["target"] in keep_ids]
+
+    # FIX6 第 8 项：构建 source_docs 列表
+    all_doc_ids = set()
+    for n in nodes:
+        all_doc_ids.update(n.get("sourceDocIds", set()))
+    if all_doc_ids:
+        doc_map = {}
+        for d in db.query(Document).filter(Document.id.in_(list(all_doc_ids))).all():
+            doc_map[d.id] = {"id": d.id, "title": d.title, "doc_type": d.type or "unknown"}
+        for n in nodes:
+            n["source_docs"] = [doc_map[did] for did in sorted(n.get("sourceDocIds", set())) if did in doc_map]
+            # 移除内部集合，不暴露给前端
+            n.pop("sourceDocIds", None)
+
     return {"nodes": nodes, "edges": edges}
+
+
+# ==================== FIX6 第 6 项：图谱节点/边人工编辑端点 ====================
+
+class NodeUpdateIn(BaseModel):
+    label: Optional[str] = None
+    desc: Optional[str] = None
+
+
+class EdgeUpdateIn(BaseModel):
+    rel: Optional[str] = None
+
+
+@router.put("/api/kg/node/{node_id}")
+def update_node(node_id: str, body: NodeUpdateIn, db: Session = Depends(get_db),
+                user: User = Depends(require_auditor)):
+    """修改节点 label / 描述。只存储覆盖层，不修改原始 chunk。"""
+    payload = {}
+    if body.label is not None:
+        payload["label"] = body.label.strip()
+    if body.desc is not None:
+        payload["desc"] = body.desc.strip()
+    if not payload:
+        raise HTTPException(400, "至少提供 label 或 desc")
+    # Upsert
+    existing = db.query(KGOverride).filter(
+        KGOverride.kind == "node", KGOverride.target_id == node_id, KGOverride.op == "update"
+    ).first()
+    if existing:
+        existing.payload = {**existing.payload, **payload} if existing.payload else payload
+        existing.operator_id = user.id
+    else:
+        db.add(KGOverride(kind="node", target_id=node_id, op="update", payload=payload, operator_id=user.id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/kg/node/{node_id}")
+def delete_node(node_id: str, db: Session = Depends(get_db),
+                user: User = Depends(require_auditor)):
+    """标记删除节点（从图谱中移除，原始 chunk 不受影响）。"""
+    existing = db.query(KGOverride).filter(
+        KGOverride.kind == "node", KGOverride.target_id == node_id, KGOverride.op == "delete"
+    ).first()
+    if not existing:
+        db.add(KGOverride(kind="node", target_id=node_id, op="delete", payload=None, operator_id=user.id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/api/kg/edge/{edge_id}")
+def update_edge(edge_id: str, body: EdgeUpdateIn, db: Session = Depends(get_db),
+                user: User = Depends(require_auditor)):
+    """修改边的关系名。"""
+    if not (body.rel or "").strip():
+        raise HTTPException(400, "rel 不能为空")
+    existing = db.query(KGOverride).filter(
+        KGOverride.kind == "edge", KGOverride.target_id == edge_id, KGOverride.op == "update"
+    ).first()
+    if existing:
+        existing.payload = {"rel": body.rel.strip()}
+        existing.operator_id = user.id
+    else:
+        db.add(KGOverride(kind="edge", target_id=edge_id, op="update",
+                         payload={"rel": body.rel.strip()}, operator_id=user.id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/kg/edge/{edge_id}")
+def delete_edge(edge_id: str, db: Session = Depends(get_db),
+                user: User = Depends(require_auditor)):
+    """标记删除边。"""
+    existing = db.query(KGOverride).filter(
+        KGOverride.kind == "edge", KGOverride.target_id == edge_id, KGOverride.op == "delete"
+    ).first()
+    if not existing:
+        db.add(KGOverride(kind="edge", target_id=edge_id, op="delete", payload=None, operator_id=user.id))
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/api/kb/{doc_id}/chunk/{chunk_id}")

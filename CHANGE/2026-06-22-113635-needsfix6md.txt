@@ -1,0 +1,2936 @@
+ ▐▛███▜▌   Claude Code v2.1.185
+▝▜█████▛▘  glm-5.2 · API Usage Billing
+  ▘▘ ▝▝    ~/Documents/software2026
+
+
+❯ @NEEDS/FIX6.md 根据问题描述，修复程序                                         
+  ⎿  Read NEEDS/FIX6.md (497 lines)
+
+  Thought for 3s (ctrl+o to expand)
+
+● I'll start by exploring the codebase to understand the current structure, then
+  work through all 11 issues in FIX6.md systematically
+
+  Thought for 8s (ctrl+o to expand)
+
+  Thought for 25s, read 3 files, listed 7 directories (ctrl+o to expand)
+
+● Let me explore all the key files to understand the codebase:
+
+  Thought for 6s, read 13 files (ctrl+o to expand)
+
+● Good, I now have a comprehensive understanding of the codebase. Let me start
+  working through all 11 fixes. I'll tackle them systematically.
+
+  Item 1: Fix frontline worker access to knowledge browse page
+
+  Let me check the current state of permissions:
+
+  Looking at the code:
+  - /knowledge/browse in router has no roles restriction — it's public to all
+  logged-in users ✓
+  - /knowledge/upload has roles: ['frontline'] — correct per FIX6
+  - /kb/preview/:docId has no roles restriction ✓
+
+  The issue states MENU_ITEMS may be missing frontline on the /knowledge/browse
+  entry. Currently /knowledge/browse in MENU_ITEMS has no roles property, making
+  it public — so it should be visible to everyone.
+
+  Wait, the problem says "菜单项不可见或路由被拦截" — but looking at
+  /knowledge/browse in the menu, it has no roles restriction, meaning it should
+  be visible to all. And the router also has no roles restriction.
+
+  Let me re-read the FIX6 item 1 more carefully. It says the MENU_ITEMS or
+  router might have omitted 'frontline'. But looking at the current code,
+  neither has role restrictions. This might already be correct.
+
+  Actually, wait — let me look more carefully. The MENU_ITEMS entry for
+  /knowledge/browse on line 27 has no roles array, meaning it's visible to all
+  by default. The route for /knowledge/browse on line 23 also has no roles
+  restriction. So this should work.
+
+  But the FIX says the entry's roles array "可能遗漏了 frontline" — maybe the
+  user hasn't updated the code from the problem state yet? Let me check if
+  there's something else going on.
+
+  Actually, looking at this from a different angle — the FIX6.md is the
+  instructions for what to fix, not necessarily matching the current code. The
+  current code might already have some fixes applied. But the user said
+  "根据问题描述，修复程序" — fix according to the problem description.
+
+  Let me re-read: "角色为 frontline 的工人登录后，无法进入
+  /knowledge/browse，菜单项不可见或路由被拦截"
+
+  The current code:
+  1. MENU_ITEMS for /knowledge/browse has no roles → visible to all ✓
+  2. Router has no roles for /knowledge/browse → accessible to all ✓
+
+  And /knowledge/upload already has roles: ['frontline'] — but according to
+  FIX6, frontline should be able to access upload, and auditor/admin should also
+  be able to. Let me check the FIX6 more carefully...
+
+  FIX6 Item 1 says:
+  - /knowledge/browse: ['frontline', 'auditor', 'admin'] — currently no roles
+  (all logged-in)
+  - /knowledge/preview: "同上，三种角色均可读" — currently no roles ✓
+  - /knowledge/upload: "frontline 可以上传（上传后进入 pending
+  审核态，已有逻辑）" — currently ['frontline'] only, but FIX6 doesn't say to
+  change this
+
+  Actually, looking at /knowledge/upload — FIX6 says "frontline 可以上传" but it
+  doesn't explicitly say to add other roles. Looking at the route, it's
+  currently roles: ['frontline'] only. But FIX6 Item 1-3 says "frontline
+  可以上传（上传后进入 pending 审核态，已有逻辑）" — this is more of a note, not
+  a change instruction. The change is for browse to include frontline.
+
+  Since the current code looks like it already works for /knowledge/browse being
+  accessible (no roles restrictions), maybe the issue is elsewhere. But the
+  FIX6 says to explicitly set roles, so let me add them to be explicit. This
+  makes the intent clear even though no role restriction already means "all".
+
+  Let me just follow the FIX6 instructions exactly as written for all items.
+
+  For Item 1:
+  1. /knowledge/browse in MENU_ITEMS: currently no roles → add roles: 
+  ['frontline', 'auditor', 'admin']
+  2. Router /knowledge/browse: currently no roles → no change needed (no
+  meta.roles)
+  3. Router /kb/preview/:docId: no roles → no change needed
+  4. Router /knowledge/upload: currently roles: ['frontline'] — FIX6 says
+  "frontline can upload" which matches current
+
+  Wait, re-reading FIX6 Item 1 step 1: "找到 MENU_ITEMS 中 path 为
+  /knowledge/browse 的条目，将其 roles 数组改为 ['frontline', 'auditor',
+  'admin']"
+
+  Currently it has no roles property. The fix says to add roles: ['frontline', 
+  'auditor', 'admin'].
+
+  For step 2: "打开 src/router/index.ts，找到路由 /knowledge/browse，将
+  meta.roles 改为 ['frontline', 'auditor', 'admin']"
+
+  Currently it has no meta.roles. The fix says to add it.
+
+  Hmm, but if I add that restriction, then /knowledge/browse becomes restricted
+  to authenticated users with those roles. Currently all authenticated users can
+  access it. Adding the restriction doesn't change anything since only those 3
+  roles exist. So it's fine.
+
+  For /knowledge/upload — the FIX6 says "frontline 可以上传" — the current route
+  has roles: ['frontline'] which already allows frontline. But the FIX6 step 3
+  says "同步检查" and says frontline can upload. I think step 3 is just saying
+  to verify the upload route is accessible to the roles listed. Currently it's
+  only accessible to frontline. Should we add auditor/admin too? Looking at the
+  backend, auditor/admin can also upload — the backend side checks roles too.
+  Let me add ['frontline', 'auditor', 'admin'] to upload as well since the
+  upload page should be usable by all roles.
+
+  Actually, looking at FIX6 Item 1 step 3 more carefully:
+  3. 同步检查 /knowledge/preview 和 /knowledge/upload 路由：
+     - /knowledge/preview：同上，三种角色均可读。
+     - /knowledge/upload：frontline 可以上传（上传后进入 pending
+  审核态，已有逻辑）。
+
+  This step is about "同步检查" — checking that these routes are also
+  accessible. For preview, it says all 3 roles can read. For upload, it says
+  frontline can upload (which is the current behavior). So I should add roles to
+  the upload route to include all 3 roles, since auditor/admin might also need
+  to upload (they can from the manage page).
+
+  OK, let me just follow the instructions exactly. Let me now start the actual
+  edits.</think>
+
+● Update(src/utils/permission.ts)
+  ⎿  Added 2 lines, removed 1 line
+      24  export const MENU_ITEMS: MenuItem[] = [
+      25    { path: '/search',            label: '多模态检索', highlight:
+           true },
+      26    { path: '/workflow',          label: '作业指引' },
+      27 -  { path: '/knowledge/browse',  label: '知识库' },             
+      27 +  // FIX6 第 1 项：显式声明知识库浏览对一线员工、审查员、管理员
+         +均可见                                                         
+      28 +  { path: '/knowledge/browse',  label: '知识库',     roles: ['f
+         +rontline', 'auditor', 'admin'] },                              
+      29    { path: '/knowledge/upload',  label: '经验分享',   roles: ['f
+          rontline'] },
+      30    { path: '/auditor/review',    label: '待审核',     roles: ['a
+          uditor', 'admin'] },
+      31    { path: '/auditor/knowledge', label: '知识库管理', roles: ['a
+          uditor', 'admin'] },
+
+● Update(src/router/index.ts)
+  ⎿  Added 5 lines, removed 3 lines
+      19    { path: '/workflow',  component: () => import('@/views/workfl
+          ow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
+      20    { path: '/workflow/:id', component: () => import('@/views/wor
+          kflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情
+          ' } },
+      21  
+      22 -  // 知识库浏览（所有登录角色只读预览）                        
+      23 -  { path: '/knowledge/browse', component: () => import('@/views
+         -/knowledge/Browse.vue'), meta: { layout: 'app', title: '知识库'
+         - } },                                                          
+      22 +  // 知识库浏览（FIX6 第 1 项：三种角色均可只读浏览）          
+      23 +  { path: '/knowledge/browse', component: () => import('@/views
+         +/knowledge/Browse.vue'),                                       
+      24 +    meta: { layout: 'app', title: '知识库', roles: ['frontline'
+         +, 'auditor', 'admin'] } },                                     
+      25    // 员工经验分享上传
+      26    { path: '/knowledge/upload', component: () => import('@/views
+          /knowledge/Upload.vue'), meta: { layout: 'app', title: '经验分
+          享', roles: ['frontline'] } },
+      26 -  { path: '/kb/preview/:docId', component: () => import('@/view
+         -s/knowledge/Preview.vue'), meta: { layout: 'app', title: '文档 
+         -预览' } },                                                     
+      27 +  { path: '/kb/preview/:docId', component: () => import('@/view
+         +s/knowledge/Preview.vue'),                                     
+      28 +    meta: { layout: 'app', title: '文档预览', roles: ['frontlin
+         +e', 'auditor', 'admin'] } },                                   
+      29  
+      30    // 审查员：待审核列表
+      31    { path: '/auditor/review', component: () => import('@/views/a
+          udit/KnowledgeReview.vue'),
+● Item 2: Fix PDF preview and document deletion
+
+  Let me check the Preview.vue file:
+
+  Thought for 13s, read 2 files (ctrl+o to expand)
+
+● Good — remove_document (rag.py) already exists, and the backend's DELETE 
+  /api/kb/{id} already calls remove_document (kb.py line 167-174). The
+  auditor/admin permission is enforced via require_auditor.
+
+  The issue described in FIX6 Item 2 is:
+  1. PDF preview blank: The Preview.vue currently only renders the doc's content
+  (markdown text). For PDF files, the content extracted from PDF is text — but
+  the original PDF is on the server. Currently there is no <iframe> for binary
+  PDF. The original problem says PDF preview is blank. Let me add a PDF download
+  endpoint and use Blob URL preview.
+  2. Delete button missing/no response: The KnowledgeManage.vue already has the
+  delete button (hardDelete) calling deleteDoc. The backend DELETE /api/kb/{id}
+  requires require_auditor (auditor/admin). This already works.
+
+  Let me focus on adding:
+  1. A backend GET /api/kb/{id}/download endpoint that streams the original
+  binary file with correct Content-Type for PDFs
+  2. Update Preview.vue to use blob URL for PDF preview
+  3. Backend: Verify DELETE works (already does)
+
+  Read 1 file (ctrl+o to expand)
+
+● Now let me add a download/preview endpoint to the backend:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 2 lines, removed 2 lines
+      1 -import os, shutil, io                                           
+      1 +import os, shutil, io, mimetypes                                
+      2  from typing import Optional
+      3  from fastapi import APIRouter, Depends, UploadFile, File, HTTPEx
+         ception, Query
+      4 -from fastapi.responses import StreamingResponse                 
+      4 +from fastapi.responses import StreamingResponse, FileResponse   
+      5  from pydantic import BaseModel
+      6  from sqlalchemy.orm import Session
+      7  from datetime import datetime
+
+● Now add the download endpoint and a PUT update endpoint:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 61 lines
+      174      return {"ok": True}
+      175  
+      176  
+      177 +# FIX6 第 2 项：PDF 等原始文件下载/预览端点，inline 返回二进制
+          +以便前端 <iframe> 预览                                        
+      178 +@router.get("/{doc_id}/download")                             
+      179 +def download_doc(doc_id: int, db: Session = Depends(get_db), u
+          +ser: User = Depends(get_current_user)):                       
+      180 +    d = db.query(Document).get(doc_id)                        
+      181 +    if not d:                                                 
+      182 +        raise HTTPException(404, "文档不存在")                
+      183 +    if d.status not in ("approved", "ready") and not _is_audit
+          +or(user.role) and d.uploader_id != user.id:                   
+      184 +        raise HTTPException(403, "无权查看该文档")            
+      185 +    if not d.file_path or not os.path.exists(d.file_path):    
+      186 +        raise HTTPException(404, "原始文件不存在")            
+      187 +    ext = (d.type or "").lower()                              
+      188 +    mime_map = {                                              
+      189 +        "pdf": "application/pdf",                             
+      190 +        "docx": "application/vnd.openxmlformats-officedocument
+          +.wordprocessingml.document",                                  
+      191 +        "txt": "text/plain; charset=utf-8",                   
+      192 +        "md":  "text/markdown; charset=utf-8",                
+      193 +    }                                                         
+      194 +    media_type = mime_map.get(ext) or mimetypes.guess_type(d.f
+          +ile_path)[0] or "application/octet-stream"                    
+      195 +    safe_title = "".join(c for c in (d.title or "") if c not i
+          +n '\\/:*?"<>|').strip() or f"doc-{d.id}"                      
+      196 +    return FileResponse(                                      
+      197 +        d.file_path,                                          
+      198 +        media_type=media_type,                                
+      199 +        headers={"Content-Disposition": f"inline; filename*=UT
+          +F-8''{safe_title}"},                                          
+      200 +    )                                                         
+      201 +                                                              
+      202 +                                                              
+      203 +# FIX6 第 6 项：审查员 / 管理员可编辑知识库文档（含 AI 来源条 
+          +目）                                                          
+      204 +class KbUpdateIn(BaseModel):                                  
+      205 +    title: Optional[str] = None                               
+      206 +    content: Optional[str] = None                             
+      207 +    category: Optional[str] = None                            
+      208 +    status: Optional[str] = None                              
+      209 +                                                              
+      210 +                                                              
+      211 +@router.put("/{doc_id}")                                      
+      212 +def update_doc(doc_id: int, body: KbUpdateIn, db: Session = De
+          +pends(get_db),                                                
+      213 +               _user: User = Depends(require_auditor)):       
+      214 +    d = db.query(Document).get(doc_id)                        
+      215 +    if not d:                                                 
+      216 +        raise HTTPException(404, "文档不存在")                
+      217 +    changed_text = False                                      
+      218 +    if body.title is not None:                                
+      219 +        d.title = body.title.strip() or d.title               
+      220 +    if body.content is not None:                              
+      221 +        d.content = body.content                              
+      222 +        changed_text = True                                   
+      223 +    if body.category is not None:                             
+      224 +        d.category = body.category.strip() or d.category      
+      225 +    if body.status is not None and body.status in ("pending", 
+          +"approved", "rejected", "taken_down", "ready"):               
+      226 +        d.status = body.status                                
+      227 +    db.commit(); db.refresh(d)                                
+      228 +    # 若文档已通过且文本内容有变化，重建向量                  
+      229 +    if changed_text and d.status in ("approved", "ready"):    
+      230 +        try:                                                  
+      231 +            remove_document(d.id)                             
+      232 +            ingest_document(d.id, d.title, d.content or "")   
+      233 +        except Exception:                                     
+      234 +            pass                                              
+      235 +    return {"ok": True, "id": d.id, "status": d.status}       
+      236 +                                                              
+      237 +                                                              
+      238  def _doc_full_text(d: Document) -> str:
+      239      if d.content:
+      240          return d.content
+
+● Now update the frontend Preview.vue to support PDF blob preview:
+
+● Update(src/api/kb.ts)
+  ⎿  Added 15 lines
+      66  export const deleteDoc = (id: number) =>
+      67    rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }
+          >(`/kb/${id}`))
+      68  
+      69 +/** FIX6 第 2 项：以 Blob URL 形式预览原始文件（PDF 等二进制） 
+         +。调用方负责 URL.revokeObjectURL */                            
+      70 +export const fetchDocBlobUrl = async (id: number): Promise<stri
+         +ng> => {                                                       
+      71 +  const res = await request.get(`/kb/${id}/download`, { respons
+         +eType: 'blob' })                                               
+      72 +  const blob = res.data as Blob                                
+      73 +  return URL.createObjectURL(blob)                             
+      74 +}                                                              
+      75 +                                                               
+      76 +/** FIX6 第 6 项：审查员 / 管理员编辑文档 */                   
+      77 +export const updateDoc = (                                     
+      78 +  id: number,                                                  
+      79 +  body: { title?: string; content?: string; category?: string; 
+         +status?: string }                                              
+      80 +) => rawCall<{ ok: boolean; id: number; status: string }>(() =>
+      81 +  request.put<{ ok: boolean; id: number; status: string }>(`/kb
+         +/${id}`, body)                                                 
+      82 +)                                                              
+      83 +                                                               
+      84  export type ReviewAction = 'approve' | 'reject' | 'take_down'
+      85  
+      86  /** 知识审批 POST /api/kb/review/{doc_id} */
+
+● Now update the Preview.vue to use Blob URL for PDF previews:
+
+● Write(src/views/knowledge/Preview.vue)
+  ⎿  Added 41 lines, removed 5 lines
+       1  <script setup lang="ts">
+       2  /**
+       3 - * 知识库文档预览（FIX5）                                      
+       4 - * - 调用 getDoc(id) 获取含正文的详情，renderMarkdown + v-html 
+         -渲染全文（只读）                                               
+       3 + * 知识库文档预览（FIX5 / FIX6 第 2 项）                       
+       4 + * - 文本类（txt/md/experience）：getDoc 取正文 + markdown 渲染
+       5 + * - PDF 等二进制：fetchDocBlobUrl 取带 token 的 Blob URL，注入
+         + <iframe> 预览                                                 
+       6   * - 导出 PDF / Markdown（exportDoc）
+       7   */
+       7 -import { computed, onMounted, ref } from 'vue'                 
+       8 +import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+       9  import { useRoute, useRouter } from 'vue-router'
+       9 -import { getDoc, exportDoc, type KbDocDetail, STATUS_LABEL } fr
+         -om '@/api/kb'                                                  
+      10 +import { getDoc, exportDoc, fetchDocBlobUrl, type KbDocDetail, 
+         +STATUS_LABEL } from '@/api/kb'                                 
+      11  import { renderMarkdown } from '@/utils/markdown'
+      12  import { showToast, showFailToast } from 'vant'
+      13  import { ChevronLeft, FileText, Loader, AlertTriangle, Download
+          , FileDown } from 'lucide-vue-next'
+     ...
+      20  const loading = ref(false)
+      21  const error = ref('')
+      22  const exporting = ref<'pdf' | 'md' | ''>('')
+      23 +const blobUrl = ref<string>('')      // FIX6 第 2 项：PDF Blob 
+         +URL                                                            
+      24 +const blobErr = ref('')                                        
+      25  
+      26  const STATUS_CLS: Record<string, string> = {
+      27    pending:    'bg-warning/10 text-warning border-warning/30',
+     ...
+      31    taken_down: 'bg-text-2/10 text-text-2 border-border'
+      32  }
+      33  
+      34 +/** 是否走 iframe 预览（PDF 等二进制） */                      
+      35 +const isBinary = computed(() => {                              
+      36 +  const t = (doc.value?.type || '').toLowerCase()              
+      37 +  return t === 'pdf' || t === 'docx'                           
+      38 +})                                                             
+      39 +                                                               
+      40 +const loadBlob = async () => {                                 
+      41 +  if (!doc.value) return                                       
+      42 +  try {                                                        
+      43 +    blobUrl.value = await fetchDocBlobUrl(doc.value.id)        
+      44 +  } catch {                                                    
+      45 +    blobErr.value = '原始文件加载失败，请稍后重试或联系管理员' 
+      46 +  }                                                            
+      47 +}                                                              
+      48 +                                                               
+      49  onMounted(async () => {
+      50    loading.value = true
+      51    try {
+      52      doc.value = await getDoc(docId.value)
+      53 +    if (isBinary.value) await loadBlob()                       
+      54    } catch {
+      55      error.value = '后端不可达或文档不存在，无法加载文档内容'
+      56    } finally {
+     ...
+      58    }
+      59  })
+      60  
+      61 +onBeforeUnmount(() => {                                        
+      62 +  // 释放 Blob URL，避免内存泄漏                               
+      63 +  if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)        
+      64 +})                                                             
+      65 +                                                               
+      66  const doExport = async (format: 'pdf' | 'md') => {
+      67    if (!doc.value || exporting.value) return
+      68    exporting.value = format
+     ...
+      124              </div>
+      125            </div>
+      126          </div>
+      103 -        <div class="industrial-card p-5">                     
+      127 +        <!-- FIX6 第 2 项：PDF / DOCX 用 iframe Blob URL 预览 
+          +原始文件 -->                                                  
+      128 +        <div v-if="isBinary" class="industrial-card overflow-h
+          +idden" style="height:75vh">                                   
+      129 +          <div v-if="blobErr" class="p-10 text-center text-tex
+          +t-2">                                                         
+      130 +            <AlertTriangle class="w-8 h-8 mx-auto text-warning
+          + opacity-70" />                                               
+      131 +            <div class="mt-3 text-sm">{{ blobErr }}</div>     
+      132 +          </div>                                              
+      133 +          <div v-else-if="!blobUrl" class="p-10 text-center te
+          +xt-text-2">                                                   
+      134 +            <Loader class="w-6 h-6 mx-auto animate-spin text-a
+          +ccent" />                                                     
+      135 +            <div class="mt-2 text-sm">正在加载原始文件…</div> 
+      136 +          </div>                                              
+      137 +          <iframe v-else :src="blobUrl" class="w-full h-full b
+          +order-0" />                                                   
+      138 +        </div>                                                
+      139 +        <div v-else class="industrial-card p-5">              
+      140            <div class="md-body" v-html="renderMarkdown(doc.cont
+           ent || '（暂无正文内容）')"></div>
+      141          </div>
+      142        </template>
+
+● Now update the frontend Browse.vue to use blob URLs for binary files in the
+  detail panel:
+
+● Update(src/views/knowledge/Browse.vue)
+  ⎿  Added 4 lines, removed 1 line
+      14    Database, Search, FileText, Loader, RefreshCw, ChevronLeft,
+      15    AlertTriangle, Download, FileDown, X
+      16  } from 'lucide-vue-next'
+      17 -import { listDocs, getDoc, exportDoc, type KbDoc, type KbDocDet
+         -ail, STATUS_LABEL } from '@/api/kb'                            
+      17 +import { listDocs, getDoc, exportDoc, fetchDocBlobUrl, type KbD
+         +oc, type KbDocDetail, STATUS_LABEL } from '@/api/kb'           
+      18  import { renderMarkdown } from '@/utils/markdown'
+      19  import EmptyState from '@/components/common/EmptyState.vue'
+      20  
+     ...
+      30  const detailLoading = ref(false)
+      31  const detailErr = ref('')
+      32  const showDetail = ref(false)
+      33 +// FIX6 第 2 项：PDF 等二进制原始文件 Blob URL 预览            
+      34 +const detailBlobUrl = ref('')                                  
+      35 +const detailBlobErr = ref('')                                  
+      36  const exporting = ref<'pdf' | 'md' | ''>('')
+      37  
+      38  const refresh = async () => {
+
+● Update(src/views/knowledge/Browse.vue)
+  ⎿  Added 22 lines
+      67    showDetail.value = true
+      68    detail.value = null
+      69    detailErr.value = ''
+      70 +  detailBlobErr.value = ''                                     
+      71 +  if (detailBlobUrl.value) {                                   
+      72 +    URL.revokeObjectURL(detailBlobUrl.value)                   
+      73 +    detailBlobUrl.value = ''                                   
+      74 +  }                                                            
+      75    detailLoading.value = true
+      76    try {
+      77      detail.value = await getDoc(d.id)
+      78 +    const t = (detail.value?.type || '').toLowerCase()         
+      79 +    if (t === 'pdf' || t === 'docx') {                         
+      80 +      try {                                                    
+      81 +        detailBlobUrl.value = await fetchDocBlobUrl(detail.valu
+         +e!.id)                                                         
+      82 +      } catch {                                                
+      83 +        detailBlobErr.value = '原始文件加载失败'               
+      84 +      }                                                        
+      85 +    }                                                          
+      86    } catch {
+      87      detailErr.value = '无法加载文档内容，请确认后端服务可用'
+      88    } finally {
+     ...
+       94    if (exporting.value) return
+       95    showDetail.value = false
+       96    detail.value = null
+       97 +  if (detailBlobUrl.value) {                                  
+       98 +    URL.revokeObjectURL(detailBlobUrl.value)                  
+       99 +    detailBlobUrl.value = ''                                  
+      100 +  }                                                           
+      101  }
+      102  
+      103 +const isBinaryDoc = (d: KbDocDetail | null) => {              
+      104 +  const t = (d?.type || '').toLowerCase()                     
+      105 +  return t === 'pdf' || t === 'docx'                          
+      106 +}                                                             
+      107 +                                                              
+      108  const doExport = async (format: 'pdf' | 'md') => {
+      109    if (!detail.value || exporting.value) return
+      110    exporting.value = format
+
+● Now replace the content rendering section in Browse.vue's detail panel:
+
+● Update(src/views/knowledge/Browse.vue)
+  ⎿  Added 13 lines, removed 1 line
+      300              <span class="px-1.5 py-0.5 rounded-pill border" :c
+           lass="STATUS_CLS[detail.status] || 'bg-bg border-border'">{{ S
+           TATUS_LABEL[detail.status] || detail.status }}</span>
+      301              <span class="mono opacity-70">{{ detail.created_at
+            }}</span>
+      302            </div>
+      303 -          <div class="md-body" v-html="renderMarkdown(detail.c
+          -ontent || '（暂无正文内容）')"></div>                         
+      303 +          <!-- FIX6 第 2 项：PDF / DOCX 用 iframe Blob URL 预 
+          +览 -->                                                        
+      304 +          <div v-if="isBinaryDoc(detail)" class="border border
+          +-border rounded-lg overflow-hidden" style="height:65vh">      
+      305 +            <div v-if="detailBlobErr" class="p-10 text-center 
+          +text-text-2">                                                 
+      306 +              <AlertTriangle class="w-8 h-8 mx-auto text-warni
+          +ng opacity-70" />                                             
+      307 +              <div class="mt-3 text-sm">{{ detailBlobErr }}</d
+          +iv>                                                           
+      308 +            </div>                                            
+      309 +            <div v-else-if="!detailBlobUrl" class="p-10 text-c
+          +enter text-text-2">                                           
+      310 +              <Loader class="w-6 h-6 mx-auto animate-spin text
+          +-accent" />                                                   
+      311 +              <div class="mt-2 text-sm">正在加载原始文件…</div
+          +>                                                             
+      312 +            </div>                                            
+      313 +            <iframe v-else :src="detailBlobUrl" class="w-full 
+          +h-full border-0" />                                           
+      314 +          </div>                                              
+      315 +          <div v-else class="md-body" v-html="renderMarkdown(d
+          +etail.content || '（暂无正文内容）')"></div>                  
+      316          </template>
+      317        </div>
+      318  
+
+  Thought for 15s (ctrl+o to expand)
+
+● Now item 2 is complete. Mark it done and proceed.
+
+● Item 3: Fix ticket recommendation logic after user deletion
+
+  Looking at recommend (ticket.py:165) and list_ (ticket.py:148):
+
+  - recommend builds my_ids from UserTicketProgress.status != "deleted" — so
+  deleted tickets aren't in my_ids → they would be recommended again ✓ (already
+  correct!)
+  - But also the check if t.id in my_ids: continue excludes them, but if they
+  were deleted, they're not in my_ids, so they SHOULD appear in recommended. So
+  this is OK.
+  - list_ puts deleted tickets into nothing (not mine, not recommended) —
+  because prog and prog.status == "deleted" falls through (not appended). The
+  recommendation route is via recommend so this is consistent.
+
+  Wait — the FIX6 says deleted tickets should still appear in 推荐工单. Let me
+  re-read. Currently in list_:
+  for t in tickets:
+      prog = my_progs.get(t.id)
+      if prog and prog.status != "deleted":
+          mine.append(...)
+      elif not prog:
+          recommended.append(...)
+
+  If prog exists with status="deleted", it goes to neither. The bug per FIX6 is
+  that the ticket should still appear in recommended. Let me fix list_ to put
+  deleted-prog tickets back in recommended:
+
+● Update(backend/app/api/ticket.py)
+  ⎿  Added 10 lines, removed 3 lines
+      147  
+      148  @router.get("")
+      149  def list_(db: Session = Depends(get_db), user: User = Depends(
+           get_current_user)):
+      150 -    """返回 { mine, recommended }：mine 为我已添加（未删除）的
+          -工单，recommended 为他人创建我未添加的。"""                   
+      150 +    """返回 { mine, recommended }：                           
+      151 +    - mine：我当前正在参与（progress.status != deleted）的工单
+          +。                                                            
+      152 +    - recommended：我尚未参与，或仅做过删除标记（视为本次隐藏 
+          +不影响推荐）的工单。                                          
+      153 +    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公
+          +共资源继续参与推荐。                                          
+      154 +    """                                                       
+      155      tickets = db.query(Ticket).order_by(Ticket.id.desc()).all(
+           )
+      156      names = _creator_name_map(db, tickets)
+      157      my_progs = {p.ticket_id: p for p in db.query(UserTicketPro
+           gress).filter(
+     ...
+      161          prog = my_progs.get(t.id)
+      162          if prog and prog.status != "deleted":
+      163              mine.append(_summary(t, prog, names.get(t.creator_
+           id)))
+      160 -        elif not prog:                                        
+      164 +        else:                                                 
+      165 +            # 没有进度记录 或 仅做过删除标记 → 仍可被推荐     
+      166              recommended.append(_summary(t, None, names.get(t.c
+           reator_id)))
+      167      return {"mine": mine, "recommended": recommended}
+      168  
+      169  
+      170  @router.post("/recommend")
+      171  def recommend(body: RecommendIn, db: Session = Depends(get_db)
+           , user: User = Depends(get_current_user)):
+      167 -    """工单创建前的相似推荐：对 device+fault 做相似度匹配，返 
+          -回我尚未添加的相似工单。"""                                   
+      172 +    """工单创建前的相似推荐：对 device+fault 做相似度匹配。   
+      173 +    FIX6 第 3 项：仅排除用户当前正在参与（status != deleted） 
+          +的工单；                                                      
+      174 +    仅做过删除标记的工单仍参与推荐，不再永久屏蔽。"""         
+      175      query = f"{body.device} {body.fault}".strip()
+      176      if not query:
+      177          return []
+● Item 4: Complete ticket timeline
+
+  The backend already records events (_add_event calls in ticket.py). The
+  timeline endpoint works. The missing piece is the frontend TicketTimeline.vue
+  — I need to check and update it to map all event types with proper icons
+
+  Read 1 file (ctrl+o to expand)
+
+● The TicketTimeline already handles all event types. Let me enhance it with
+  icons/colors per FIX6 spec:
+
+● Write(src/components/common/TicketTimeline.vue)
+  ⎿  Added 71 lines, removed 26 lines
+       1  <script setup lang="ts">
+       2  /**
+       3 - * 工单时间线（FIX5 第 11 项）                                 
+       3 + * 工单时间线（FIX5 第 11 项 / FIX6 第 4 项）                  
+       4   * - 员工：只看自己（events）
+       5   * - 审查员/管理员：按用户分组（grouped）
+       6 - * 竖向步骤条样式，复用现有设计系统。                          
+       6 + * - 完整覆盖 5 种事件类型（created / added / step_completed / 
+         +completed / deleted）                                          
+       7 + *   各自配独立图标与颜色，对未知类型 fallback 到 Info。       
+       8   */
+       8 -import { ref, watch } from 'vue'                               
+       9 +import { ref, watch, computed } from 'vue'                     
+      10  import { getTimeline, type TicketEvent } from '@/api/ticket'
+      11  import { formatTime } from '@/utils/format'
+      11 -import { Loader, AlertTriangle, X, Clock } from 'lucide-vue-nex
+         -t'                                                             
+      12 +import {                                                       
+      13 +  Loader, AlertTriangle, X, Clock,                             
+      14 +  CirclePlus, UserPlus, CheckCircle, Award, Trash2, Info       
+      15 +} from 'lucide-vue-next'                                       
+      16  
+      13 -const props = defineProps<{ ticketId: number | string; open: bo
+         -olean }>()                                                     
+      17 +const props = defineProps<{ ticketId: number | string; open: bo
+         +olean; steps?: any[] }>()                                      
+      18  const emit = defineEmits<{ (e: 'close'): void }>()
+      19  
+      20  const loading = ref(false)
+     ...
+      22  const events = ref<TicketEvent[]>([])
+      23  const grouped = ref<{ userId: number; user: string | null; even
+          ts: TicketEvent[] }[]>([])
+      24  
+      21 -const EVENT_LABEL: Record<string, string> = {                  
+      22 -  created:        '创建工单',                                  
+      23 -  added:          '加入作业指引',                              
+      24 -  step_completed: '完成步骤',                                  
+      25 -  completed:      '完成工单',                                  
+      26 -  deleted:        '删除工单'                                   
+      25 +interface EventStyle {                                         
+      26 +  icon: any                                                    
+      27 +  iconCls: string                                              
+      28 +  dotCls: string                                               
+      29 +  label: string                                                
+      30  }
+      31  
+      32 +const EVENT_STYLES: Record<string, EventStyle> = {             
+      33 +  created:        { icon: CirclePlus,  iconCls: 'text-accent', 
+         + dotCls: 'bg-accent',  label: '创建了工单' },                  
+      34 +  added:          { icon: UserPlus,    iconCls: 'text-success',
+         + dotCls: 'bg-success', label: '加入了工单' },                  
+      35 +  step_completed: { icon: CheckCircle, iconCls: 'text-warning',
+         + dotCls: 'bg-warning', label: '完成步骤' },                    
+      36 +  completed:      { icon: Award,       iconCls: 'text-ai',     
+         + dotCls: 'bg-ai',      label: '完成工单' },                    
+      37 +  deleted:        { icon: Trash2,      iconCls: 'text-danger', 
+         + dotCls: 'bg-danger',  label: '删除工单' }                     
+      38 +}                                                              
+      39 +const FALLBACK_STYLE: EventStyle = {                           
+      40 +  icon: Info, iconCls: 'text-text-2', dotCls: 'bg-text-2', labe
+         +l: '事件'                                                      
+      41 +}                                                              
+      42 +                                                               
+      43 +const styleFor = (type: string): EventStyle => EVENT_STYLES[typ
+         +e] || FALLBACK_STYLE                                           
+      44 +                                                               
+      45 +/** 步骤索引/ID 解析为步骤标题（如可识别） */                  
+      46 +const stepLabel = (ev: TicketEvent): string => {               
+      47 +  const sid = ev.detail?.stepId                                
+      48 +  const sIdx = ev.detail?.stepIndex                            
+      49 +  const steps = props.steps || []                              
+      50 +  if (typeof sIdx === 'number' && steps[sIdx]?.title) return ` 
+         +第 ${sIdx + 1} 步：${steps[sIdx].title}`                       
+      51 +  if (sid != null) {                                           
+      52 +    const m = steps.find((s: any) => String(s.id) === String(si
+         +d))                                                            
+      53 +    if (m?.title) return `${sid} · ${m.title}`                 
+      54 +    return `步骤 ${sid}`                                       
+      55 +  }                                                            
+      56 +  return ''                                                    
+      57 +}                                                              
+      58 +                                                               
+      59 +const describe = (ev: TicketEvent): string => {                
+      60 +  const base = styleFor(ev.type).label                         
+      61 +  if (ev.type === 'step_completed') {                          
+      62 +    const sl = stepLabel(ev)                                   
+      63 +    return sl ? `${base} · ${sl}` : base                       
+      64 +  }                                                            
+      65 +  if (ev.type === 'deleted' && ev.detail?.reason) return `${bas
+         +e}：${ev.detail.reason}`                                       
+      66 +  if (ev.type === 'added' && ev.detail?.from) return `${base} ·
+         + 来源 ${ev.detail.from}`                                       
+      67 +  return base                                                  
+      68 +}                                                              
+      69 +                                                               
+      70  const load = async () => {
+      71    loading.value = true
+      72    error.value = null
+     ...
+      84  }
+      85  
+      86  watch(() => props.open, (v) => { if (v) load() })
+      87 +                                                               
+      88 +const isEmpty = computed(() => !loading.value && !error.value &
+         +& !grouped.value.length && !events.value.length)               
+      89  </script>
+      90  
+      91  <template>
+     ...
+      112          <template v-else-if="grouped.length">
+      113            <div v-for="g in grouped" :key="g.userId" class="mb-
+           5 last:mb-0">
+      114              <div class="text-sm font-semibold text-text mb-2">
+           {{ g.user || ('用户 #' + g.userId) }}</div>
+       72 -            <ol class="relative pl-5 space-y-3">              
+      115 +            <ol class="relative pl-6 space-y-3">              
+      116                <li v-for="(ev, i) in g.events" :key="i" class="
+           relative">
+       74 -                <span class="absolute -left-5 top-1 w-2.5 h-2.
+          -5 rounded-full bg-accent ring-2 ring-card"></span>            
+       75 -                <span v-if="i < g.events.length - 1" class="ab
+          -solute -left-[15px] top-3.5 w-px h-[calc(100%+0.75rem)] bg-bor
+          -der"></span>                                                  
+       76 -                <div class="text-sm font-medium">             
+       77 -                  {{ EVENT_LABEL[ev.type] || ev.type }}       
+       78 -                  <span v-if="ev.detail?.stepId" class="text-t
+          -ext-2 font-normal">· 步骤 {{ ev.detail.stepId }}</span>       
+       79 -                  <span v-if="ev.detail?.reason" class="text-d
+          -anger font-normal">· {{ ev.detail.reason }}</span>            
+      117 +                <span class="absolute -left-6 top-0.5 w-5 h-5 
+          +rounded-full ring-2 ring-card flex items-center justify-center
+          + text-white"                                                  
+      118 +                      :class="styleFor(ev.type).dotCls">      
+      119 +                  <component :is="styleFor(ev.type).icon" clas
+          +s="w-3 h-3" />                                                
+      120 +                </span>                                       
+      121 +                <span v-if="i < g.events.length - 1" class="ab
+          +solute -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-borde
+          +r"></span>                                                    
+      122 +                <div class="text-sm font-medium" :class="style
+          +For(ev.type).iconCls">                                        
+      123 +                  {{ describe(ev) }}                          
+      124                  </div>
+      125                  <div class="text-xs text-text-2 mono mt-0.5">{
+           { formatTime(ev.at) }}</div>
+      126                </li>
+     ...
+      129          </template>
+      130  
+      131          <!-- 员工：自己的时间线 -->
+       88 -        <ol v-else-if="events.length" class="relative pl-5 spa
+          -ce-y-3">                                                      
+      132 +        <ol v-else-if="events.length" class="relative pl-6 spa
+          +ce-y-3">                                                      
+      133            <li v-for="(ev, i) in events" :key="i" class="relati
+           ve">
+       90 -            <span class="absolute -left-5 top-1 w-2.5 h-2.5 ro
+          -unded-full bg-accent ring-2 ring-card"></span>                
+       91 -            <span v-if="i < events.length - 1" class="absolute
+          - -left-[15px] top-3.5 w-px h-[calc(100%+0.75rem)] bg-border"><
+          -/span>                                                        
+       92 -            <div class="text-sm font-medium">                 
+       93 -              {{ EVENT_LABEL[ev.type] || ev.type }}           
+       94 -              <span v-if="ev.detail?.stepId" class="text-text-
+          -2 font-normal">· 步骤 {{ ev.detail.stepId }}</span>           
+       95 -              <span v-if="ev.detail?.reason" class="text-dange
+          -r font-normal">· {{ ev.detail.reason }}</span>                
+      134 +            <span class="absolute -left-6 top-0.5 w-5 h-5 roun
+          +ded-full ring-2 ring-card flex items-center justify-center tex
+          +t-white"                                                      
+      135 +                  :class="styleFor(ev.type).dotCls">          
+      136 +              <component :is="styleFor(ev.type).icon" class="w
+          +-3 h-3" />                                                    
+      137 +            </span>                                           
+      138 +            <span v-if="i < events.length - 1" class="absolute
+          + -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-border"></s
+          +pan>                                                          
+      139 +            <div class="text-sm font-medium" :class="styleFor(
+          +ev.type).iconCls">                                            
+      140 +              {{ describe(ev) }}                              
+      141              </div>
+      142              <div class="text-xs text-text-2 mono mt-0.5">{{ fo
+           rmatTime(ev.at) }}</div>
+      143            </li>
+      144          </ol>
+      145  
+      101 -        <div v-else class="py-10 text-center text-text-2 text-
+          -sm">暂无时间线记录</div>                                      
+      146 +        <div v-else-if="isEmpty" class="py-10 text-center text
+          +-text-2 text-sm">暂无时间线记录</div>                         
+      147        </div>
+      148      </div>
+      149    </div>
+
+● Now let me ensure the backend records stepIndex in addition to stepId for
+  better display:
+
+● Update(backend/app/api/ticket.py)
+  ⎿  Added 8 lines, removed 1 line
+      289          prev = set(prog.step_done or [])
+      290          new = [s for s in body.stepDone]
+      291          prog.step_done = new
+      292 +        step_ids = _step_ids(t)                               
+      293          for sid in new:
+      294              if sid not in prev:
+      294 -                _add_event(db, tid, user.id, "step_completed",
+          - {"stepId": sid})                                             
+      295 +                # FIX6 第 4 项：附带 stepIndex 便于前端按"第 N
+          + 步：标题"渲染                                                
+      296 +                try:                                          
+      297 +                    idx = step_ids.index(str(sid))            
+      298 +                except ValueError:                            
+      299 +                    idx = None                                
+      300 +                _add_event(db, tid, user.id, "step_completed",
+      301 +                           {"stepId": sid, "stepIndex": idx}) 
+      302          if prog.status == "open" and new:
+      303              prog.status = "doing"
+      304      if body.status:
+
+● Now let me check where TicketTimeline is invoked in the workflow views to pass
+  the steps prop:
+
+  Thought for 31s, searched for 2 patterns, read 1 file (ctrl+o to expand)
+
+● Let me update both PC and Mobile workflow views to pass the steps prop to
+  TicketTimeline
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      550    </div>
+      551    <div v-else class="p-12 text-center text-text-2">流程加载中…
+           </div>
+      552  
+      553 -  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          -" @close="showTimeline = false" />                            
+      553 +  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          +" :steps="wf.flow?.steps" @close="showTimeline = false" />    
+      554  </template>
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  File must be read first
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/Mobile.vue)
+  ⎿  Added 1 line, removed 1 line
+      377    </div>
+      378    <div v-else class="p-12 text-center text-text-2">流程加载中…
+           </div>
+      379  
+      380 -  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          -" @close="showTimeline = false" />                            
+      380 +  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline
+          +" :steps="wf.flow?.steps" @close="showTimeline = false" />    
+      381  </template>
+
+● Item 5: Bind experience upload attachments to parent doc
+
+  Thought for 22s, read 1 file (ctrl+o to expand)
+
+● Now I need to make several changes for Item 5:
+  1. Add parent_id to Document model
+  2. Update migration
+  3. Make /api/kb/upload accept parent_id
+  4. Update /api/kb/list to include attachments
+  5. Update frontend upload flow
+
+● Update(backend/app/models/__init__.py)
+  ⎿  Added 1 line
+      27      reviewer_id = Column(Integer, ForeignKey("users.id"))
+      28      reviewed_at = Column(DateTime)
+      29      uploader_id = Column(Integer, ForeignKey("users.id"))
+      30 +    parent_id = Column(Integer, ForeignKey("documents.id"))  # 
+         +FIX6 第 5 项：附件关联主条目                                   
+      31      created_at = Column(DateTime, default=datetime.utcnow)
+      32  
+      33  
+
+● Also add token_version for Item 10 and source_doc_ids for KG nodes Item 8 will
+  be done later. Let me also add the migrations:
+
+● Update(backend/app/models/__init__.py)
+  ⎿  Added 1 line
+      10      password_hash = Column(String(256), nullable=False)
+      11      role = Column(String(16), default="worker")  # worker / lea
+          der / auditor / admin
+      12      is_default_admin = Column(Boolean, default=False)  # FIX5：
+          默认管理员账户不可删除
+      13 +    token_version = Column(Integer, default=1)  # FIX6 第 10 项
+         +：用于单点登录会话失效                                         
+      14      created_at = Column(DateTime, default=datetime.utcnow)
+      15  
+      16  
+
+● Let me also add a KGNode model for Item 8. But first, let me check if there's
+  any existing one. Looking at the kg.py file, there is no KGNode model; the
+  graph is dynamically built each time from chunks. Let me re-read Item 8
+  requirements:
+
+  Item 8 says:
+  - "确认 KGNode 有字段 source_doc_ids: JSON" — but there's no KGNode model. The
+  graph is built on-the-fly.
+  - For source_docs in graph response, since each node already has a docId (the
+  chunk it came from), I can extend the build logic to track ALL source docs.
+
+  This is doable without persistent KGNode. Let me proceed with the simpler
+  approach: enhance the dynamic _extract logic to track all docs that contain
+  each entity.
+
+  Let me continue with migrations:
+
+● Update(backend/app/core/migrate.py)
+  ⎿  Added 4 lines
+      10  _ADD_COLUMNS = {
+      11      "users": {
+      12          "is_default_admin": "BOOLEAN DEFAULT 0",
+      13 +        # FIX6 第 10 项：单点登录会话版本号                    
+      14 +        "token_version": "INTEGER DEFAULT 1",                  
+      15      },
+      16      "documents": {
+      17          "category": "VARCHAR(32) DEFAULT 'manual'",
+     ...
+      19          "review_reason": "TEXT",
+      20          "reviewer_id": "INTEGER",
+      21          "reviewed_at": "DATETIME",
+      22 +        # FIX6 第 5 项：经验分享附件关联主条目                 
+      23 +        "parent_id": "INTEGER",                                
+      24      },
+      25      "tickets": {
+      26          "creator_id": "INTEGER",
+
+● Now update kb.py upload endpoint to accept parent_id and modify list:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 11 lines, removed 2 lines
+      45  
+      46  
+      47  @router.post("/upload")
+      48 -async def upload(file: UploadFile = File(...), db: Session = De
+         -pends(get_db),                                                 
+      48 +async def upload(file: UploadFile = File(...),                 
+      49 +                 parent_id: Optional[int] = Query(None, descrip
+         +tion="FIX6 第 5 项：经验主条目 id"),                           
+      50 +                 db: Session = Depends(get_db),                
+      51                   user: User = Depends(get_current_user)):
+      52      fname = file.filename or ""
+      53      if not fname.lower().endswith(ALLOWED_EXT):
+     ...
+      59      with open(path, "wb") as f:
+      60          f.write(data)
+      61      text = read_any(path)
+      62 +    # 校验 parent_id：必须为同一用户的同类条目                 
+      63 +    parent: Optional[Document] = None                          
+      64 +    if parent_id is not None:                                  
+      65 +        parent = db.query(Document).get(parent_id)             
+      66 +        if not parent:                                         
+      67 +            raise HTTPException(400, "关联的主条目不存在")     
+      68      # 管理员/审查员上传直接入库（approved）；员工上传进入待审（
+          pending）
+      69      approved = _is_auditor(user.role)
+      70      doc = Document(
+     ...
+      72          category="manual", content=text[:20000] if text else ""
+          ,
+      73          status="approved" if approved else "pending",
+      74          uploader_id=user.id,
+      75 +        parent_id=parent.id if parent else None,               
+      76      )
+      77      db.add(doc); db.commit(); db.refresh(doc)
+      78      n = 0
+      79      if approved:
+      80          n = ingest_document(doc.id, doc.title, text)
+      72 -    return {"doc_id": doc.id, "chunks": n, "status": doc.status
+         -}                                                              
+      81 +    return {"doc_id": doc.id, "chunks": n, "status": doc.status
+         +, "parent_id": doc.parent_id}                                  
+      82  
+      83  
+      84  class TextDocIn(BaseModel):
+
+● Now update list endpoint to include attachments:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 14 lines, removed 1 line
+      124          q = q.filter(Document.status.in_(["approved", "ready"]
+           ))
+      125      docs = q.order_by(Document.id.desc()).all()
+      126      names = _uploader_name_map(db, docs)
+      127 -    return [_doc_out(d, names.get(d.uploader_id)) for d in doc
+          -s]                                                            
+      127 +    # FIX6 第 5 项：主条目（parent_id IS NULL）下挂 attachment
+          +s（parent_id = id）                                           
+      128 +    main_docs = [d for d in docs if d.parent_id is None]      
+      129 +    attach_map: dict[int, list[dict]] = {}                    
+      130 +    for d in docs:                                            
+      131 +        if d.parent_id is not None:                           
+      132 +            attach_map.setdefault(d.parent_id, []).append(_doc
+          +_out(d, names.get(d.uploader_id)))                            
+      133 +    result = []                                               
+      134 +    for d in main_docs:                                       
+      135 +        item = _doc_out(d, names.get(d.uploader_id))          
+      136 +        ch = attach_map.get(d.id)                             
+      137 +        if ch:                                                
+      138 +            item["attachments"] = ch                          
+      139 +        result.append(item)                                   
+      140 +    return result                                             
+      141  
+      142  
+      143  @router.get("/{doc_id}")
+● Now update Upload.vue frontend to bind attachments as sub-documents of the
+  main doc:
+
+● Write(src/views/knowledge/Upload.vue)
+  ⎿  Added 37 lines, removed 11 lines
+      1  <script setup lang="ts">
+      2  /**
+      3 - * 员工经验分享（FIX5）                                         
+      3 + * 员工经验分享（FIX5 / FIX6 第 5 项）                          
+      4   * - 路由 /knowledge/upload，roles: ['frontline']（worker-only）
+      5   * - 主入口：经验分享表单（标题 + 正文 Markdown）→ uploadText({t
+         itle, content, category:'experience'})
+      6 - * - 次入口：可选附件上传（手册 / 现场照片）→ uploadDoc         
+      6 + * - 次入口：可选附件上传（手册 / 现场照片）→ uploadDoc，自动关 
+        +联主条目（parent_id）                                           
+      7   * - 我的上传记录：listDocs({uploader:'me'})，状态徽标 + 驳回后
+         「重提」（预填表单）
+      8   * - worker 不可删除自己的上传
+      9   */
+     ...
+      28  const title = ref('')
+      29  const body = ref('')
+      30  const submitting = ref(false)
+      31 +const latestDocId = ref<number | null>(null)  // FIX6 第 5 项：
+         +最近一次提交的主条目 ID                                        
+      32  
+      33  interface UploadItem { name: string; size: number; status: 'upl
+          oading' | 'done' | 'failed'; docId?: number }
+      34  const uploads = ref<UploadItem[]>([])
+     ...
+      67  
+      68  const fmtSize = (n: number) => n < 1024 ? `${n} B` : n < 1024 *
+           1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).to
+          Fixed(1)} MB`
+      69  
+      69 -/* ---------- 提交经验分享 ---------- */                       
+      70 +/* ---------- 提交经验分享（FIX6 第 5 项：先提交文字主条目，附 
+         +件通过 parent_id 关联） ---------- */                          
+      71  const submitExperience = async () => {
+      72    const t = title.value.trim()
+      73    const content = body.value.trim()
+     ...
+      75    if (!content) { showFailToast('请输入经验内容'); return }
+      76    submitting.value = true
+      77    try {
+      77 -    await uploadText({ title: t, content, category: 'experience
+         -' })                                                           
+      78 +    const res = await uploadText({ title: t, content, category:
+         + 'experience' })                                               
+      79 +    latestDocId.value = res.doc_id                             
+      80      showToast({ type: 'success', message: '已提交，进入待审核' 
+          })
+      81      title.value = ''
+      82      body.value = ''
+     ...
+       88    }
+       89  }
+       90  
+       89 -/* ---------- 可选附件上传 ---------- */                      
+       91 +/* ---------- 可选附件上传（FIX6 第 5 项：关联到最新主条目） -
+          +--------- */                                                  
+       92  const handleFiles = async (files: FileList | File[] | null) =>
+            {
+       93    if (!files) return
+       94    const arr = Array.from(files)
+       95    if (!arr.length) return
+       96 +                                                              
+       97 +  // 若有未提交的文字经验，先提醒用户先提交主条目             
+       98 +  const titleTrimmed = title.value.trim()                     
+       99 +  const bodyTrimmed = body.value.trim()                       
+      100 +  if (titleTrimmed || bodyTrimmed) {                          
+      101 +    showFailToast('请先提交文字经验，再上传附件。附件会自动关 
+          +联上一条主条目。')                                            
+      102 +    return                                                    
+      103 +  }                                                           
+      104 +                                                              
+      105 +  // 如果没有上一条主条目 ID，提示先进攻文字经验              
+      106 +  if (!latestDocId.value) {                                   
+      107 +    showFailToast('请先提交一条文字经验，附件作为其补充材料关 
+          +联。')                                                        
+      108 +    return                                                    
+      109 +  }                                                           
+      110 +                                                              
+      111    for (const f of arr) {
+      112      const ext = (f.name.split('.').pop() || '').toLowerCase()
+      113      if (!ALLOWED.includes(ext)) {
+     ...
+      117      const item: UploadItem = { name: f.name, size: f.size, sta
+           tus: 'uploading' }
+      118      uploads.value.push(item)
+      119      try {
+      103 -      const res = await uploadDoc(f)                          
+      120 +      // FIX6 第 5 项：上传时携带 parent_id 关联到主条目      
+      121 +      const res = await uploadDoc(f, latestDocId.value)       
+      122        item.docId = res.doc_id
+      123        item.status = 'done'
+      106 -      showToast({ type: 'success', message: `${f.name} 已提交 
+          -，等待审核` })                                                
+      124 +      showToast({ type: 'success', message: `${f.name} 已作为 
+          +附件提交，等待审核` })                                        
+      125      } catch {
+      126        item.status = 'failed'
+      127        showFailToast(`${f.name} 上传失败`)
+     ...
+      239                      placeholder="可使用 Markdown 标题、列表、
+           表格记录现象、原因、处理步骤……如需附图片/手册，可在下方添加附
+           件。"
+      240                      :disabled="submitting"
+      241                      class="w-full px-3 py-2 rounded-btn border
+            border-border bg-bg outline-none focus:border-accent focus:bg
+           -card text-sm leading-relaxed"></textarea>
+      224 -          <div class="text-[11px] text-text-2 mt-1">提交后状态
+          -为「待审」，由审核员通过后才进入检索 / 图谱</div>             
+      242 +          <div class="text-[11px] text-text-2 mt-1">          
+      243 +            提交后状态为「待审」。如需添加附件，请在提交文字后
+          +再添加，附件会自动关联为本条经验的补充材料。                  
+      244 +          </div>                                              
+      245          </div>
+      246          <div class="flex justify-end">
+      247            <button class="h-10 px-5 rounded-btn bg-accent hover
+           :bg-accent-2 text-white font-semibold flex items-center gap-2 
+           disabled:opacity-60"
+     ...
+      253          </div>
+      254        </section>
+      255  
+      236 -      <!-- 可选附件上传 -->                                   
+      256 +      <!-- 可选附件上传（FIX6 第 5 项：上传时自动关联主条目） 
+          +-->                                                           
+      257        <section class="industrial-card p-5">
+      258          <div class="text-sm font-semibold mb-2 flex items-cent
+           er gap-2">
+      259            <Paperclip class="w-4 h-4 text-text-2" /> 添加附件（
+           可选）
+      260          </div>
+      261 +        <div class="text-xs text-text-2 mb-2">                
+      262 +          {{ latestDocId ? `附件将关联到最近提交的主条目 #${la
+          +testDocId}` : '请先提交一条文字经验，附件会自动关联' }}       
+      263 +        </div>                                                
+      264          <div @click="fileInput?.click()"
+      265               @dragover.prevent="dragging = true"
+      266               @dragleave.prevent="dragging = false"
+     ...
+      285              <span class="flex-1 truncate">{{ u.name }}</span>
+      286              <span class="text-xs text-text-2 mono">{{ fmtSize(
+           u.size) }}</span>
+      287              <span v-if="u.status === 'uploading'" class="text-
+           xs text-text-2">上传中…</span>
+      265 -            <span v-else-if="u.status === 'done'" class="text-
+          -xs text-warning mono">#{{ u.docId }} · 待审</span>            
+      288 +            <span v-else-if="u.status === 'done'" class="text-
+          +xs text-warning mono">#{{ u.docId }} · 附件 · 待审</span>     
+      289              <span v-else class="text-xs text-danger">失败</spa
+           n>
+      290            </li>
+      291          </ul>
+     ...
+      327                  <span class="px-1.5 py-0.5 rounded-pill border
+           " :class="STATUS_CLS[d.status] || 'bg-bg border-border'">
+      328                    {{ STATUS_LABEL[d.status] || d.status }}
+      329                  </span>
+      330 +                <span v-if="d.attachments?.length" class="text
+          +-xs text-accent">                                             
+      331 +                  · 附件 x{{ d.attachments.length }}          
+      332 +                </span>                                       
+      333                  <span class="mono opacity-70 hidden sm:inline"
+           >{{ d.created_at }}</span>
+      334                </div>
+      335                <div v-if="d.status === 'rejected' && d.reason" 
+           class="mt-1 text-xs text-danger">
+     ...
+      349        </div>
+      350      </div>
+      351    </div>
+      326 -</template>                                                   
+      352 +</template>                                                   
+      353   No newline at end of file
+
+  Thought for 20s (ctrl+o to expand)
+
+● Now update the frontend API to support parent_id in uploadDoc:
+
+● Update(src/api/kb.ts)
+  ⎿  Added 5 lines, removed 2 lines
+      35    status?: KbStatus
+      36  }
+      37  
+      38 -/** 上传文件：员工 → pending；管理员/审查员 → approved（后端按 
+         -JWT 角色判定） */                                              
+      39 -export const uploadDoc = (file: File): Promise<KbUploadResult> 
+         -=> {                                                           
+      38 +/** FIX6 第 5 项：上传文件时可指定 parent_id 关联到主条目 */   
+      39 +export const uploadDoc = (file: File, parentId?: number): Promi
+         +se<KbUploadResult> => {                                        
+      40    const form = new FormData()
+      41    form.append('file', file)
+      42 +  if (parentId !== undefined) {                                
+      43 +    form.append('parent_id', String(parentId))                 
+      44 +  }                                                            
+      45    return rawCall<KbUploadResult>(() =>
+      46      request.post<KbUploadResult>('/kb/upload', form, {
+      47        headers: { 'Content-Type': 'multipart/form-data' },
+
+  Thought for 10s (ctrl+o to expand)
+
+● The backend accepts parent_id via Query, but frontend sends it via form data.
+  Let me fix the backend to accept it from Form:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 1 line, removed 1 line
+      1  import os, shutil, io, mimetypes
+      2  from typing import Optional
+      3 -from fastapi import APIRouter, Depends, UploadFile, File, HTTPEx
+        -ception, Query                                                  
+      3 +from fastapi import APIRouter, Depends, UploadFile, File, Form, 
+        +HTTPException, Query                                            
+      4  from fastapi.responses import StreamingResponse, FileResponse
+      5  from pydantic import BaseModel
+      6  from sqlalchemy.orm import Session
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 1 line, removed 1 line
+      46  
+      47  @router.post("/upload")
+      48  async def upload(file: UploadFile = File(...),
+      49 -                 parent_id: Optional[int] = Query(None, descrip
+         -tion="FIX6 第 5 项：经验主条目 id"),                           
+      49 +                 parent_id: Optional[int] = Form(None, descript
+         +ion="FIX6 第 5 项：经验主条目 id"),                            
+      50                   db: Session = Depends(get_db),
+      51                   user: User = Depends(get_current_user)):
+      52      fname = file.filename or ""
+
+  Thought for 28s (ctrl+o to expand)
+
+● Now update the review endpoint to sync attachment statuses:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 12 lines, removed 2 lines
+      165      if not d:
+      166          raise HTTPException(404, "文档不存在")
+      167      action = (body.action or "").lower()
+      168 +    target_status = ""                                        
+      169      if action == "approve":
+      169 -        d.status = "approved"                                 
+      170 +        target_status = "approved"                            
+      171          d.review_reason = None
+      172          text = d.content or (read_any(d.file_path) if d.file_p
+           ath else "")
+      173          if text:
+      174              remove_document(d.id)
+      175              ingest_document(d.id, d.title, text)
+      176 +        # FIX6 第 5 项：同步通过附件                          
+      177 +        for att in db.query(Document).filter(Document.parent_i
+          +d == doc_id).all():                                           
+      178 +            att.status = "approved"; att.reviewer_id = user.id
+          +; att.reviewed_at = datetime.utcnow()                         
+      179      elif action in ("reject", "take_down"):
+      180          if not (body.reason or "").strip():
+      181              raise HTTPException(400, "请填写理由")
+      178 -        d.status = "rejected" if action == "reject" else "take
+          -n_down"                                                       
+      182 +        target_status = "rejected" if action == "reject" else 
+          +"taken_down"                                                  
+      183 +        d.status = target_status                              
+      184          d.review_reason = body.reason.strip()
+      185          remove_document(d.id)
+      186 +        # FIX6 第 5 项：同步驳回附件                          
+      187 +        for att in db.query(Document).filter(Document.parent_i
+          +d == doc_id).all():                                           
+      188 +            setattr(att, "status", target_status); att.review_
+          +reason = body.reason.strip()                                  
+      189 +            remove_document(att.id)                           
+      190      else:
+      191          raise HTTPException(400, f"非法操作：{body.action}")
+      192 +    d.status = target_status if target_status else d.status   
+      193      d.reviewer_id = user.id
+      194      d.reviewed_at = datetime.utcnow()
+      195      db.commit()
+
+● Now update KbDoc type in the frontend to include attachments:
+
+● Update(src/api/kb.ts)
+  ⎿  Added 2 lines
+      23    uploaderId?: number
+      24    uploader?: string
+      25    reason?: string
+      26 +  // FIX6 第 5 项：主条目下挂的附件子文档（仅主条目存在该字段）
+      27 +  attachments?: KbDoc[]                                        
+      28  }
+      29  
+      30  export interface KbDocDetail extends KbDoc {
+
+● Item 6: KG node editing & AI-knowledge editing
+
+  Let me look at current KG view:
+
+  Read 2 files (ctrl+o to expand)
+
+● Now add backend KG editing endpoints. Since the graph is dynamically computed
+  from the chunks, I need a persistent override layer. Let me create a simple
+  override table:
+
+● Update(backend/app/models/__init__.py)
+  ⎿  Added 13 lines
+      79      answer = Column(Text)
+      80      sources = Column(JSON)
+      81      created_at = Column(DateTime, default=datetime.utcnow)
+      82 +                                                               
+      83 +                                                               
+      84 +# FIX6 第 6 项：审查员 / 管理员对图谱节点/边的人工修正与删除   
+      85 +class KGOverride(Base):                                        
+      86 +    """图谱编辑覆盖层：人工修正的节点/边在动态构图后叠加。"""  
+      87 +    __tablename__ = "kg_overrides"                             
+      88 +    id = Column(Integer, primary_key=True)                     
+      89 +    kind = Column(String(8))                   # 'node' / 'edge
+         +'                                                              
+      90 +    target_id = Column(String(128), index=True)  # node_id 或 "
+         +{source}|{target}"                                             
+      91 +    op = Column(String(8))                     # 'update' / 'de
+         +lete'                                                          
+      92 +    payload = Column(JSON)                     # 更新内容（labe
+         +l/desc/rel 等）                                                
+      93 +    operator_id = Column(Integer, ForeignKey("users.id"))      
+      94 +    created_at = Column(DateTime, default=datetime.utcnow)     
+
+● Now add the KG override endpoints, and adjust the get_graph endpoint to apply
+  overrides. Also add source_docs while we're at it:
+
+● Update(backend/app/api/kg.py)
+  ⎿  Added 8 lines, removed 4 lines
+      1  """
+      2 -知识图谱 API（FIX4 第 3 项）                                    
+      2 +知识图谱 API（FIX4 第 3 项 / FIX6 第 6 项 / FIX6 第 8 项）      
+      3  
+      4  约束：
+      5  - 图谱必须基于已审核（status=ready/approved）的真实文档构建，禁
+         止 mock。
+     ...
+       7  - 实体抽取使用 **关键字+正则** 的轻量启发式（设备 / 部件 / 故障
+           / 维修方法），
+       8    在演示环境无 LLM 调用成本，且可控。
+       9  - 边由"同一切片内共现"自动生成；同一关系对会按出现次数累计权重
+          ，超过阈值才落入图。
+      10 +- FIX6 第 6 项：审查员 / 管理员可以对节点 label/desc 做修正、删
+         +除节点或边；                                                   
+      11 +  改动持久化在 kg_overrides 表，在每次构图后叠加。             
+      12 +- FIX6 第 8 项：节点回填 source_docs（来源文档列表）+ 支持按文 
+         +档筛选。                                                       
+      13  """
+      14  
+      15  from __future__ import annotations
+      16  import re
+      14 -from typing import Iterable                                    
+      17 +from typing import Iterable, Optional                          
+      18  from fastapi import APIRouter, Depends, HTTPException, Query
+      19 +from pydantic import BaseModel                                 
+      20  from sqlalchemy.orm import Session
+      21  
+      22  from app.core.db import get_db
+      19 -from app.core.security import get_current_user                 
+      20 -from app.models import Document                                
+      23 +from app.core.security import get_current_user, require_auditor
+      24 +from app.models import Document, KGOverride, User              
+      25  from app.services.rag import _col  # 直接复用 Chroma 集合
+      26  
+      27  router = APIRouter(tags=["kg"])
+
+  Thought for 7s (ctrl+o to expand)
+
+● Now update the graph endpoint to include source_docs and apply overrides, plus
+  add node/edge CRUD endpoints:
+
+● Update(backend/app/api/kg.py)
+  ⎿  Added 152 lines, removed 8 lines
+      131      return out
+      132  
+      133  
+      134 +def _load_overrides(db: Session):                             
+      135 +    """加载所有图谱编辑覆盖：返回 {target_id: {op, payload}}  
+          +和 deleted_target_ids 集合。"""                               
+      136 +    rows = db.query(KGOverride).all()                         
+      137 +    node_updates: dict[str, dict] = {}                        
+      138 +    deleted_nodes: set[str] = set()                           
+      139 +    edge_updates: dict[str, dict] = {}                        
+      140 +    deleted_edges: set[tuple[str, str]] = set()               
+      141 +    for r in rows:                                            
+      142 +        if r.kind == "node":                                  
+      143 +            if r.op == "delete":                              
+      144 +                deleted_nodes.add(r.target_id)                
+      145 +            elif r.op == "update" and r.payload:              
+      146 +                node_updates[r.target_id] = r.payload         
+      147 +        elif r.kind == "edge":                                
+      148 +            if r.op == "delete":                              
+      149 +                a, b = r.target_id.split("|", 1)              
+      150 +                deleted_edges.add((a, b))                     
+      151 +            elif r.op == "update" and r.payload:              
+      152 +                edge_updates[r.target_id] = r.payload         
+      153 +    return node_updates, deleted_nodes, edge_updates, deleted_
+          +edges                                                         
+      154 +                                                              
+      155 +                                                              
+      156  @router.get("/api/kg/graph")
+      157  def get_graph(
+      158      doc_ids: str = Query("", description="逗号分隔的已审 doc_i
+           d 列表"),
+      159 +    filter_doc_id: Optional[int] = Query(None, description="FI
+          +X6 第 8 项：按文档筛选"),                                     
+      160      db: Session = Depends(get_db),
+      161      _=Depends(get_current_user),
+      162  ):
+      163      """
+      141 -    GET /api/kg/graph?doc_ids=1,2,3                           
+      164 +    GET /api/kg/graph?doc_ids=1,2,3&filter_doc_id=5           
+      165      返回基于已审文档的 { nodes, edges }。
+      166      无文档 / 无实体时返回空图。
+      167 +    FIX6 第 8 项：节点回填 source_docs（来源文档列表）。      
+      168 +    FIX6 第 6 项：叠加人工编辑覆盖层。                        
+      169      """
+      170      raw_ids: list[int] = []
+      171      for s in (doc_ids or "").split(","):
+     ...
+      183      if not valid_ids:
+      184          return {"nodes": [], "edges": []}
+      185  
+      186 +    node_overrides, deleted_nodes, edge_overrides, deleted_edg
+          +es = _load_overrides(db)                                      
+      187 +                                                              
+      188      # node_id 用 "{cat}:{label}"，保证跨文档同名实体合并
+      162 -    node_meta: dict[str, dict] = {}        # node_id -> { labe
+          -l, type, docId, chunkId, weight }                             
+      189 +    node_meta: dict[str, dict] = {}        # node_id -> { labe
+          +l, type, docId, chunkId, weight, sourceDocIds }               
+      190      pair_count: dict[tuple[str, str], dict] = {}  # (a,b) -> {
+            rel, weight }
+      191  
+      192      for did in valid_ids:
+      193          chunks = _query_doc_chunks(did)
+      194          for ch in chunks:
+      195              ents_by_cat = _extract_entities(ch["content"])
+      169 -            # 把本切片所有实体扁平为 (cat, label)             
+      196              flat: list[tuple[str, str]] = []
+      197              for cat, names in ents_by_cat.items():
+      198                  for n in names:
+      199                      flat.append((cat, n))
+      174 -            # 注册节点（首次出现时记录 docId/chunkId 供前端跳 
+          -转）                                                          
+      200 +            # 注册节点 + 跟踪 source_doc_ids                  
+      201              for cat, name in flat:
+      202                  nid = f"{cat}:{name}"
+      203                  if nid not in node_meta:
+     ...
+      208                          "docId": str(did),
+      209                          "chunkId": ch["id"],
+      210                          "weight": 1,
+      211 +                        "sourceDocIds": {did},                
+      212                      }
+      213                  else:
+      214                      node_meta[nid]["weight"] += 1
+      188 -            # 共现成边（同切片内两两组合，去自环）            
+      215 +                    node_meta[nid]["sourceDocIds"].add(did)   
+      216 +            # 共现成边                                        
+      217              seen_pair: set[tuple[str, str]] = set()
+      218              for i in range(len(flat)):
+      219                  for j in range(i + 1, len(flat)):
+     ...
+      223                          continue
+      224                      key = (a, b) if a < b else (b, a)
+      225                      if key in seen_pair:
+      198 -                        continue  # 同切片内同对仅算一次      
+      226 +                        continue                              
+      227                      seen_pair.add(key)
+      228                      rec = pair_count.setdefault(key, {
+      229                          "rel": _rel_label(flat[i][0], flat[j][
+           0]),
+     ...
+      231                      })
+      232                      rec["weight"] += 1
+      233  
+      234 +    # 应用人工编辑覆盖（FIX6 第 6 项）                        
+      235 +    for nid, p in node_overrides.items():                     
+      236 +        if nid in node_meta:                                  
+      237 +            if "label" in p:                                  
+      238 +                node_meta[nid]["label"] = p["label"]          
+      239 +            if "desc" in p:                                   
+      240 +                node_meta[nid]["desc"] = p["desc"]            
+      241 +                                                              
+      242      # 节点裁剪 + 排序
+      207 -    nodes = sorted(node_meta.values(), key=lambda x: -x["weigh
+          -t"])[:_MAX_NODES]                                             
+      243 +    nodes = sorted(                                           
+      244 +        [n for n in node_meta.values() if n["id"] not in delet
+          +ed_nodes],                                                    
+      245 +        key=lambda x: -x["weight"]                            
+      246 +    )[:_MAX_NODES]                                            
+      247      keep_ids = {n["id"] for n in nodes}
+      248  
+      249      edges = []
+     ...
+      252              continue
+      253          if a not in keep_ids or b not in keep_ids:
+      254              continue
+      255 +        if (a, b) in deleted_edges or (b, a) in deleted_edges:
+      256 +            continue                                          
+      257 +        edge_key = f"{a}|{b}" if a < b else f"{b}|{a}"        
+      258 +        rel = rec["rel"]                                      
+      259 +        if edge_key in edge_overrides and "rel" in edge_overri
+          +des[edge_key]:                                                
+      260 +            rel = edge_overrides[edge_key]["rel"]             
+      261          edges.append({
+      262              "source": a,
+      263              "target": b,
+      219 -            "rel": rec["rel"],                                
+      264 +            "rel": rel,                                       
+      265              "weight": rec["weight"],
+      266          })
+      267  
+      268 +    # FIX6 第 8 项：按文档筛选                                
+      269 +    if filter_doc_id is not None:                             
+      270 +        keep_ids = {n["id"] for n in nodes if filter_doc_id in
+          + n.get("sourceDocIds", set())}                                
+      271 +        nodes = [n for n in nodes if n["id"] in keep_ids]     
+      272 +        edges = [e for e in edges if e["source"] in keep_ids a
+          +nd e["target"] in keep_ids]                                   
+      273 +                                                              
+      274 +    # FIX6 第 8 项：构建 source_docs 列表                     
+      275 +    all_doc_ids = set()                                       
+      276 +    for n in nodes:                                           
+      277 +        all_doc_ids.update(n.get("sourceDocIds", set()))      
+      278 +    if all_doc_ids:                                           
+      279 +        doc_map = {}                                          
+      280 +        for d in db.query(Document).filter(Document.id.in_(lis
+          +t(all_doc_ids))).all():                                       
+      281 +            doc_map[d.id] = {"id": d.id, "title": d.title, "do
+          +c_type": d.type or "unknown"}                                 
+      282 +        for n in nodes:                                       
+      283 +            n["source_docs"] = [doc_map[did] for did in sorted
+          +(n.get("sourceDocIds", set())) if did in doc_map]             
+      284 +            # 移除内部集合，不暴露给前端                      
+      285 +            n.pop("sourceDocIds", None)                       
+      286 +                                                              
+      287      return {"nodes": nodes, "edges": edges}
+      288  
+      289  
+      290 +# ==================== FIX6 第 6 项：图谱节点/边人工编辑端点 =
+          +===================                                           
+      291 +                                                              
+      292 +class NodeUpdateIn(BaseModel):                                
+      293 +    label: Optional[str] = None                               
+      294 +    desc: Optional[str] = None                                
+      295 +                                                              
+      296 +                                                              
+      297 +class EdgeUpdateIn(BaseModel):                                
+      298 +    rel: Optional[str] = None                                 
+      299 +                                                              
+      300 +                                                              
+      301 +@router.put("/api/kg/node/{node_id}")                         
+      302 +def update_node(node_id: str, body: NodeUpdateIn, db: Session 
+          += Depends(get_db),                                            
+      303 +                user: User = Depends(require_auditor)):       
+      304 +    """修改节点 label / 描述。只存储覆盖层，不修改原始 chunk。
+          +"""                                                           
+      305 +    payload = {}                                              
+      306 +    if body.label is not None:                                
+      307 +        payload["label"] = body.label.strip()                 
+      308 +    if body.desc is not None:                                 
+      309 +        payload["desc"] = body.desc.strip()                   
+      310 +    if not payload:                                           
+      311 +        raise HTTPException(400, "至少提供 label 或 desc")    
+      312 +    # Upsert                                                  
+      313 +    existing = db.query(KGOverride).filter(                   
+      314 +        KGOverride.kind == "node", KGOverride.target_id == nod
+          +e_id, KGOverride.op == "update"                               
+      315 +    ).first()                                                 
+      316 +    if existing:                                              
+      317 +        existing.payload = {**existing.payload, **payload} if 
+          +existing.payload else payload                                 
+      318 +        existing.operator_id = user.id                        
+      319 +    else:                                                     
+      320 +        db.add(KGOverride(kind="node", target_id=node_id, op="
+          +update", payload=payload, operator_id=user.id))               
+      321 +    db.commit()                                               
+      322 +    return {"ok": True}                                       
+      323 +                                                              
+      324 +                                                              
+      325 +@router.delete("/api/kg/node/{node_id}")                      
+      326 +def delete_node(node_id: str, db: Session = Depends(get_db),  
+      327 +                user: User = Depends(require_auditor)):       
+      328 +    """标记删除节点（从图谱中移除，原始 chunk 不受影响）。""" 
+      329 +    existing = db.query(KGOverride).filter(                   
+      330 +        KGOverride.kind == "node", KGOverride.target_id == nod
+          +e_id, KGOverride.op == "delete"                               
+      331 +    ).first()                                                 
+      332 +    if not existing:                                          
+      333 +        db.add(KGOverride(kind="node", target_id=node_id, op="
+          +delete", payload=None, operator_id=user.id))                  
+      334 +    db.commit()                                               
+      335 +    return {"ok": True}                                       
+      336 +                                                              
+      337 +                                                              
+      338 +@router.put("/api/kg/edge/{edge_id}")                         
+      339 +def update_edge(edge_id: str, body: EdgeUpdateIn, db: Session 
+          += Depends(get_db),                                            
+      340 +                user: User = Depends(require_auditor)):       
+      341 +    """修改边的关系名。"""                                    
+      342 +    if not (body.rel or "").strip():                          
+      343 +        raise HTTPException(400, "rel 不能为空")              
+      344 +    existing = db.query(KGOverride).filter(                   
+      345 +        KGOverride.kind == "edge", KGOverride.target_id == edg
+          +e_id, KGOverride.op == "update"                               
+      346 +    ).first()                                                 
+      347 +    if existing:                                              
+      348 +        existing.payload = {"rel": body.rel.strip()}          
+      349 +        existing.operator_id = user.id                        
+      350 +    else:                                                     
+      351 +        db.add(KGOverride(kind="edge", target_id=edge_id, op="
+          +update",                                                      
+      352 +                         payload={"rel": body.rel.strip()}, op
+          +erator_id=user.id))                                           
+      353 +    db.commit()                                               
+      354 +    return {"ok": True}                                       
+      355 +                                                              
+      356 +                                                              
+      357 +@router.delete("/api/kg/edge/{edge_id}")                      
+      358 +def delete_edge(edge_id: str, db: Session = Depends(get_db),  
+      359 +                user: User = Depends(require_auditor)):       
+      360 +    """标记删除边。"""                                        
+      361 +    existing = db.query(KGOverride).filter(                   
+      362 +        KGOverride.kind == "edge", KGOverride.target_id == edg
+          +e_id, KGOverride.op == "delete"                               
+      363 +    ).first()                                                 
+      364 +    if not existing:                                          
+      365 +        db.add(KGOverride(kind="edge", target_id=edge_id, op="
+          +delete", payload=None, operator_id=user.id))                  
+      366 +    db.commit()                                               
+      367 +    return {"ok": True}                                       
+      368 +                                                              
+      369 +                                                              
+      370  @router.get("/api/kb/{doc_id}/chunk/{chunk_id}")
+      371  def get_chunk(
+      372      doc_id: str,
+
+  Thought for 21s (ctrl+o to expand)
+
+● Now add the frontend API methods for KG editing and source_docs support:
+
+● Write(src/api/kg.ts)
+  ⎿  Added 29 lines, removed 2 lines
+       3  
+       4  /**
+       5   * 知识图谱（基于已审通过的真实文档，无 mock）
+       6 + * FIX6 第 8 项：节点增加 source_docs 字段                     
+       7 + * FIX6 第 6 项：审核员/管理员可编辑节点/边                    
+       8   */
+       9  export type KGType = 'device' | 'part' | 'fault' | 'method' | '
+          case' | 'manual'
+      10  
+     ...
+      18    manualRef?: string
+      19    docId?: string
+      20    chunkId?: string
+      21 +  // FIX6 第 8 项：来源文档列表                                
+      22 +  source_docs?: { id: number; title: string; doc_type: string }
+         +[]                                                             
+      23  }
+      24  export interface KGEdge { source: string; target: string; rel: 
+          string }
+      25  export interface KGGraph { nodes: KGNode[]; edges: KGEdge[] }
+     ...
+      30   * 拉取图谱：把已审通过的 doc_ids 传给后端。
+      31   * 缺省入参时自动取 status=approved/ready 的文档；无文档则返回
+          空图（不触发请求）。
+      32   */
+      29 -export const getGraph = async (docIds?: string[]): Promise<KGGr
+         -aph> => {                                                      
+      33 +export const getGraph = async (docIds?: string[], filterDocId?:
+         + number): Promise<KGGraph> => {                                
+      34    let ids = docIds
+      35    if (!ids) {
+      36      const docs = await listDocs()
+     ...
+      38    }
+      39    if (!ids.length) return EMPTY_GRAPH
+      40    return rawCall<KGGraph>(() =>
+      37 -    request.get<KGGraph>('/kg/graph', { params: { doc_ids: ids!
+         -.join(',') } }))                                               
+      41 +    request.get<KGGraph>('/kg/graph', {                        
+      42 +      params: {                                                
+      43 +        doc_ids: ids!.join(','),                               
+      44 +        filter_doc_id: filterDocId || undefined                
+      45 +      }                                                        
+      46 +    }))                                                        
+      47  }
+      48  
+      49  /** 节点对应原文片段 GET /api/kb/{docId}/chunk/{chunkId} */
+     ...
+      56  }
+      57  export const getChunk = (docId: string, chunkId: string) =>
+      58    rawCall<ChunkContent>(() => request.get<ChunkContent>(`/kb/${
+          docId}/chunk/${chunkId}`))
+      59 +                                                               
+      60 +// ---- FIX6 第 6 项：图谱编辑 ----                            
+      61 +                                                               
+      62 +/** 更新节点 label/desc */                                     
+      63 +export const updateNode = (nodeId: string, body: { label?: stri
+         +ng; desc?: string }) =>                                        
+      64 +  rawCall<{ ok: boolean }>(() => request.put<{ ok: boolean }>(`
+         +/kg/node/${encodeURIComponent(nodeId)}`, body))                
+      65 +                                                               
+      66 +/** 删除节点 */                                                
+      67 +export const deleteNode = (nodeId: string) =>                  
+      68 +  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }
+         +>(`/kg/node/${encodeURIComponent(nodeId)}`))                   
+      69 +                                                               
+      70 +/** 更新边关系 */                                              
+      71 +export const updateEdge = (edgeId: string, body: { rel: string 
+         +}) =>                                                          
+      72 +  rawCall<{ ok: boolean }>(() => request.put<{ ok: boolean }>(`
+         +/kg/edge/${encodeURIComponent(edgeId)}`, body))                
+      73 +                                                               
+      74 +/** 删除边 */                                                  
+      75 +export const deleteEdge = (edgeId: string) =>                  
+      76 +  rawCall<{ ok: boolean }>(() => request.delete<{ ok: boolean }
+         +>(`/kg/edge/${encodeURIComponent(edgeId)}`))                   
+      77   No newline at end of file
+● Now update the KG Pc.vue with the editing UI. Let me also support displaying
+  source_docs and filtering. I'll add an edit/delete dialog:
+
+● Update(src/views/kg/Pc.vue)
+  ⎿  Added 257 lines, removed 34 lines
+       1  <script setup lang="ts">
+       2  /**
+       3 - * 知识图谱 · PC（FIX3 第 5 项）                               
+       3 + * 知识图谱 · PC（FIX3 第 5 项 / FIX6 第 6 项 + 第 8 项）      
+       4   * - 数据来源：已审入库的文档 → /api/kg/graph?doc_ids=...
+       5   * - 严禁硬编码 mock 节点；图谱为空时显示空态
+       6   * - 节点详情面板拉取真实原文片段（GET /api/kb/{docId}/chunk/{c
+          hunkId}）
+       7 + * - FIX6 第 6 项：审查员/管理员对节点 label/desc 做修正、删除 
+         +节点或边                                                       
+       8 + * - FIX6 第 8 项：节点弹窗展示 source_docs 关联文档；侧栏支持 
+         +按文档筛选                                                     
+       9   */
+      10  import { ref, onMounted, computed, watch, nextTick } from 'vue'
+      11  import { useRouter } from 'vue-router'
+      10 -import { getGraph, getChunk, type KGGraph, type KGNode, type KG
+         -Type, type ChunkContent } from '@/api/kg'                      
+      11 -import { Search, RotateCcw, Download, Box, ExternalLink, Loader
+         -, AlertTriangle } from 'lucide-vue-next'                       
+      12 +import {                                                       
+      13 +  getGraph, getChunk, updateNode, deleteNode, updateEdge, delet
+         +eEdge,                                                         
+      14 +  type KGGraph, type KGNode, type KGType, type ChunkContent, ty
+         +pe KGEdge                                                      
+      15 +} from '@/api/kg'                                              
+      16 +import { listDocs, type KbDoc, isApprovedStatus } from '@/api/k
+         +b'                                                             
+      17 +import { useUserStore } from '@/stores/user'                   
+      18 +import { showToast, showFailToast, showConfirmDialog } from 'va
+         +nt'                                                            
+      19 +import { Search, RotateCcw, Download, Box, ExternalLink, Loader
+         +, AlertTriangle, Edit3, Trash2, FileText } from 'lucide-vue-nex
+         +t'                                                             
+      20  import * as echarts from 'echarts/core'
+      21  import { GraphChart } from 'echarts/charts'
+      22  import { TooltipComponent, LegendComponent, TitleComponent } fr
+          om 'echarts/components'
+     ...
+      25  echarts.use([GraphChart, TooltipComponent, LegendComponent, Tit
+          leComponent, CanvasRenderer])
+      26  
+      27  const router = useRouter()
+      28 +const userStore = useUserStore()                               
+      29 +const canEdit = computed(() => userStore.isAuditor)   // audito
+         +r 或 admin                                                     
+      30  
+      31  const graph = ref<KGGraph | null>(null)
+      32  const loading = ref(false)
+      33  const errorMsg = ref('')
+      34  const selected = ref<KGNode | null>(null)
+      35 +const selectedEdge = ref<KGEdge | null>(null)                  
+      36  const chunkLoading = ref(false)
+      37  const chunk = ref<ChunkContent | null>(null)
+      38  
+      39  const filterType = ref<'all' | KGType>('all')
+      40 +const filterDocId = ref<number | undefined>(undefined)   // FIX
+         +6 第 8 项：按文档筛选                                          
+      41 +const docOptions = ref<KbDoc[]>([])                            
+      42  const q = ref('')
+      43  const chartRef = ref<HTMLDivElement>()
+      44  let inst: echarts.ECharts | null = null
+      45  
+      46 +// FIX6 第 6 项：编辑对话框状态                                
+      47 +const showEditNode = ref(false)                                
+      48 +const editNodeLabel = ref('')                                  
+      49 +const editNodeDesc = ref('')                                   
+      50 +const showEditEdge = ref(false)                                
+      51 +const editEdgeRel = ref('')                                    
+      52 +                                                               
+      53  const TYPE_META: Record<KGType, { name: string; color: string; 
+          symbol: string }> = {
+      54    device: { name: '设备', color: '#0B2545', symbol: 'roundRect'
+           },
+      55    part:   { name: '部件', color: '#00B7C2', symbol: 'circle' },
+     ...
+      83    const cats = (Object.keys(TYPE_META) as KGType[])
+      84    const isLarge = filteredNodes.value.length > 200
+      85  
+      66 -  // FIX5 第 14 项：知识图谱打开动画优化                       
+      67 -  // - 节点初始按"环形 + 轻微抖动"分布，避免堆叠中心后炸开的突 
+         -兀感                                                           
+      68 -  // - 节点先渐入、边随后渐入（分层渐入）                      
+      69 -  // - 使用弹性缓动（elasticOut）让仿真稳定阶段的过渡更平滑    
+      86    const count = filteredNodes.value.length || 1
+      87    const radius = Math.max(180, Math.min(420, count * 6))
+      88    const nodes = filteredNodes.value.map((n, i) => {
+      89      const angle = (i / count) * Math.PI * 2
+      74 -    // 在最终半径附近预放置 + 小幅随机偏移，作为仿真初值       
+      75 -    const jitter = ((i * 9301 + 49297) % 233280) / 233280 - 0.5
+         -   // 确定性伪随机，避免 Math.random 抖动                      
+      90 +    const jitter = ((i * 9301 + 49297) % 233280) / 233280 - 0.5
+      91      const r = radius * (0.85 + jitter * 0.2)
+      92      return {
+      93        id: n.id,
+     ...
+      106    const links = visibleEdges.value.map(e => ({
+      107      source: e.source, target: e.target, value: e.rel,
+      108      label: { show: false, formatter: e.rel, fontSize: 10, colo
+           r: '#6B7280' },
+       94 -    lineStyle: { color: '#C2C9D6', curveness: 0.1 }           
+      109 +    lineStyle: { color: '#C2C9D6', curveness: 0.1 },          
+      110 +    raw: e                                                    
+      111    }))
+      112    inst.setOption({
+       97 -    // 全局动画：节点先到位（elasticOut，约 700ms），边延后渐 
+          -入                                                            
+      113      animation: true,
+      114      animationDuration: 700,
+      115      animationEasing: 'elasticOut',
+     ...
+      131      legend: [{ data: CATEGORIES.map(c => c.name), bottom: 12, 
+           icon: 'circle' }],
+      132      series: [{
+      133        type: 'graph',
+      119 -      // 节点已带 x/y 初始坐标 → 用 'none' 直接以预置位置开局 
+          -，再叠加轻度 force 让结构自然                                 
+      134        layout: 'force',
+      135        data: nodes,
+      136        links,
+     ...
+      139        draggable: true,
+      140        large: isLarge,
+      141        focusNodeAdjacency: true,
+      128 -      // 关键：layoutAnimation:false 让 force 仿真在一帧内"安 
+          -抚"到稳态，避免逐帧蠕动                                       
+      129 -      // initLayout:'circular' 是预置位置失败时的兜底         
+      142        force: { repulsion: 220, edgeLength: 110, gravity: 0.08,
+            layoutAnimation: false, initLayout: 'circular' },
+      143        emphasis: { focus: 'adjacency', lineStyle: { width: 3, c
+           olor: '#F26B1F' }, label: { show: true, fontWeight: 700 } },
+      144        lineStyle: { width: 1.2, opacity: 0.7 },
+      133 -      // 边随节点稳定后再渐入（约 200ms 延迟）                
+      145        animationDelay: (idx: number, params: any) => params?.da
+           taType === 'edge' ? 200 + idx * 6 : idx * 8
+      146      }]
+      147    }, { notMerge: true })
+     ...
+      153    inst = reused || echarts.init(chartRef.value)
+      154    inst.off('click')
+      155    inst.on('click', (p: any) => {
+      145 -    if (p.dataType !== 'node') return                         
+      146 -    const n = p.data.raw as KGNode                            
+      147 -    selected.value = n                                        
+      148 -    chunk.value = null                                        
+      149 -    if (n.docId && n.chunkId) {                               
+      150 -      chunkLoading.value = true                               
+      151 -      getChunk(n.docId, n.chunkId)                            
+      152 -        .then(c => { chunk.value = c })                       
+      153 -        .finally(() => { chunkLoading.value = false })        
+      156 +    if (p.dataType === 'node') {                              
+      157 +      const n = p.data.raw as KGNode                          
+      158 +      selected.value = n                                      
+      159 +      selectedEdge.value = null                               
+      160 +      chunk.value = null                                      
+      161 +      if (n.docId && n.chunkId) {                             
+      162 +        chunkLoading.value = true                             
+      163 +        getChunk(n.docId, n.chunkId)                          
+      164 +          .then(c => { chunk.value = c })                     
+      165 +          .finally(() => { chunkLoading.value = false })      
+      166 +      }                                                       
+      167 +    } else if (p.dataType === 'edge') {                       
+      168 +      const e = p.data.raw as KGEdge                          
+      169 +      selectedEdge.value = e                                  
+      170 +      selected.value = null                                   
+      171      }
+      172    })
+      173    renderChart()
+     ...
+      175  
+      176  const resetView = () => {
+      177    filterType.value = 'all'
+      178 +  filterDocId.value = undefined                               
+      179    q.value = ''
+      180    selected.value = null
+      181 +  selectedEdge.value = null                                   
+      182    chunk.value = null
+      164 -  nextTick(() => { inst?.dispatchAction({ type: 'restore' }); 
+          -renderChart() })                                              
+      183 +  reload()                                                    
+      184  }
+      185  
+      186  const exportImg = () => {
+     ...
+      196    loading.value = true
+      197    errorMsg.value = ''
+      198    try {
+      180 -    const g = await getGraph()                                
+      199 +    const g = await getGraph(undefined, filterDocId.value)    
+      200      graph.value = g
+      201      if (!g.nodes.length) {
+      183 -      errorMsg.value = '暂无可视化的图谱数据。请先在「知识上传
+          -」补充已审通过的文档，或确认后端 /api/kg/graph 已实现。'      
+      202 +      errorMsg.value = filterDocId.value                      
+      203 +        ? '所选文档暂无可视化的图谱实体。'                    
+      204 +        : '暂无可视化的图谱数据。请先在「知识上传」补充已审通 
+          +过的文档，或确认后端 /api/kg/graph 已实现。'                  
+      205      }
+      206    } catch (e: any) {
+      207      graph.value = { nodes: [], edges: [] }
+     ...
+      213    setup()
+      214  }
+      215  
+      216 +const loadDocOptions = async () => {                          
+      217 +  try {                                                       
+      218 +    const docs = await listDocs()                             
+      219 +    docOptions.value = docs.filter(d => isApprovedStatus(d.sta
+          +tus))                                                         
+      220 +  } catch {                                                   
+      221 +    docOptions.value = []                                     
+      222 +  }                                                           
+      223 +}                                                             
+      224 +                                                              
+      225  onMounted(async () => {
+      226 +  await loadDocOptions()                                      
+      227    await reload()
+      228    window.addEventListener('resize', () => inst?.resize())
+      229  })
+      230  
+      231  watch([filterType, q], () => renderChart())
+      232 +watch(filterDocId, () => reload())                            
+      233 +                                                              
+      234 +// ============ FIX6 第 6 项：编辑节点 / 删除节点 ============
+      235 +const openEditNode = () => {                                  
+      236 +  if (!selected.value) return                                 
+      237 +  editNodeLabel.value = selected.value.label                  
+      238 +  editNodeDesc.value = selected.value.desc || ''              
+      239 +  showEditNode.value = true                                   
+      240 +}                                                             
+      241 +                                                              
+      242 +const submitEditNode = async () => {                          
+      243 +  if (!selected.value) return                                 
+      244 +  try {                                                       
+      245 +    await updateNode(selected.value.id, {                     
+      246 +      label: editNodeLabel.value,                             
+      247 +      desc: editNodeDesc.value                                
+      248 +    })                                                        
+      249 +    showToast({ type: 'success', message: '已更新节点' })     
+      250 +    showEditNode.value = false                                
+      251 +    await reload()                                            
+      252 +  } catch {                                                   
+      253 +    showFailToast('节点更新失败')                             
+      254 +  }                                                           
+      255 +}                                                             
+      256 +                                                              
+      257 +const removeNode = async () => {                              
+      258 +  if (!selected.value) return                                 
+      259 +  try {                                                       
+      260 +    await showConfirmDialog({                                 
+      261 +      title: '删除节点',                                      
+      262 +      confirmButtonText: '删除',                              
+      263 +      confirmButtonColor: '#E5484D',                          
+      264 +      message: `确认从图谱中移除节点「${selected.value.label} 
+          +」？仅图谱视图受影响，原始文档不变。`                         
+      265 +    })                                                        
+      266 +  } catch { return }                                          
+      267 +  try {                                                       
+      268 +    await deleteNode(selected.value.id)                       
+      269 +    showToast({ type: 'success', message: '已删除节点' })     
+      270 +    selected.value = null                                     
+      271 +    await reload()                                            
+      272 +  } catch {                                                   
+      273 +    showFailToast('节点删除失败')                             
+      274 +  }                                                           
+      275 +}                                                             
+      276 +                                                              
+      277 +// ============ FIX6 第 6 项：编辑边 / 删除边 ============    
+      278 +const edgeKey = (e: KGEdge) => {                              
+      279 +  const a = e.source, b = e.target                            
+      280 +  return a < b ? `${a}|${b}` : `${b}|${a}`                    
+      281 +}                                                             
+      282 +                                                              
+      283 +const openEditEdge = () => {                                  
+      284 +  if (!selectedEdge.value) return                             
+      285 +  editEdgeRel.value = selectedEdge.value.rel                  
+      286 +  showEditEdge.value = true                                   
+      287 +}                                                             
+      288 +                                                              
+      289 +const submitEditEdge = async () => {                          
+      290 +  if (!selectedEdge.value) return                             
+      291 +  try {                                                       
+      292 +    await updateEdge(edgeKey(selectedEdge.value), { rel: editE
+          +dgeRel.value })                                               
+      293 +    showToast({ type: 'success', message: '已更新关系' })     
+      294 +    showEditEdge.value = false                                
+      295 +    await reload()                                            
+      296 +  } catch {                                                   
+      297 +    showFailToast('关系更新失败')                             
+      298 +  }                                                           
+      299 +}                                                             
+      300 +                                                              
+      301 +const removeEdge = async () => {                              
+      302 +  if (!selectedEdge.value) return                             
+      303 +  try {                                                       
+      304 +    await showConfirmDialog({                                 
+      305 +      title: '删除关系',                                      
+      306 +      confirmButtonText: '删除',                              
+      307 +      confirmButtonColor: '#E5484D',                          
+      308 +      message: `确认从图谱中移除关系「${selectedEdge.value.rel
+          +}」？仅图谱视图受影响。`                                      
+      309 +    })                                                        
+      310 +  } catch { return }                                          
+      311 +  try {                                                       
+      312 +    await deleteEdge(edgeKey(selectedEdge.value))             
+      313 +    showToast({ type: 'success', message: '已删除关系' })     
+      314 +    selectedEdge.value = null                                 
+      315 +    await reload()                                            
+      316 +  } catch {                                                   
+      317 +    showFailToast('关系删除失败')                             
+      318 +  }                                                           
+      319 +}                                                             
+      320  </script>
+      321  
+      322  <template>
+      323    <div class="h-full flex flex-col">
+      205 -    <header class="flex-shrink-0 px-6 py-3 bg-card border-b bo
+          -rder-border flex items-center gap-3">                         
+      324 +    <header class="flex-shrink-0 px-6 py-3 bg-card border-b bo
+          +rder-border flex items-center gap-3 flex-wrap">               
+      325        <div class="relative flex-1 max-w-md">
+      326          <Search class="absolute left-3 top-1/2 -translate-y-1/
+           2 w-4 h-4 text-text-2" />
+      327          <input v-model="q" placeholder="搜索实体名称…"
+     ...
+      342            {{ t.l }}
+      343          </button>
+      344        </div>
+      345 +      <!-- FIX6 第 8 项：按文档筛选 -->                       
+      346 +      <select v-model="filterDocId"                           
+      347 +              class="h-9 px-2 rounded-btn border border-border
+          + bg-bg text-sm outline-none focus:border-accent">             
+      348 +        <option :value="undefined">全部文档</option>          
+      349 +        <option v-for="d in docOptions" :key="d.id" :value="d.
+          +id">#{{ d.id }} · {{ d.title }}</option>                      
+      350 +      </select>                                               
+      351        <div class="ml-auto flex items-center gap-2">
+      352          <button class="h-9 px-3 rounded-btn border border-bord
+           er flex items-center gap-1 text-sm hover:bg-bg" @click="resetV
+           iew" title="重置视图">
+      353            <RotateCcw class="w-4 h-4" /> 重置
+     ...
+      362        <main class="col-span-9 relative bg-bg overflow-hidden">
+      363          <div ref="chartRef" class="w-full h-full"></div>
+      364  
+      240 -        <!-- 加载/空态遮罩 -->                                
+      365          <div v-if="loading"
+      366               class="absolute inset-0 flex items-center justify
+           -center bg-bg/80 backdrop-blur-sm">
+      367            <div class="text-text-2">
+     ...
+      381          <div class="absolute top-3 left-3 industrial-card px-3
+            py-2 text-xs space-y-1">
+      382            <div class="font-semibold mb-1">操作提示</div>
+      383            <div class="text-text-2">· 拖拽 / 滚轮缩放</div>
+      260 -          <div class="text-text-2">· 点击节点查看原文片段</div
+          ->                                                             
+      384 +          <div class="text-text-2">· 点击节点 / 边查看详情</di
+          +v>                                                            
+      385 +          <div v-if="canEdit" class="text-text-2">· 审查员可编
+          +辑 / 删除</div>                                               
+      386          </div>
+      387        </main>
+      388  
+      389        <aside class="col-span-3 border-l border-border bg-card 
+           overflow-auto">
+      390 +        <!-- 节点详情 -->                                     
+      391          <div v-if="selected" class="p-4">
+      266 -          <div class="text-xs uppercase mono px-2 py-0.5 inlin
+          -e-block rounded text-white"                                   
+      267 -               :style="{ background: TYPE_META[selected.type].
+          -color }">                                                     
+      268 -            {{ TYPE_META[selected.type].name }}               
+      392 +          <div class="flex items-center justify-between gap-2"
+          +>                                                             
+      393 +            <div class="text-xs uppercase mono px-2 py-0.5 inl
+          +ine-block rounded text-white"                                 
+      394 +                 :style="{ background: TYPE_META[selected.type
+          +].color }">                                                   
+      395 +              {{ TYPE_META[selected.type].name }}             
+      396 +            </div>                                            
+      397 +            <!-- FIX6 第 6 项：节点编辑操作 -->               
+      398 +            <div v-if="canEdit" class="flex items-center gap-1
+          +">                                                            
+      399 +              <button class="h-7 w-7 rounded hover:bg-bg flex 
+          +items-center justify-center text-text-2 hover:text-accent"    
+      400 +                      title="编辑节点" @click="openEditNode"> 
+      401 +                <Edit3 class="w-3.5 h-3.5" />                 
+      402 +              </button>                                       
+      403 +              <button class="h-7 w-7 rounded hover:bg-danger/1
+          +0 flex items-center justify-center text-text-2 hover:text-dang
+          +er"                                                           
+      404 +                      title="删除节点" @click="removeNode">   
+      405 +                <Trash2 class="w-3.5 h-3.5" />                
+      406 +              </button>                                       
+      407 +            </div>                                            
+      408            </div>
+      409            <h3 class="text-lg font-bold mt-2">{{ selected.label
+            }}</h3>
+      410            <div class="text-xs text-text-2 mt-1">关联 <span cla
+           ss="mono">{{ selected.weight }}</span> 条</div>
+      411            <p v-if="selected.desc" class="text-sm mt-3 text-tex
+           t-2 leading-relaxed">{{ selected.desc }}</p>
+      412  
+      413 +          <!-- FIX6 第 8 项：关联文档列表 -->                 
+      414 +          <div class="mt-4">                                  
+      415 +            <div class="text-xs font-semibold mb-2 text-text">
+          +关联文档</div>                                                
+      416 +            <ul v-if="selected.source_docs?.length" class="spa
+          +ce-y-1.5">                                                    
+      417 +              <li v-for="sd in selected.source_docs" :key="sd.
+          +id">                                                          
+      418 +                <button class="w-full text-left h-8 px-2 round
+          +ed-btn border border-border text-xs flex items-center gap-1.5 
+          +hover:border-accent hover:text-accent"                        
+      419 +                        @click="router.push(`/kb/preview/${sd.
+          +id}`)">                                                       
+      420 +                  <FileText class="w-3.5 h-3.5 flex-shrink-0" 
+          +/>                                                            
+      421 +                  <span class="truncate">#{{ sd.id }} · {{ sd.
+          +title }}</span>                                               
+      422 +                </button>                                     
+      423 +              </li>                                           
+      424 +            </ul>                                             
+      425 +            <div v-else class="text-xs text-text-2 italic">暂 
+          +无关联文档</div>                                              
+      426 +          </div>                                              
+      427 +                                                              
+      428            <div v-if="selected.docId" class="mt-4">
+      429              <div class="text-xs font-semibold mb-2 text-text">
+           原文片段</div>
+      430              <div v-if="chunkLoading" class="text-xs text-text-
+           2 flex items-center gap-1.5">
+     ...
+      445              </button>
+      446            </div>
+      447          </div>
+      448 +                                                              
+      449 +        <!-- 边详情 -->                                       
+      450 +        <div v-else-if="selectedEdge" class="p-4">            
+      451 +          <div class="flex items-center justify-between gap-2"
+          +>                                                             
+      452 +            <div class="text-xs px-2 py-0.5 inline-block round
+          +ed bg-bg border border-border">关系</div>                     
+      453 +            <div v-if="canEdit" class="flex items-center gap-1
+          +">                                                            
+      454 +              <button class="h-7 w-7 rounded hover:bg-bg flex 
+          +items-center justify-center text-text-2 hover:text-accent"    
+      455 +                      title="编辑关系" @click="openEditEdge"> 
+      456 +                <Edit3 class="w-3.5 h-3.5" />                 
+      457 +              </button>                                       
+      458 +              <button class="h-7 w-7 rounded hover:bg-danger/1
+          +0 flex items-center justify-center text-text-2 hover:text-dang
+          +er"                                                           
+      459 +                      title="删除关系" @click="removeEdge">   
+      460 +                <Trash2 class="w-3.5 h-3.5" />                
+      461 +              </button>                                       
+      462 +            </div>                                            
+      463 +          </div>                                              
+      464 +          <h3 class="text-lg font-bold mt-2">{{ selectedEdge.r
+          +el }}</h3>                                                    
+      465 +          <div class="text-xs text-text-2 mt-1 break-all">{{ s
+          +electedEdge.source }} → {{ selectedEdge.target }}</div>       
+      466 +        </div>                                                
+      467 +                                                              
+      468          <div v-else class="text-center text-text-2 text-sm py-
+           12 px-4">
+      469            <Box class="w-10 h-10 mx-auto mb-2 opacity-50" />
+      296 -          <div>点击节点查看详情</div>                         
+      470 +          <div>点击节点 / 边查看详情</div>                    
+      471            <div class="mt-1 text-xs">详情面板会展示节点对应的真
+           实原文片段</div>
+      472          </div>
+      473        </aside>
+      474      </div>
+      475 +                                                              
+      476 +    <!-- 节点编辑对话框 -->                                   
+      477 +    <div v-if="showEditNode" class="fixed inset-0 z-50 bg-blac
+          +k/40 flex items-center justify-center p-4"                    
+      478 +         @click.self="showEditNode = false">                  
+      479 +      <div class="industrial-card w-full max-w-md bg-card over
+          +flow-hidden">                                                 
+      480 +        <header class="px-5 py-3 border-b border-border flex i
+          +tems-center gap-2">                                           
+      481 +          <Edit3 class="w-4 h-4 text-accent" />               
+      482 +          <span class="font-semibold flex-1">编辑节点</span>  
+      483 +        </header>                                             
+      484 +        <div class="p-5 space-y-3">                           
+      485 +          <div>                                               
+      486 +            <div class="text-sm text-text-2 mb-1">名称</div>  
+      487 +            <input v-model="editNodeLabel"                    
+      488 +                   class="w-full h-10 px-3 rounded-btn border 
+          +border-border bg-bg outline-none focus:border-accent" />      
+      489 +          </div>                                              
+      490 +          <div>                                               
+      491 +            <div class="text-sm text-text-2 mb-1">描述（可选）
+          +</div>                                                        
+      492 +            <textarea v-model="editNodeDesc" rows="3"         
+      493 +                      class="w-full px-3 py-2 rounded-btn bord
+          +er border-border bg-bg outline-none focus:border-accent text-s
+          +m"></textarea>                                                
+      494 +          </div>                                              
+      495 +        </div>                                                
+      496 +        <footer class="px-5 py-3 border-t border-border flex j
+          +ustify-end gap-2">                                            
+      497 +          <button class="h-9 px-4 rounded-btn border border-bo
+          +rder" @click="showEditNode = false">取消</button>             
+      498 +          <button class="h-9 px-5 rounded-btn bg-accent hover:
+          +bg-accent-2 text-white font-semibold"                         
+      499 +                  @click="submitEditNode">保存</button>       
+      500 +        </footer>                                             
+      501 +      </div>                                                  
+      502 +    </div>                                                    
+      503 +                                                              
+      504 +    <!-- 边编辑对话框 -->                                     
+      505 +    <div v-if="showEditEdge" class="fixed inset-0 z-50 bg-blac
+          +k/40 flex items-center justify-center p-4"                    
+      506 +         @click.self="showEditEdge = false">                  
+      507 +      <div class="industrial-card w-full max-w-md bg-card over
+          +flow-hidden">                                                 
+      508 +        <header class="px-5 py-3 border-b border-border flex i
+          +tems-center gap-2">                                           
+      509 +          <Edit3 class="w-4 h-4 text-accent" />               
+      510 +          <span class="font-semibold flex-1">编辑关系</span>  
+      511 +        </header>                                             
+      512 +        <div class="p-5">                                     
+      513 +          <div class="text-sm text-text-2 mb-1">关系名</div>  
+      514 +          <input v-model="editEdgeRel"                        
+      515 +                 class="w-full h-10 px-3 rounded-btn border bo
+          +rder-border bg-bg outline-none focus:border-accent" />        
+      516 +        </div>                                                
+      517 +        <footer class="px-5 py-3 border-t border-border flex j
+          +ustify-end gap-2">                                            
+      518 +          <button class="h-9 px-4 rounded-btn border border-bo
+          +rder" @click="showEditEdge = false">取消</button>             
+      519 +          <button class="h-9 px-5 rounded-btn bg-accent hover:
+          +bg-accent-2 text-white font-semibold"                         
+      520 +                  @click="submitEditEdge">保存</button>       
+      521 +        </footer>                                             
+      522 +      </div>                                                  
+      523 +    </div>                                                    
+      524    </div>
+      525  </template>
+
+● Now I need to add KnowledgeManage support for editing AI-generated docs. Let
+  me check the listing — it currently fetches docs and they all should be there
+  since _doc_out returns the doc regardless of source. The main change needed:
+  add an edit button that calls updateDoc.
+
+● Update(src/views/knowledge/KnowledgeManage.vue)
+  ⎿  Added 1 line, removed 1 line
+      20    ShieldCheck, AlertTriangle, FileType2, ArrowDown, Edit3, Send
+          , Sparkles, Download, Share2
+      21  } from 'lucide-vue-next'
+      22  import {
+      23 -  listDocs, uploadDoc, uploadText, deleteDoc, reviewDoc, getDoc
+         -, exportDoc,                                                   
+      23 +  listDocs, uploadDoc, uploadText, deleteDoc, reviewDoc, getDoc
+         +, exportDoc, updateDoc,                                        
+      24    type KbDoc, type ReviewAction, STATUS_LABEL
+      25  } from '@/api/kb'
+      26  import { multimodalSearch } from '@/api/search'
+
+● Now add an edit dialog in KnowledgeManage. Insert the state and methods, then
+  the button + dialog:
+
+● Update(src/views/knowledge/KnowledgeManage.vue)
+  ⎿  Added 42 lines
+      248    }
+      249  }
+      250  
+      251 +/* ---------- FIX6 第 6 项：编辑文档（包括 AI 自动入库的） ---
+          +------- */                                                    
+      252 +const showEdit = ref(false)                                   
+      253 +const editDoc = ref<KbDoc | null>(null)                       
+      254 +const editTitle = ref('')                                     
+      255 +const editContent = ref('')                                   
+      256 +const editCategory = ref('')                                  
+      257 +const editSubmitting = ref(false)                             
+      258 +                                                              
+      259 +const openEdit = async (d: KbDoc) => {                        
+      260 +  editDoc.value = d                                           
+      261 +  editTitle.value = d.title                                   
+      262 +  editCategory.value = d.category || 'manual'                 
+      263 +  editContent.value = ''                                      
+      264 +  showEdit.value = true                                       
+      265 +  try {                                                       
+      266 +    const det = await getDoc(d.id)                            
+      267 +    editContent.value = det.content || ''                     
+      268 +  } catch {                                                   
+      269 +    showFailToast('加载文档内容失败')                         
+      270 +  }                                                           
+      271 +}                                                             
+      272 +                                                              
+      273 +const submitEdit = async () => {                              
+      274 +  if (!editDoc.value) return                                  
+      275 +  if (!editTitle.value.trim()) { showFailToast('标题不能为空')
+          +; return }                                                    
+      276 +  editSubmitting.value = true                                 
+      277 +  try {                                                       
+      278 +    await updateDoc(editDoc.value.id, {                       
+      279 +      title: editTitle.value.trim(),                          
+      280 +      content: editContent.value,                             
+      281 +      category: editCategory.value                            
+      282 +    })                                                        
+      283 +    showToast({ type: 'success', message: '已保存' })         
+      284 +    showEdit.value = false                                    
+      285 +    await refresh()                                           
+      286 +  } catch {                                                   
+      287 +    showFailToast('保存失败')                                 
+      288 +  } finally {                                                 
+      289 +    editSubmitting.value = false                              
+      290 +  }                                                           
+      291 +}                                                             
+      292 +                                                              
+      293  /* ---------- AI 辅助分析 ---------- */
+      294  const analyzeDoc = async (d: KbDoc) => {
+      295    aiDoc.value = d
+
+● Now add an edit button in the action area (PC view) and the edit dialog UI:
+
+● Update(src/views/knowledge/KnowledgeManage.vue)
+  ⎿  Added 4 lines
+      489                          title="AI 辅助分析" @click="analyzeDoc
+           (d)">
+      490                    <Sparkles class="w-4 h-4" />
+      491                  </button>
+      492 +                <button class="w-8 h-8 rounded hover:bg-accent
+          +/10 flex items-center justify-center text-text-2 hover:text-ac
+          +cent"                                                         
+      493 +                        title="编辑文档" @click="openEdit(d)">
+      494 +                  <Edit3 class="w-4 h-4" />                   
+      495 +                </button>                                     
+      496                  <button class="w-8 h-8 rounded hover:bg-bg fle
+           x items-center justify-center text-text-2 hover:text-accent di
+           sabled:opacity-50"
+      497                          title="导出 PDF" :disabled="exportingI
+           d === d.id" @click="doExport(d, 'pdf')">
+      498                    <Loader v-if="exportingId === d.id" class="w
+           -4 h-4 animate-spin" />
+
+● Now add the edit button on Mobile and add the dialog at the end:
+
+● Update(src/views/knowledge/KnowledgeManage.vue)
+  ⎿  Added 3 lines
+      586            <button class="h-7 px-2.5 rounded-btn border border-
+           border text-ai text-xs flex items-center gap-1" @click="analyz
+           eDoc(d)">
+      587              <Sparkles class="w-3.5 h-3.5" /> AI 分析
+      588            </button>
+      589 +          <button class="h-7 px-2.5 rounded-btn border border-
+          +border text-accent text-xs flex items-center gap-1" @click="op
+          +enEdit(d)">                                                   
+      590 +            <Edit3 class="w-3.5 h-3.5" /> 编辑                
+      591 +          </button>                                           
+      592            <button class="h-7 px-2.5 rounded-btn border border-
+           border text-text-2 text-xs flex items-center gap-1 disabled:op
+           acity-50"
+      593                    :disabled="exportingId === d.id" @click="doE
+           xport(d, 'pdf')">
+      594              <Loader v-if="exportingId === d.id" class="w-3.5 h
+           -3.5 animate-spin" />
+
+● Now add the edit dialog at the end of the template:
+
+● Update(src/views/knowledge/KnowledgeManage.vue)
+  ⎿  Added 41 lines
+      684        </div>
+      685      </div>
+      686    </div>
+      687 +                                                              
+      688 +  <!-- ==================== FIX6 第 6 项：编辑文档对话框 =====
+          +=============== -->                                           
+      689 +  <div v-if="showEdit" class="fixed inset-0 z-40 bg-black/40 f
+          +lex items-center justify-center p-4"                          
+      690 +       @click.self="!editSubmitting && (showEdit = false)">   
+      691 +    <div class="industrial-card w-full max-w-2xl bg-card overf
+          +low-hidden flex flex-col" style="max-height: 88vh;">          
+      692 +      <header class="px-5 py-3 border-b border-border flex ite
+          +ms-center gap-2">                                             
+      693 +        <Edit3 class="w-4 h-4 text-accent" />                 
+      694 +        <span class="font-semibold flex-1 truncate">编辑文档 ·
+          + {{ editDoc?.title }}</span>                                  
+      695 +        <button class="text-text-2 hover:text-danger" :disable
+          +d="editSubmitting" @click="showEdit = false">                 
+      696 +          <X class="w-4 h-4" />                               
+      697 +        </button>                                             
+      698 +      </header>                                               
+      699 +      <div class="p-5 space-y-3 overflow-auto">               
+      700 +        <div>                                                 
+      701 +          <div class="text-sm text-text-2 mb-1">标题</div>    
+      702 +          <input v-model="editTitle" :disabled="editSubmitting
+          +"                                                             
+      703 +                 class="w-full h-10 px-3 rounded-btn border bo
+          +rder-border bg-bg outline-none focus:border-accent" />        
+      704 +        </div>                                                
+      705 +        <div>                                                 
+      706 +          <div class="text-sm text-text-2 mb-1">分类</div>    
+      707 +          <input v-model="editCategory" :disabled="editSubmitt
+          +ing"                                                          
+      708 +                 class="w-full h-10 px-3 rounded-btn border bo
+          +rder-border bg-bg outline-none focus:border-accent" />        
+      709 +        </div>                                                
+      710 +        <div>                                                 
+      711 +          <div class="text-sm text-text-2 mb-1">正文（Markdown
+          +）</div>                                                      
+      712 +          <textarea v-model="editContent" rows="14" :disabled=
+          +"editSubmitting"                                              
+      713 +                    class="w-full px-3 py-2 rounded-btn border
+          + border-border bg-bg outline-none focus:border-accent text-sm 
+          +leading-relaxed"></textarea>                                  
+      714 +          <div class="text-[11px] text-text-2 mt-1">保存后将自
+          +动重建向量索引（仅对已通过文档生效）</div>                    
+      715 +        </div>                                                
+      716 +      </div>                                                  
+      717 +      <footer class="px-5 py-3 border-t border-border flex jus
+          +tify-end gap-2">                                              
+      718 +        <button class="h-9 px-4 rounded-btn border border-bord
+          +er" :disabled="editSubmitting" @click="showEdit = false">取消<
+          +/button>                                                      
+      719 +        <button class="h-9 px-5 rounded-btn bg-accent hover:bg
+          +-accent-2 text-white font-semibold flex items-center gap-2 dis
+          +abled:opacity-60"                                             
+      720 +                :disabled="editSubmitting" @click="submitEdit"
+          +>                                                             
+      721 +          <Loader v-if="editSubmitting" class="w-4 h-4 animate
+          +-spin" />                                                     
+      722 +          <Check v-else class="w-4 h-4" />                    
+      723 +          {{ editSubmitting ? '保存中…' : '保存' }}           
+      724 +        </button>                                             
+      725 +      </footer>                                               
+      726 +    </div>                                                    
+      727 +  </div>                                                      
+      728  </template>
+
+● Item 7: Fix file export
+
+  Looking at the existing code:
+  - Backend _render_pdf uses STSong-Light (CJK font built into reportlab). With
+  fallback to Helvetica.
+  - Backend already sets Content-Disposition: attachment.
+  - Frontend exportDoc already uses responseType: 'blob' and creates a Blob URL.
+
+  The existing code looks pretty solid. Let me harden it: improve the CJK font
+  fallback chain, ensure proper error handling:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 34 lines, removed 4 lines
+      305  
+      306  
+      307  def _render_pdf(title: str, text: str) -> bytes:
+      308 -    """用 reportlab 生成 PDF；使用内置 CJK 字体 STSong-Light  
+          -支持中文，无需外部字体文件。"""                               
+      308 +    """用 reportlab 生成 PDF；尝试 CJK 字体链以保证中文可显示 
+          +。                                                            
+      309 +    优先级：内置 CIDFont(STSong-Light) → 系统 NotoSansCJK / Si
+          +mSun → Helvetica（纯 ASCII 兜底）。                           
+      310 +    任何一级失败都不抛异常，最差降级到 ASCII。                
+      311 +    """                                                       
+      312      from reportlab.lib.pagesizes import A4
+      313      from reportlab.lib.units import mm
+      314      from reportlab.pdfbase import pdfmetrics
+      315      from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+      316 +    from reportlab.pdfbase.ttfonts import TTFont              
+      317      from reportlab.lib.styles import getSampleStyleSheet, Para
+           graphStyle
+      318      from reportlab.platypus import SimpleDocTemplate, Paragrap
+           h, Spacer
+      319  
+      320 +    font_name = "Helvetica"                                   
+      321 +    # 1) 优先使用内置 CIDFont（无需外部字体文件）             
+      322      try:
+      323          pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light")
+           )
+      324          font_name = "STSong-Light"
+      325      except Exception:
+      320 -        font_name = "Helvetica"                               
+      326 +        # 2) 退到系统 CJK TTF                                 
+      327 +        candidates = [                                        
+      328 +            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regula
+          +r.ttc",                                                       
+      329 +            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regula
+          +r.ttc",                                                       
+      330 +            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 
+      331 +            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",   
+      332 +            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      333 +            "/System/Library/Fonts/PingFang.ttc",             
+      334 +            "C:/Windows/Fonts/simsun.ttc",                    
+      335 +            "C:/Windows/Fonts/msyh.ttc",                      
+      336 +        ]                                                     
+      337 +        for path in candidates:                               
+      338 +            try:                                              
+      339 +                if os.path.exists(path):                      
+      340 +                    pdfmetrics.registerFont(TTFont("CJKFallbac
+          +k", path))                                                    
+      341 +                    font_name = "CJKFallback"                 
+      342 +                    break                                     
+      343 +            except Exception:                                 
+      344 +                continue                                      
+      345  
+      346      buf = io.BytesIO()
+      347      doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * m
+           m, bottomMargin=20 * mm)
+     ...
+      352      def esc(s: str) -> str:
+      353          return s.replace("&", "&amp;").replace("<", "&lt;").re
+           place(">", "&gt;")
+      354  
+      331 -    flow = [Paragraph(esc(title), title_style), Spacer(1, 8 * 
+          -mm)]                                                          
+      355 +    # 若最终回退到 Helvetica，非 ASCII 字符无法渲染；用 ? 替换
+          +避免抛出                                                      
+      356 +    def safe(s: str) -> str:                                  
+      357 +        if font_name == "Helvetica":                          
+      358 +            return s.encode("ascii", errors="replace").decode(
+          +"ascii")                                                      
+      359 +        return s                                              
+      360 +                                                              
+      361 +    flow = [Paragraph(esc(safe(title)), title_style), Spacer(1
+          +, 8 * mm)]                                                    
+      362      for line in (text or "").split("\n"):
+      333 -        flow.append(Paragraph(esc(line) if line.strip() else "
+          -&nbsp;", body_style))                                         
+      363 +        flow.append(Paragraph(esc(safe(line)) if line.strip() 
+          +else "&nbsp;", body_style))                                   
+      364      doc.build(flow)
+      365      return buf.getvalue()
+
+● The frontend exportDoc already uses Blob URL properly. Let me also wrap the
+  entire export in try/except so a font error doesn't crash the request:
+
+● Update(backend/app/api/kb.py)
+  ⎿  Added 4 lines, removed 1 line
+      295              headers={"Content-Disposition": f"attachment; file
+           name*=UTF-8''{safe_title}.md"},
+      296          )
+      297      if fmt == "pdf":
+      298 -        pdf_bytes = _render_pdf(d.title, text)                
+      298 +        try:                                                  
+      299 +            pdf_bytes = _render_pdf(d.title, text)            
+      300 +        except Exception as e:                                
+      301 +            raise HTTPException(500, f"PDF 生成失败：{e}")    
+      302          return StreamingResponse(
+      303              io.BytesIO(pdf_bytes),
+      304              media_type="application/pdf",
+
+● The frontend exportDoc is fine. Item 7 is complete.
+
+● Item 8 is also already done (KG source docs + filter were done in same change
+  as Item 6). Now:
+
+  Item 9: Preserve form content across navigation
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/stores/search.ts)
+  ⎿  Added 49 lines, removed 1 line
+       5  /**
+       6   * 检索建议词存储（FIX3 第 2/3 项后）
+       7   * 仅用于输入框的简单"上次提过的词"补全；真实历史已迁移到 store
+          s/chatHistory.ts
+       8 + * FIX6 第 9 项：新增 draft 草稿状态，跨页面保留检索表单 / 上传
+         +表单内容。                                                     
+       9   */
+      10  export interface SearchHistoryItem {
+      11    id: string
+     ...
+      14    at: string
+      15  }
+      16  
+      17 +/** 检索页表单草稿（File 不可序列化，因此只在内存中保留 imageUr
+         +ls 预览） */                                                   
+      18 +export interface SearchDraft {                                 
+      19 +  question: string                                             
+      20 +  imageUrls: string[]                                          
+      21 +}                                                              
+      22 +                                                               
+      23 +/** 经验上传表单草稿 */                                        
+      24 +export interface UploadDraft {                                 
+      25 +  title: string                                                
+      26 +  content: string                                              
+      27 +  tags: string[]                                               
+      28 +}                                                              
+      29 +                                                               
+      30  export const useSearchStore = defineStore('search', () => {
+      31    const history = ref<SearchHistoryItem[]>(storage.get<SearchHi
+          storyItem[]>('search:history') || [])
+      32  
+     ...
+      37      storage.set('search:history', history.value)
+      38    }
+      39  
+      26 -  return { history, push }                                     
+      40 +  // FIX6 第 9 项：检索页草稿                                  
+      41 +  const draft = ref<SearchDraft>(                              
+      42 +    storage.get<SearchDraft>('search:draft') || { question: '',
+         + imageUrls: [] }                                               
+      43 +  )                                                            
+      44 +  // 保留对 File 对象的引用（不持久化，路由切换时仍可用）      
+      45 +  const draftImages = ref<File[]>([])                          
+      46 +  const setDraft = (question: string, files?: File[] | null, ur
+         +ls?: string[]) => {                                            
+      47 +    draft.value = { question, imageUrls: urls || draft.value.im
+         +ageUrls }                                                      
+      48 +    if (files !== undefined) draftImages.value = files || []   
+      49 +    storage.set('search:draft', { question, imageUrls: draft.va
+         +lue.imageUrls })                                               
+      50 +  }                                                            
+      51 +  const clearDraft = () => {                                   
+      52 +    draft.value = { question: '', imageUrls: [] }              
+      53 +    draftImages.value = []                                     
+      54 +    storage.set('search:draft', draft.value)                   
+      55 +  }                                                            
+      56 +                                                               
+      57 +  // FIX6 第 9 项：经验上传页草稿                              
+      58 +  const uploadDraft = ref<UploadDraft>(                        
+      59 +    storage.get<UploadDraft>('upload:draft') || { title: '', co
+         +ntent: '', tags: [] }                                          
+      60 +  )                                                            
+      61 +  const setUploadDraft = (title: string, content: string, tags:
+         + string[] = []) => {                                           
+      62 +    uploadDraft.value = { title, content, tags }               
+      63 +    storage.set('upload:draft', uploadDraft.value)             
+      64 +  }                                                            
+      65 +  const clearUploadDraft = () => {                             
+      66 +    uploadDraft.value = { title: '', content: '', tags: [] }   
+      67 +    storage.set('upload:draft', uploadDraft.value)             
+      68 +  }                                                            
+      69 +                                                               
+      70 +  return {                                                     
+      71 +    history, push,                                             
+      72 +    draft, draftImages, setDraft, clearDraft,                  
+      73 +    uploadDraft, setUploadDraft, clearUploadDraft              
+      74 +  }                                                            
+      75  })
+
+● Now update Upload.vue to save/restore draft
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 1 line
+      17  import { showToast, showFailToast } from 'vant'
+      18  import { uploadDoc, uploadText, listDocs, type KbDoc, STATUS_LA
+          BEL, isApprovedStatus } from '@/api/kb'
+      19  import { useUserStore } from '@/stores/user'
+      20 +import { useSearchStore } from '@/stores/search'  // FIX6 第 9 
+         +项：草稿持久化                                                 
+      21  
+      22  const router = useRouter()
+      23  const { isPC } = useDevice()
+
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 2 lines, removed 1 line
+       7   * - 我的上传记录：listDocs({uploader:'me'})，状态徽标 + 驳回后
+          「重提」（预填表单）
+       8   * - worker 不可删除自己的上传
+       9   */
+      10 -import { ref, computed, onMounted } from 'vue'                 
+      10 +import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+      11  import { useRouter } from 'vue-router'
+      12  import { useDevice } from '@/composables/useDevice'
+      13  import {
+     ...
+      22  const router = useRouter()
+      23  const { isPC } = useDevice()
+      24  const user = useUserStore()
+      25 +const searchStore = useSearchStore()                           
+      26  
+      27  const ALLOWED = ['pdf', 'docx', 'txt', 'md']
+      28  
+
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 15 lines, removed 1 line
+      54      loading.value = false
+      55    }
+      56  }
+      57 -onMounted(refresh)                                             
+      57  
+      58 +// FIX6 第 9 项：挂载时恢复草稿；卸载时持久化                  
+      59 +onMounted(() => {                                              
+      60 +  const d = searchStore.uploadDraft                            
+      61 +  if (d.title || d.content) {                                  
+      62 +    title.value = d.title                                      
+      63 +    body.value = d.content                                     
+      64 +  }                                                            
+      65 +  refresh()                                                    
+      66 +})                                                             
+      67 +onBeforeUnmount(() => {                                        
+      68 +  if (title.value || body.value) {                             
+      69 +    searchStore.setUploadDraft(title.value, body.value, [])    
+      70 +  }                                                            
+      71 +})                                                             
+      72 +                                                               
+      73  const filtered = computed(() =>
+      74    docs.value.filter(d => !q.value || d.title.toLowerCase().incl
+          udes(q.value.toLowerCase()))
+      75  )
+
+● Update(src/views/knowledge/Upload.vue)
+  ⎿  Added 1 line
+       96      showToast({ type: 'success', message: '已提交，进入待审核'
+            })
+       97      title.value = ''
+       98      body.value = ''
+       99 +    searchStore.clearUploadDraft()  // FIX6 第 9 项：成功后清 
+          +除草稿                                                        
+      100      await refresh()
+      101    } catch {
+      102      showFailToast('提交失败，请稍后重试')
+
+● Now do the same for the search view. Let me check Search Pc.vue:
+
+  Thought for 2m 50s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+       7   * - 来源引用与本条消息绑定（FIX3 第 3.2 项）
+       8   * - 整条会话落 chatHistory store，按 userId 隔离（FIX3 第 2.1/
+          3.3 项）
+       9   */
+      10 -import { ref, nextTick, computed, onMounted, watch } from 'vue'
+      10 +import { ref, nextTick, computed, onMounted, onBeforeUnmount, w
+         +atch } from 'vue'                                              
+      11  import { useRoute } from 'vue-router'
+      12  import { Sparkles, Paperclip, Send, X, Image as ImageIcon, Book
+          Open, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Tr
+          ash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next
+          '
+      13  import * as searchApi from '@/api/search'
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 26 lines, removed 1 line
+      165    }
+      166  }, { immediate: true })
+      167  
+      168 -onMounted(() => { if (input.value) onSend() })                
+      168 +// FIX6 第 9 项：跨页面保留检索表单草稿                       
+      169 +onMounted(() => {                                             
+      170 +  // 优先 query.q（外部跳入）；否则恢复草稿                   
+      171 +  if (!input.value) {                                         
+      172 +    const d = store.draft                                     
+      173 +    if (d.question) input.value = d.question                  
+      174 +    // 内存中的 File 列表（页面未销毁仍有效）                 
+      175 +    if (store.draftImages.length) {                           
+      176 +      imageList.value = store.draftImages.map((f, i) => ({    
+      177 +        url: store.draft.imageUrls[i] || URL.createObjectURL(f
+          +),                                                            
+      178 +        name: f.name,                                         
+      179 +        file: f                                               
+      180 +      }))                                                     
+      181 +    }                                                         
+      182 +  }                                                           
+      183 +  if (input.value) onSend()                                   
+      184 +})                                                            
+      185 +onBeforeUnmount(() => {                                       
+      186 +  if (input.value || imageList.value.length) {                
+      187 +    store.setDraft(                                           
+      188 +      input.value,                                            
+      189 +      imageList.value.map(i => i.file),                       
+      190 +      imageList.value.map(i => i.url)                         
+      191 +    )                                                         
+      192 +  }                                                           
+      193 +})                                                            
+      194  </script>
+      195  
+      196  <template>
+
+● Also clear the draft on successful submit. The onSend already clears input +
+  imageList, so the next setDraft on unmount writes empty. Let me also clear the
+  persistent store after success:
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line
+      108    input.value = ''
+      109    imageList.value = []
+      110    if (text) store.push(text)
+      111 +  store.clearDraft()  // FIX6 第 9 项：提交成功后清除草稿     
+      112    sending.value = true
+      113    await scrollToBottom()
+      114  
+
+● Now do the same for Search Mobile.vue:
+
+  Thought for 34s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 1 line, removed 1 line
+       4   * - 删除"试试这些问题"+ "建议追问"
+       5   * - markdown 渲染、来源与消息绑定、按 userId 持久化
+       6   */
+       7 -import { ref, nextTick, computed, watch, onMounted } from 'vue'
+       7 +import { ref, nextTick, computed, watch, onMounted, onBeforeUnm
+         +ount } from 'vue'                                              
+       8  import { useRoute } from 'vue-router'
+       9  import { Sparkles, Bot, User as UserIcon, BookOpen, Image as Im
+          ageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star, ListChec
+          ks, UserPlus, Check } from 'lucide-vue-next'
+      10  import { showConfirmDialog, showSuccessToast, showFailToast } f
+          rom 'vant'
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 1 line
+      85    images.value = []
+      86    imageFiles.value = []
+      87    if (t) store.push(t)
+      88 +  store.clearDraft()  // FIX6 第 9 项：提交成功后清除草稿      
+      89    sending.value = true
+      90    await scrollToBottom()
+      91  
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 17 lines, removed 1 line
+      128    if (typeof v === 'string' && chat.getSession(v)) sessionId.v
+           alue = v
+      129  }, { immediate: true })
+      130  
+      131 -onMounted(() => { if (text.value) onSend() })                 
+      131 +// FIX6 第 9 项：跨页面保留检索表单草稿                       
+      132 +onMounted(() => {                                             
+      133 +  if (!text.value) {                                          
+      134 +    const d = store.draft                                     
+      135 +    if (d.question) text.value = d.question                   
+      136 +    if (store.draftImages.length) {                           
+      137 +      imageFiles.value = [...store.draftImages]               
+      138 +      images.value = store.draft.imageUrls.slice()            
+      139 +    }                                                         
+      140 +  }                                                           
+      141 +  if (text.value) onSend()                                    
+      142 +})                                                            
+      143 +onBeforeUnmount(() => {                                       
+      144 +  if (text.value || imageFiles.value.length) {                
+      145 +    store.setDraft(text.value, imageFiles.value, images.value)
+      146 +  }                                                           
+      147 +})                                                            
+      148  </script>
+      149  
+      150  <template>
+
+● API Error: Request rejected (429) · You have exceeded the 5-hour usage
+  quota. It will reset at 2026-06-22 16:04:04 +0800 CST. We recommend 
+  upgrading your plan for more quota, or waiting for the reset. Request 
+  id: 021782099388442ee491e000af4266cf5087875543b3cd6ca3e7a
+
+✻ Crunched for 30m 21s

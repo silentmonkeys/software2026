@@ -147,7 +147,11 @@ def create(body: TicketIn, db: Session = Depends(get_db), user: User = Depends(g
 
 @router.get("")
 def list_(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """返回 { mine, recommended }：mine 为我已添加（未删除）的工单，recommended 为他人创建我未添加的。"""
+    """返回 { mine, recommended }：
+    - mine：我当前正在参与（progress.status != deleted）的工单。
+    - recommended：我尚未参与，或仅做过删除标记（视为本次隐藏不影响推荐）的工单。
+    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公共资源继续参与推荐。
+    """
     tickets = db.query(Ticket).order_by(Ticket.id.desc()).all()
     names = _creator_name_map(db, tickets)
     my_progs = {p.ticket_id: p for p in db.query(UserTicketProgress).filter(
@@ -157,14 +161,17 @@ def list_(db: Session = Depends(get_db), user: User = Depends(get_current_user))
         prog = my_progs.get(t.id)
         if prog and prog.status != "deleted":
             mine.append(_summary(t, prog, names.get(t.creator_id)))
-        elif not prog:
+        else:
+            # 没有进度记录 或 仅做过删除标记 → 仍可被推荐
             recommended.append(_summary(t, None, names.get(t.creator_id)))
     return {"mine": mine, "recommended": recommended}
 
 
 @router.post("/recommend")
 def recommend(body: RecommendIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """工单创建前的相似推荐：对 device+fault 做相似度匹配，返回我尚未添加的相似工单。"""
+    """工单创建前的相似推荐：对 device+fault 做相似度匹配。
+    FIX6 第 3 项：仅排除用户当前正在参与（status != deleted）的工单；
+    仅做过删除标记的工单仍参与推荐，不再永久屏蔽。"""
     query = f"{body.device} {body.fault}".strip()
     if not query:
         return []
@@ -282,9 +289,16 @@ def update_progress(tid: int, body: ProgressIn, db: Session = Depends(get_db),
         prev = set(prog.step_done or [])
         new = [s for s in body.stepDone]
         prog.step_done = new
+        step_ids = _step_ids(t)
         for sid in new:
             if sid not in prev:
-                _add_event(db, tid, user.id, "step_completed", {"stepId": sid})
+                # FIX6 第 4 项：附带 stepIndex 便于前端按"第 N 步：标题"渲染
+                try:
+                    idx = step_ids.index(str(sid))
+                except ValueError:
+                    idx = None
+                _add_event(db, tid, user.id, "step_completed",
+                           {"stepId": sid, "stepIndex": idx})
         if prog.status == "open" and new:
             prog.status = "doing"
     if body.status:

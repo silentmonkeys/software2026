@@ -29,7 +29,7 @@ pip install -r requirements.txt
 cp .env.example .env          # set DASHSCOPE_API_KEY etc.
 uvicorn app.main:app --reload # → http://127.0.0.1:8000
 ```
-On startup the backend (a) auto-creates tables (SQLite `loongchip.db`), (b) runs `run_migrations()` to add FIX5 columns on existing DBs, and (c) seeds default admin **`admin` / `123456`** — protected by `is_default_admin` (cannot be deleted, renamed, or demoted).
+On startup the backend (a) auto-creates tables (SQLite `loongchip.db`), (b) runs `run_migrations()` to add FIX5 / FIX6 columns on existing DBs (`token_version`, `parent_id`, `kg_overrides` table, …), and (c) seeds default admin **`admin` / `123456`** — protected by `is_default_admin` (cannot be deleted, renamed, or demoted).
 
 ## Architecture
 
@@ -48,9 +48,14 @@ The router (`src/router/index.ts`) is a single flat table in **hash mode** with 
 - `safeCall(fn)` — for endpoints returning `{code,msg,data}` envelope; returns `data.data` on success, **throws** on failure.
 - `rawCall(fn)` — for endpoints returning the JSON body directly; **throws** on failure.
 
-**FIX5 第 16 项 removed all mock fallback data.** Views now use try/catch + error UI (`EmptyState` / `AlertTriangle` banners) when the backend is unreachable. Do not re-introduce typed fallbacks — they previously masked real integration failures. Auth token is stored under `app:token` in localStorage and injected as a Bearer header; a 401 on a non-auth endpoint clears it and redirects via `location.hash = '#/login'`.
+**FIX5 第 16 项 removed all mock fallback data.** Views now use try/catch + error UI (`EmptyState` / `AlertTriangle` banners) when the backend is unreachable. Do not re-introduce typed fallbacks — they previously masked real integration failures.
+
+**FIX6 第 11 项 — token storage is split per context to prevent cross-tab token clobber.** The interceptor calls `readActiveToken()` which inspects `location.hash`: routes under `#/admin*` read/write `localStorage.admin_token`; everything else uses `user_token`. Legacy `app:token` is auto-migrated to `user_token` on first read. Always go through `readActiveToken / writeActiveToken / clearActiveToken` (exported from `src/api/request.ts`) — **never** touch the raw key, and **never** call `localStorage.clear()` on logout (it would nuke the other context's session). A 401 on a non-auth endpoint clears only the active context's token and redirects via `location.hash = '#/login'`; if the response `detail` contains "其他设备" (single-sign-on bumped your token version), a dedicated toast fires before the redirect.
 
 `VITE_API_BASE` (default `/api` in `.env.development`) points the SPA at the backend; Vite proxies `/api` to `127.0.0.1:8000` without path rewrite.
+
+### Single-sign-on via `token_version` (FIX6 第 10 项)
+`User.token_version` is bumped on every successful login and on `change-password`. `create_token` embeds it in the JWT as `tv`; `get_current_user` rejects any token whose `tv` no longer matches the DB row with `401 "账号已在其他设备登录"`. This makes JWTs effectively revocable without a blacklist — a fresh login on any device kills all older sessions.
 
 ### Roles — single source of truth
 `src/constants/roles.ts` is the **single source** for both sides of the front/back mismatch:
@@ -69,6 +74,26 @@ Tickets are platform-shared resources; per-user progress lives in a separate `Us
 
 Delete logic: completed tickets delete without a reason (default `"已完成"`); incomplete tickets require a reason from `需求错误 / 误触 / 其他(text)`. Rows are soft-deleted (`deleted_at` + `delete_reason` set) so the profile's "历史工单" tab can show them with a "重新添加" button.
 
+**FIX6 第 3 项 — soft-deleted progress no longer permanently hides a ticket.** `GET /api/ticket` now drops `progress.status == "deleted"` rows back into the `recommended` bucket (instead of nowhere), and `POST /api/ticket/recommend` filters `my_ids` only on non-deleted progress. So "delete from my list" is a per-user view toggle, never a platform-level removal.
+
+**FIX6 第 4 项 — timeline events carry richer detail.** `step_completed` events now include `stepIndex` alongside `stepId` so `TicketTimeline.vue` can render "第 N 步：标题" using the `steps` prop passed in from `workflow/Pc.vue` and `Mobile.vue`. Each event type has a distinct icon/colour pair (`PlusCircle` / `UserPlus` / `CheckCircle` / `Award` / `Trash2`) — **note the lucide-vue-next export is `PlusCircle`, not `CirclePlus`** (the latter doesn't exist; using it will fail typecheck).
+
+### Knowledge base — preview, edit, attachments
+- **FIX6 第 2 项 — binary preview.** `GET /api/kb/{id}/download` streams the original file inline (correct MIME for PDF/DOCX/TXT/MD). `Preview.vue` and `Browse.vue` detect `type === 'pdf' | 'docx'` and render `<iframe :src="blobUrl">` via `fetchDocBlobUrl()`; text/experience entries keep the markdown render path. The Blob URL is `URL.revokeObjectURL`-ed on unmount / detail-panel-close to avoid leaks.
+- **FIX6 第 5 项 — attachments bound to a parent.** `Document.parent_id` is a self-FK. `POST /api/kb/upload` accepts `parent_id` as **form field** (not query), so frontline workers must submit the text experience first (gets `latestDocId`), then upload supporting files which attach to it. `GET /api/kb` rolls children under `attachments[]` on each parent so they don't appear as orphan rows. Approve/reject on the parent cascades to all attachments in `POST /api/kb/review/{id}`.
+- **FIX6 第 6 项 — auditor/admin can edit docs.** `PUT /api/kb/{id}` accepts partial `{title?, content?, category?, status?}`; if content changed AND status is `approved`/`ready`, the document is re-ingested (`remove_document` + `ingest_document`). The edit dialog lives in `KnowledgeManage.vue` and works for any doc including AI-generated ones — there's no separate "AI-source-only" gate.
+- **FIX6 第 7 项 — PDF export font chain.** `_render_pdf()` tries `STSong-Light` (built-in CIDFont) → system CJK TTFs (`NotoSansCJK`, `wqy-microhei`, `simsun.ttc`, `PingFang.ttc`, …) → Helvetica with ASCII-replace fallback. Any failure in `_render_pdf` is wrapped to `HTTPException(500)` rather than a 500-stacktrace leak.
+
+### Knowledge graph — overrides + source docs
+`KGOverride` (`kg_overrides` table, kind=`node`/`edge`, op=`update`/`delete`) persists auditor edits on top of the dynamically-computed graph (FIX6 第 6 项). `_load_overrides()` merges them in `get_graph()` after node/edge construction.
+
+`GET /api/kg/graph` now accepts `filter_doc_id` and attaches `source_docs: [{id, title, doc_type}, …]` to every node (FIX6 第 8 项), built from the `sourceDocIds` set tracked during entity extraction. The PC view (`src/views/kg/Pc.vue`) exposes a doc-filter `<select>` and renders the source list in the right panel; clicking an entry jumps to `/kb/preview/:id`.
+
+CRUD endpoints (`require_auditor`): `PUT/DELETE /api/kg/node/{node_id}` and `PUT/DELETE /api/kg/edge/{edge_id}` where `edge_id` is `"{minSource}|{maxTarget}"` (sorted). The frontend wraps these in `src/api/kg.ts` (`updateNode / deleteNode / updateEdge / deleteEdge`).
+
+### Drafts persist across navigation (FIX6 第 9 项)
+`src/stores/search.ts` exposes `draft` (search question + image URLs/files) and `uploadDraft` (title/content/tags). Search Pc/Mobile and `knowledge/Upload.vue` call `setDraft / setUploadDraft` in `onBeforeUnmount` and read on mount; successful submission calls `clearDraft / clearUploadDraft`. Image `File` objects live in memory only (`draftImages` ref); their preview URLs persist via `localStorage` for restoration UX, but those URLs go stale on full reload.
+
 ### XSS — DOMPurify hardening
 `src/utils/markdown.ts` renders markdown via `markdown-it { html: false }` and then **always** passes the result through `DOMPurify.sanitize` with an allowlist that forbids `<script>`, `<iframe>`, `<style>`, inline `style`, and all `on*` handlers (FIX5 第 18 项). Use `renderMarkdown(src)` from this file for any `v-html` of user-derived content — never bind raw strings.
 
@@ -78,12 +103,13 @@ Delete logic: completed tickets delete without a reason (default `"已完成"`);
 - `app/services/rag.py` — Chroma persistent client; `ingest_document` (split → embed → add), `search`, `rag_answer` (system prompt persona "龙芯智修").
 - `app/api/chat.py` — `/api/chat/query` accepts `question` + optional `image`; image is described by Qwen-VL then fed into RAG.
 - `app/api/ticket.py` — workflow + ticket CRUD, `POST /recommend`, `/timeline`, `/history`. Per-user progress + event log enforced here.
-- `app/api/kb.py` — upload (role-gated: worker uploads land `pending`, auditor/admin land `approved`), list, export `?format=pdf|md` (PDF via reportlab with CJK).
+- `app/api/kb.py` — upload (role-gated: worker uploads land `pending`, auditor/admin land `approved`), list (parents + `attachments[]`), export `?format=pdf|md` (PDF via reportlab with CJK), download binary `/{id}/download`, update `/{id}` (auditor/edit), review cascade to attachments.
 - `app/api/admin.py` — user CRUD, password reset (always to `123456`), `is_default_admin` protection.
+- `app/api/kg.py` — graph (dynamic entity extraction + KGOverride overlay + source_docs + filter), node/edge CRUD (auditor).
 - Routers are prefixed `/api/...` (except `kg`). Auth via JWT (`app/core/security.py`), bcrypt password hashing, `get_current_user` dependency on protected routes.
 
 ### Knowledge graph animation
 `src/views/kg/Pc.vue` pre-positions nodes on a circular layout with deterministic micro-jitter, sets `force.layoutAnimation:false` so the force simulation settles in one frame, and uses ECharts `elasticOut` easing with a `series.animationDelay` callback to fade edges in ~200 ms after nodes (FIX5 第 14 项). Don't replace this with a from-center force-init — that's the explicit anti-pattern this fixes.
 
 ## Project tracking docs
-`NEEDS/` holds the original requirements (`NEEDS.md`, `后端环境搭建及接口文档.md`) and fix lists (`FIX1..5.md`); `CHANGE/` holds change logs. Code comments frequently reference these (e.g. `"FIX5 第 13 项"`) — consult them to understand why a piece of behavior exists.
+`NEEDS/` holds the original requirements (`NEEDS.md`, `后端环境搭建及接口文档.md`) and fix lists (`FIX1..6.md`); `CHANGE/` holds change logs. Code comments frequently reference these (e.g. `"FIX5 第 13 项"`, `"FIX6 第 11 项"`) — consult them to understand why a piece of behavior exists.

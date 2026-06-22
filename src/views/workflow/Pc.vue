@@ -360,7 +360,7 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
             <div v-if="activeStep.desc" class="md-body mt-3 text-sm" v-html="renderMarkdown(activeStep.desc)"></div>
           </div>
 
-          <!-- 子步骤列表 -->
+          <!-- 子步骤列表（FIX6-resume F1：放大点击区、按钮明显化） -->
           <div v-if="activeStep.subSteps?.length" class="industrial-card p-5">
             <div class="text-sm font-semibold mb-3 flex items-center gap-2">
               <ListChecks class="w-4 h-4 text-accent" />
@@ -369,32 +369,46 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
                 {{ subProgress(activeStep.id)?.done ?? 0 }} / {{ activeStep.subSteps.length }}
               </span>
             </div>
-            <ol class="space-y-2">
+            <ol class="space-y-3">
               <li v-for="(ss, si) in activeStep.subSteps" :key="ss.id">
-                <label class="flex items-start gap-3 px-3 py-3 rounded-btn transition text-sm border"
-                       :class="[
-                         wf.subDone[activeStep.id]?.[ss.id]
-                           ? 'border-success/30 bg-success/5'
-                           : (wf.canCheckSub(activeIdx, si)
-                               ? 'border-border hover:border-accent/50 cursor-pointer'
-                               : 'border-border bg-bg/40 opacity-60 cursor-not-allowed')
-                       ]"
-                       :title="wf.canCheckSub(activeIdx, si) || wf.subDone[activeStep.id]?.[ss.id] ? '' : '请先完成上一步'">
-                  <input type="checkbox"
-                         :checked="!!wf.subDone[activeStep.id]?.[ss.id]"
-                         @change="onToggleSub(activeIdx, si)"
-                         :disabled="isDemo || (!wf.canCheckSub(activeIdx, si) && !wf.subDone[activeStep.id]?.[ss.id])"
-                         class="w-4 h-4 mt-0.5 accent-success flex-shrink-0" />
-                  <span class="mono text-[11px] text-text-2 mt-0.5 w-8 flex-shrink-0">
+                <div class="flex items-stretch gap-3 rounded-card transition border-2 overflow-hidden"
+                     :class="[
+                       wf.subDone[activeStep.id]?.[ss.id]
+                         ? 'border-success/40 bg-success/5'
+                         : (wf.canCheckSub(activeIdx, si)
+                             ? 'border-border hover:border-accent/60 bg-card'
+                             : 'border-border bg-bg/40 opacity-60')
+                     ]">
+                  <!-- 序号块 -->
+                  <div class="w-12 flex-shrink-0 flex items-center justify-center font-bold mono text-base"
+                       :class="wf.subDone[activeStep.id]?.[ss.id]
+                                ? 'bg-success/10 text-success'
+                                : (wf.canCheckSub(activeIdx, si) ? 'bg-accent/10 text-accent' : 'bg-bg text-text-2')">
                     {{ activeIdx + 1 }}.{{ si + 1 }}
-                  </span>
-                  <span class="flex-1 leading-relaxed"
-                        :class="wf.subDone[activeStep.id]?.[ss.id] ? 'text-text-2 line-through' : ''">
+                  </div>
+                  <!-- 文本 -->
+                  <div class="flex-1 min-w-0 py-3 pr-3 text-sm leading-relaxed self-center"
+                       :class="wf.subDone[activeStep.id]?.[ss.id] ? 'text-text-2 line-through' : ''">
                     {{ ss.content }}
-                  </span>
-                  <Lock v-if="!wf.canCheckSub(activeIdx, si) && !wf.subDone[activeStep.id]?.[ss.id]"
-                        class="w-4 h-4 text-text-2 mt-0.5 flex-shrink-0" />
-                </label>
+                  </div>
+                  <!-- 大完成按钮 -->
+                  <button
+                    @click="onToggleSub(activeIdx, si)"
+                    :disabled="isDemo || (!wf.canCheckSub(activeIdx, si) && !wf.subDone[activeStep.id]?.[ss.id])"
+                    class="flex-shrink-0 w-32 flex items-center justify-center gap-2 font-semibold text-sm border-l transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    :class="wf.subDone[activeStep.id]?.[ss.id]
+                              ? 'bg-success/10 text-success border-success/30 hover:bg-success/15'
+                              : 'bg-accent text-white border-accent hover:bg-accent-2'">
+                    <Check v-if="wf.subDone[activeStep.id]?.[ss.id]" class="w-4 h-4" />
+                    <Lock v-else-if="!wf.canCheckSub(activeIdx, si)" class="w-4 h-4" />
+                    <CircleDashed v-else class="w-4 h-4" />
+                    <span>
+                      {{ wf.subDone[activeStep.id]?.[ss.id]
+                           ? '已完成'
+                           : (wf.canCheckSub(activeIdx, si) ? '标记完成' : '未解锁') }}
+                    </span>
+                  </button>
+                </div>
               </li>
             </ol>
           </div>
@@ -423,18 +437,7 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
             <div class="text-sm text-text leading-relaxed">{{ activeStep.acceptance }}</div>
           </div>
 
-          <!-- 步骤间导航 -->
-          <div class="flex items-center gap-3 pt-2">
-            <button @click="goPrevStep" :disabled="activeIdx === 0"
-                    class="h-9 px-4 rounded-btn border border-border bg-card hover:bg-bg flex items-center gap-1.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              <ChevronLeft class="w-4 h-4" /> 上一步
-            </button>
-            <span class="text-xs text-text-2 mono">{{ activeIdx + 1 }} / {{ wf.totalSteps }}</span>
-            <button @click="goNextStep" :disabled="activeIdx >= wf.totalSteps - 1"
-                    class="ml-auto h-9 px-4 rounded-btn bg-accent hover:bg-accent-2 text-white flex items-center gap-1.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              下一步 <ChevronRight class="w-4 h-4" />
-            </button>
-          </div>
+          <!-- FIX6-resume F1：中部不再放上一步/下一步导航，按钮统一放到右侧底栏 -->
         </div>
         <div v-else class="py-12 text-center text-text-2">
           <CircleDashed class="w-10 h-10 mx-auto opacity-40" />
@@ -442,7 +445,7 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
         </div>
       </main>
 
-      <!-- ========================= 右：工具清单 + 关联手册 ========================= -->
+      <!-- ========================= 右：工具清单 + 关联手册 + 步骤导航底栏 ========================= -->
       <aside class="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
         <!-- 工具清单 -->
         <section class="flex-1 min-h-0 flex flex-col border-b border-border">
@@ -535,6 +538,26 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
             </ul>
           </div>
         </section>
+
+        <!-- FIX6-resume F1：右侧底部固定的步骤导航按钮区（突出"下一步"） -->
+        <section class="flex-shrink-0 border-t border-border bg-bg/40 px-3 py-3 space-y-2">
+          <div class="flex items-center justify-between text-xs text-text-2 mono px-1">
+            <span>步骤 {{ activeIdx + 1 }} / {{ wf.totalSteps }}</span>
+            <span v-if="activeStep && subProgress(activeStep.id)" class="text-accent">
+              {{ subProgress(activeStep.id)!.done }}/{{ subProgress(activeStep.id)!.total }} 子步骤
+            </span>
+          </div>
+          <div class="flex gap-2">
+            <button @click="goPrevStep" :disabled="activeIdx === 0"
+                    class="flex-1 h-11 rounded-btn border border-border bg-card hover:bg-bg flex items-center justify-center gap-1.5 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+              <ChevronLeft class="w-4 h-4" /> 上一步
+            </button>
+            <button @click="goNextStep" :disabled="activeIdx >= wf.totalSteps - 1"
+                    class="flex-1 h-11 rounded-btn bg-accent hover:bg-accent-2 text-white flex items-center justify-center gap-1.5 text-sm font-semibold shadow-card disabled:opacity-40 disabled:cursor-not-allowed">
+              下一步 <ChevronRight class="w-4 h-4" />
+            </button>
+          </div>
+        </section>
       </aside>
     </div>
 
@@ -550,5 +573,5 @@ const goNextStep = () => { if (wf.flow && activeIdx.value < wf.flow.steps.length
   </div>
   <div v-else class="p-12 text-center text-text-2">流程加载中…</div>
 
-  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" @close="showTimeline = false" />
+  <TicketTimeline :ticket-id="ticketNumId" :open="showTimeline" :steps="wf.flow?.steps" @close="showTimeline = false" />
 </template>

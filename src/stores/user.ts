@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as authApi from '@/api/auth'
-import { storage } from '@/utils/storage'
 import type { Role } from '@/constants/roles'
-import { TOKEN_STORAGE_KEY } from '@/api/request'
+import { readActiveToken, writeActiveToken, clearActiveToken } from '@/api/request'
 
 interface UserInfo {
   id: string
@@ -14,7 +13,8 @@ interface UserInfo {
 
 export const useUserStore = defineStore('user', () => {
   // FIX5 第 18 项：localStorage 只保存 token，不保存明文用户资料
-  const token = ref<string>(storage.get<string>(TOKEN_STORAGE_KEY) || '')
+  // FIX6 第 11 项：用户端 / 管理端 token 隔离，按当前路由前缀读写不同 key
+  const token = ref<string>(readActiveToken())
   const info = ref<UserInfo | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
@@ -28,7 +28,9 @@ export const useUserStore = defineStore('user', () => {
   const login = async (username: string, password: string, _remember = false) => {
     const res = await authApi.login({ username, password })
     token.value = res.token
-    storage.set(TOKEN_STORAGE_KEY, res.token)
+    // FIX6-resume：admin 同时写入 user_token + admin_token，避免点击 /admin/* 时
+    // 上下文切换瞬间读到空 admin_token 导致 401 → 踢回登录
+    writeActiveToken(res.token, res.user.role)
     // 用 token 拉取权威用户信息（含 isDefaultAdmin）
     await hydrate()
     if (!info.value) info.value = { ...res.user }
@@ -50,7 +52,7 @@ export const useUserStore = defineStore('user', () => {
       // token 失效：清理（路由守卫会跳登录）
       token.value = ''
       info.value = null
-      storage.remove(TOKEN_STORAGE_KEY)
+      clearActiveToken()
     }
   }
 
@@ -58,7 +60,8 @@ export const useUserStore = defineStore('user', () => {
     try { await authApi.logout() } catch {}
     token.value = ''
     info.value = null
-    storage.remove(TOKEN_STORAGE_KEY)
+    // FIX6 第 11 项：只清当前上下文 token，不要 localStorage.clear()
+    clearActiveToken()
     try {
       const { useChatHistoryStore } = await import('@/stores/chatHistory')
       useChatHistoryStore().reset()

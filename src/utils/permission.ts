@@ -24,7 +24,8 @@ export interface MenuItem {
 export const MENU_ITEMS: MenuItem[] = [
   { path: '/search',            label: '多模态检索', highlight: true },
   { path: '/workflow',          label: '作业指引' },
-  { path: '/knowledge/browse',  label: '知识库' },
+  // FIX6 第 1 项：显式声明知识库浏览对一线员工、审查员、管理员均可见
+  { path: '/knowledge/browse',  label: '知识库',     roles: ['frontline', 'auditor', 'admin'] },
   { path: '/knowledge/upload',  label: '经验分享',   roles: ['frontline'] },
   { path: '/auditor/review',    label: '待审核',     roles: ['auditor', 'admin'] },
   { path: '/auditor/knowledge', label: '知识库管理', roles: ['auditor', 'admin'] },

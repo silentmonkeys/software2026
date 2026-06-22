@@ -14,7 +14,7 @@ import {
   Database, Search, FileText, Loader, RefreshCw, ChevronLeft,
   AlertTriangle, Download, FileDown, X
 } from 'lucide-vue-next'
-import { listDocs, getDoc, exportDoc, type KbDoc, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
+import { listDocs, getDoc, exportDoc, fetchDocBlobUrl, type KbDoc, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
 import { renderMarkdown } from '@/utils/markdown'
 import EmptyState from '@/components/common/EmptyState.vue'
 
@@ -30,6 +30,9 @@ const detail = ref<KbDocDetail | null>(null)
 const detailLoading = ref(false)
 const detailErr = ref('')
 const showDetail = ref(false)
+// FIX6 第 2 项：PDF 等二进制原始文件 Blob URL 预览
+const detailBlobUrl = ref('')
+const detailBlobErr = ref('')
 const exporting = ref<'pdf' | 'md' | ''>('')
 
 const refresh = async () => {
@@ -64,9 +67,22 @@ const openDoc = async (d: KbDoc) => {
   showDetail.value = true
   detail.value = null
   detailErr.value = ''
+  detailBlobErr.value = ''
+  if (detailBlobUrl.value) {
+    URL.revokeObjectURL(detailBlobUrl.value)
+    detailBlobUrl.value = ''
+  }
   detailLoading.value = true
   try {
     detail.value = await getDoc(d.id)
+    const t = (detail.value?.type || '').toLowerCase()
+    if (t === 'pdf' || t === 'docx') {
+      try {
+        detailBlobUrl.value = await fetchDocBlobUrl(detail.value!.id)
+      } catch {
+        detailBlobErr.value = '原始文件加载失败'
+      }
+    }
   } catch {
     detailErr.value = '无法加载文档内容，请确认后端服务可用'
   } finally {
@@ -78,6 +94,15 @@ const closeDetail = () => {
   if (exporting.value) return
   showDetail.value = false
   detail.value = null
+  if (detailBlobUrl.value) {
+    URL.revokeObjectURL(detailBlobUrl.value)
+    detailBlobUrl.value = ''
+  }
+}
+
+const isBinaryDoc = (d: KbDocDetail | null) => {
+  const t = (d?.type || '').toLowerCase()
+  return t === 'pdf' || t === 'docx'
 }
 
 const doExport = async (format: 'pdf' | 'md') => {
@@ -275,7 +300,19 @@ const STATUS_CLS: Record<string, string> = {
             <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[detail.status] || 'bg-bg border-border'">{{ STATUS_LABEL[detail.status] || detail.status }}</span>
             <span class="mono opacity-70">{{ detail.created_at }}</span>
           </div>
-          <div class="md-body" v-html="renderMarkdown(detail.content || '（暂无正文内容）')"></div>
+          <!-- FIX6 第 2 项：PDF / DOCX 用 iframe Blob URL 预览 -->
+          <div v-if="isBinaryDoc(detail)" class="border border-border rounded-lg overflow-hidden" style="height:65vh">
+            <div v-if="detailBlobErr" class="p-10 text-center text-text-2">
+              <AlertTriangle class="w-8 h-8 mx-auto text-warning opacity-70" />
+              <div class="mt-3 text-sm">{{ detailBlobErr }}</div>
+            </div>
+            <div v-else-if="!detailBlobUrl" class="p-10 text-center text-text-2">
+              <Loader class="w-6 h-6 mx-auto animate-spin text-accent" />
+              <div class="mt-2 text-sm">正在加载原始文件…</div>
+            </div>
+            <iframe v-else :src="detailBlobUrl" class="w-full h-full border-0" />
+          </div>
+          <div v-else class="md-body" v-html="renderMarkdown(detail.content || '（暂无正文内容）')"></div>
         </template>
       </div>
 

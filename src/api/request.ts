@@ -8,7 +8,70 @@ export interface ApiResponse<T = unknown> {
   data: T
 }
 
-const TOKEN_KEY = 'app:token'
+/**
+ * FIX6 第 11 项：用户端 / 管理端 token 隔离
+ * - 旧 key `app:token` 仅做迁移兼容
+ * - 用户端：`user_token`；管理端：`admin_token`
+ * - 通过当前 hash 路由前缀（#/admin*）区分活动端
+ */
+const LEGACY_TOKEN_KEY = 'app:token'
+const USER_TOKEN_KEY = 'user_token'
+const ADMIN_TOKEN_KEY = 'admin_token'
+
+/** 判断当前是否处于管理端入口 */
+function isAdminContext(): boolean {
+  // hash 模式：#/admin/...
+  if (typeof location !== 'undefined') {
+    const h = location.hash || ''
+    if (h.startsWith('#/admin')) return true
+    // 兼容兜底（虽然项目使用 hash 模式）
+    if ((location.pathname || '').startsWith('/admin')) return true
+  }
+  return false
+}
+
+/** 返回当前上下文对应的 token storage key */
+export function activeTokenKey(): string {
+  return isAdminContext() ? ADMIN_TOKEN_KEY : USER_TOKEN_KEY
+}
+
+/** 读取当前上下文的 token；自动迁移旧 `app:token` */
+export function readActiveToken(): string {
+  // 优先读取当前上下文 key
+  const cur = storage.get<string>(activeTokenKey())
+  if (cur) return cur
+  // 兼容旧版：把 app:token 迁移到 user_token（默认普通用户）
+  const legacy = storage.get<string>(LEGACY_TOKEN_KEY)
+  if (legacy) {
+    storage.set(USER_TOKEN_KEY, legacy)
+    storage.remove(LEGACY_TOKEN_KEY)
+    return isAdminContext() ? '' : legacy
+  }
+  return ''
+}
+
+/**
+ * 写入 token。
+ * - role='admin'：同时写入 user_token + admin_token（admin 既能用用户端检索，又能用管理端）
+ * - 其它角色：仅写当前上下文 key（默认 user_token）
+ * 这样 admin 从 #/login 登录后切到 #/admin/* 不会因为读取 admin_token 为空而被踢出。
+ * FIX6-resume：解决"点击用户管理直接退回登录"问题
+ */
+export function writeActiveToken(t: string, role?: string) {
+  if (role === 'admin') {
+    storage.set(USER_TOKEN_KEY, t)
+    storage.set(ADMIN_TOKEN_KEY, t)
+  } else {
+    storage.set(activeTokenKey(), t)
+  }
+}
+
+/** 清除两端 token（登出场景：避免另一端 token 残留导致下次登录串号） */
+export function clearActiveToken() {
+  storage.remove(USER_TOKEN_KEY)
+  storage.remove(ADMIN_TOKEN_KEY)
+  storage.remove(LEGACY_TOKEN_KEY)
+}
 
 export const request: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api',
@@ -16,7 +79,7 @@ export const request: AxiosInstance = axios.create({
 })
 
 request.interceptors.request.use(cfg => {
-  const t = storage.get<string>(TOKEN_KEY)
+  const t = readActiveToken()
   if (t) cfg.headers.Authorization = `Bearer ${t}`
   return cfg
 })
@@ -26,9 +89,14 @@ request.interceptors.response.use(
   err => {
     const status = err?.response?.status
     const url = String(err?.config?.url || '')
+    const detail = String(err?.response?.data?.detail || '')
     const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/register')
     if (status === 401 && !isAuthEndpoint) {
-      storage.remove(TOKEN_KEY)
+      clearActiveToken()
+      // FIX6 第 10 项：区分"过期"与"其他设备登录"两种 401
+      if (detail.includes('其他设备')) {
+        try { showFailToast({ message: '账号已在其他设备登录', duration: 2200 }) } catch {}
+      }
       // 注意：路由是 hash 模式，必须改 hash 而不是 pathname
       const onLogin = location.hash.startsWith('#/login')
       if (!onLogin) location.hash = '#/login'
@@ -77,6 +145,8 @@ export function del<T = unknown>(url: string) {
   return request.delete<ApiResponse<T>>(url)
 }
 
-export const TOKEN_STORAGE_KEY = TOKEN_KEY
+// FIX6 第 11 项：保留旧导出名称以兼容现有调用方；返回当前上下文的实际 key
+export const TOKEN_STORAGE_KEY = USER_TOKEN_KEY
+export { USER_TOKEN_KEY, ADMIN_TOKEN_KEY, LEGACY_TOKEN_KEY }
 
 void showFailToast // 防 tree shake

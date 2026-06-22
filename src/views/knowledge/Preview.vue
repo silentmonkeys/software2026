@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * 知识库文档预览（FIX5）
- * - 调用 getDoc(id) 获取含正文的详情，renderMarkdown + v-html 渲染全文（只读）
+ * 知识库文档预览（FIX5 / FIX6 第 2 项）
+ * - 文本类（txt/md/experience）：getDoc 取正文 + markdown 渲染
+ * - PDF 等二进制：fetchDocBlobUrl 取带 token 的 Blob URL，注入 <iframe> 预览
  * - 导出 PDF / Markdown（exportDoc）
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getDoc, exportDoc, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
+import { getDoc, exportDoc, fetchDocBlobUrl, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
 import { renderMarkdown } from '@/utils/markdown'
 import { showToast, showFailToast } from 'vant'
 import { ChevronLeft, FileText, Loader, AlertTriangle, Download, FileDown } from 'lucide-vue-next'
@@ -19,6 +20,8 @@ const doc = ref<KbDocDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
 const exporting = ref<'pdf' | 'md' | ''>('')
+const blobUrl = ref<string>('')      // FIX6 第 2 项：PDF Blob URL
+const blobErr = ref('')
 
 const STATUS_CLS: Record<string, string> = {
   pending:    'bg-warning/10 text-warning border-warning/30',
@@ -28,15 +31,36 @@ const STATUS_CLS: Record<string, string> = {
   taken_down: 'bg-text-2/10 text-text-2 border-border'
 }
 
+/** 是否走 iframe 预览（PDF 等二进制） */
+const isBinary = computed(() => {
+  const t = (doc.value?.type || '').toLowerCase()
+  return t === 'pdf' || t === 'docx'
+})
+
+const loadBlob = async () => {
+  if (!doc.value) return
+  try {
+    blobUrl.value = await fetchDocBlobUrl(doc.value.id)
+  } catch {
+    blobErr.value = '原始文件加载失败，请稍后重试或联系管理员'
+  }
+}
+
 onMounted(async () => {
   loading.value = true
   try {
     doc.value = await getDoc(docId.value)
+    if (isBinary.value) await loadBlob()
   } catch {
     error.value = '后端不可达或文档不存在，无法加载文档内容'
   } finally {
     loading.value = false
   }
+})
+
+onBeforeUnmount(() => {
+  // 释放 Blob URL，避免内存泄漏
+  if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
 })
 
 const doExport = async (format: 'pdf' | 'md') => {
@@ -100,7 +124,19 @@ const doExport = async (format: 'pdf' | 'md') => {
             </div>
           </div>
         </div>
-        <div class="industrial-card p-5">
+        <!-- FIX6 第 2 项：PDF / DOCX 用 iframe Blob URL 预览原始文件 -->
+        <div v-if="isBinary" class="industrial-card overflow-hidden" style="height:75vh">
+          <div v-if="blobErr" class="p-10 text-center text-text-2">
+            <AlertTriangle class="w-8 h-8 mx-auto text-warning opacity-70" />
+            <div class="mt-3 text-sm">{{ blobErr }}</div>
+          </div>
+          <div v-else-if="!blobUrl" class="p-10 text-center text-text-2">
+            <Loader class="w-6 h-6 mx-auto animate-spin text-accent" />
+            <div class="mt-2 text-sm">正在加载原始文件…</div>
+          </div>
+          <iframe v-else :src="blobUrl" class="w-full h-full border-0" />
+        </div>
+        <div v-else class="industrial-card p-5">
           <div class="md-body" v-html="renderMarkdown(doc.content || '（暂无正文内容）')"></div>
         </div>
       </template>

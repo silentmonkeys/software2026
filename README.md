@@ -13,15 +13,15 @@
 
 | 模块 | 路径 | 简介 |
 | --- | --- | --- |
-| **多模态检索** | `/search` | 文本 + 图片输入，调用 Qwen 视觉理解 + Chroma 向量检索 + LLM 摘要；结果默认折叠引用材料，自动展开"推荐工单"卡片便于一键添加。 |
-| **知识库浏览** | `/knowledge/browse` | 所有登录用户均可查看已入库文档，支持类型过滤、全文预览、**PDF / Markdown 导出**（reportlab 含中日韩字体）。 |
-| **知识上传** | `/knowledge/upload` | 一线员工提交"经验分享"，提交后进入待审；管理员 / 审查员则在知识库管理页直接入库。 |
-| **作业指引（工单）** | `/workflow` | 平台级工单 + 每用户独立进度（`user_ticket_progress`）；"我的工单" / "推荐工单"双栏；创建前优先相似度推荐，避免重复；按步骤推进、记录每步时间戳。 |
-| **工单时间线** | 内嵌组件 | 完整记录 创建 / 加入 / 步骤完成 / 整体完成 / 删除（理由）；员工只看自己，审查员 / 管理员可看一条工单下所有用户的轨迹。 |
-| **审查工作台** | `/auditor/review` | 知识条目通过 / 驳回 / 下架，所有变更走二次确认对话框，不可逆操作使用警示样式。 |
-| **知识库管理** | `/auditor/knowledge` | 审查员 / 管理员对已入库文档增删改，配合 AI 助手快速分析。 |
-| **知识图谱** | `/kg` | ECharts 力图（PC）/ 卡片流（Mobile）。PC 端节点按环形 + 微抖动预放置、`elasticOut` 弹性入场、边延迟分层渐入（FIX5 第 14 项）。 |
-| **个人中心** | `/profile` | 资料、安全（修改自己的密码）、**历史工单 Tab**（已完成 / 已删除带理由，支持"重新添加到作业指引"）。 |
+| **多模态检索** | `/search` | 文本 + 图片输入，调用 Qwen 视觉理解 + Chroma 向量检索 + LLM 摘要；结果默认折叠引用材料，自动展开"推荐工单"卡片便于一键添加。**离开页面前未提交的问题与图片会作为草稿保留**（FIX6 第 9 项）。 |
+| **知识库浏览** | `/knowledge/browse` | 一线员工 / 审查员 / 管理员均可查看已入库文档，支持类型过滤、全文预览、**PDF / DOCX 原生预览（iframe Blob URL）**、**PDF / Markdown 导出**（reportlab 多级 CJK 字体回退）。 |
+| **知识上传** | `/knowledge/upload` | 一线员工提交"经验分享"，提交后进入待审；附件通过 `parent_id` 自动关联到主条目，主条目审核通过会级联通过其附件（FIX6 第 5 项）。表单内容跨页面保留草稿（FIX6 第 9 项）。 |
+| **作业指引（工单）** | `/workflow` | 平台级工单 + 每用户独立进度（`user_ticket_progress`）；"我的工单" / "推荐工单"双栏；用户的"删除"仅当前视图隐藏，工单仍参与推荐（FIX6 第 3 项）。 |
+| **工单时间线** | 内嵌组件 | 完整记录 创建 / 加入 / 步骤完成 / 整体完成 / 删除（理由），5 种事件配各自图标与配色；`step_completed` 携带 `stepIndex` 显示"第 N 步：标题"（FIX6 第 4 项）。员工只看自己，审查员 / 管理员可看一条工单下所有用户的轨迹。 |
+| **审查工作台** | `/auditor/review` | 知识条目通过 / 驳回 / 下架，所有变更走二次确认对话框；通过 / 驳回级联到关联附件。 |
+| **知识库管理** | `/auditor/knowledge` | 审查员 / 管理员对已入库文档增删改，**含 AI 自动入库条目的编辑**（FIX6 第 6 项），保存后自动重建向量索引。 |
+| **知识图谱** | `/kg` | ECharts 力图（PC）/ 卡片流（Mobile）。PC 端节点按环形 + 微抖动预放置、`elasticOut` 弹性入场、边延迟分层渐入（FIX5 第 14 项）。审查员可编辑 / 删除节点和边（FIX6 第 6 项）；节点弹窗展示 `source_docs` 关联文档，支持按文档筛选图谱（FIX6 第 8 项）。 |
+| **个人中心** | `/profile` | 资料、安全（修改自己的密码，必校验旧密码）、**历史工单 Tab**（已完成 / 已删除带理由，支持"重新添加到作业指引"）。 |
 | **用户管理** | `/admin/user` | 管理员独占。任意角色账户增 / 改 / 删 / 重置密码（重置为 `123456`）。默认 `admin` 账号受 `is_default_admin` 保护，不可删除、不可改名、不可降权。 |
 
 ### 角色与权限
@@ -152,7 +152,7 @@ uvicorn app.main:app --reload   # → http://127.0.0.1:8000
 - `rawCall(fn)` —— 处理 FastAPI 直接返回 JSON 的接口，失败抛错。
 
 > **FIX5 第 16 项**：所有 mock 兜底数据已移除，接口失败时各视图统一用 `EmptyState` / `AlertTriangle` 错误态展示，避免"假数据兜底"造成误导。
-> Token 存于 `localStorage` 键 `app:token`，按 Bearer 注入；401（非登录接口）会清除 token 并 `location.hash = '#/login'`。
+> **FIX6 第 11 项**：Token 按路由前缀隔离存储——用户端用 `user_token`，管理端（`#/admin`）用 `admin_token`，避免同浏览器交叉登录时 token 串扰。按 Bearer 注入；401（非登录接口）会清除当前上下文的 token 并 `location.hash = '#/login'`。若后端返回 `detail` 含"其他设备"（单点登录），弹出专属提示后再跳转。
 
 后端路由除 `/api/kg` 外均带 `/api` 前缀，Vite 代理不重写路径。
 
@@ -161,7 +161,10 @@ uvicorn app.main:app --reload   # → http://127.0.0.1:8000
 ## 安全
 
 - **XSS**：`utils/markdown.ts` = `markdown-it { html:false }` + **DOMPurify** 白名单二次净化；禁用 `<script>` / `<iframe>` / 内联 `style` / `on*` 事件，URL 仅放行 `https?:` / `mailto:` / `#` / `/`。
-- **本地存储**：只保存 token，不存明文用户资料；401 自动清除。
+- **单点登录（FIX6 第 10 项）**：`User.token_version` 每次登录 / 改密递增；JWT 携带 `tv` 字段，`get_current_user` 校验不一致即 401，旧设备 token 立即失效。
+- **Token 隔离（FIX6 第 11 项）**：用户端 `user_token` 与管理端 `admin_token` 按 `location.hash` 前缀分流，杜绝同浏览器同账号多角色操作时的串号；登出只清当前上下文，不影响另一端。
+- **改密加固（FIX6 第 11 项）**：`PUT /api/auth/change-password` 必须校验旧密码，按 `current_user.id` 显式锁定目标行写入，并写入审计日志；管理员重置 `PUT /api/admin/users/{id}/reset-password` 一律按路径参数 `id` 查目标用户。
+- **本地存储**：只保存 token，不存明文用户资料；401 自动清除当前上下文 token。
 - **路由守卫**：`beforeEach` 验证 token，调用 `/api/auth/me` 拉取实体后再渲染；`meta.roles` 缺权限弹 toast 跳回。
 - **后端鉴权**：所有受限路由依赖 `get_current_user` + 角色检查；默认 admin 受 `is_default_admin` 双重保护（用户名 + 标记列）。
 - **密码**：bcrypt 哈希，注册 / 修改 / 重置统一校验长度 ≥ 6。
@@ -205,24 +208,30 @@ uvicorn app.main:app --reload   # → http://127.0.0.1:8000
 | Method | Path | 说明 |
 | --- | --- | --- |
 | POST | `/api/auth/register` | 注册（强制 worker） |
-| POST | `/api/auth/login` | 登录 → JWT |
+| POST | `/api/auth/login` | 登录 → JWT（每次登录 `token_version` +1） |
 | GET | `/api/auth/me` | 当前用户 |
-| PUT | `/api/auth/change-password` | 修改自己的密码 |
+| PUT | `/api/auth/change-password` | 修改自己的密码（校验旧密码） |
 | GET/POST/PUT/DELETE | `/api/admin/users` | 管理员账户 CRUD |
-| PUT | `/api/admin/users/{id}/reset-password` | 重置为 `123456` |
-| POST | `/api/kb/upload` / `/api/kb/text` | 文档 / 经验上传（员工进待审，管理员直入库） |
-| GET | `/api/kb/list` `/api/kb/{id}` | 浏览 / 详情 |
+| PUT | `/api/admin/users/{id}/reset-password` | 重置为 `123456`（按路径参数查目标用户） |
+| POST | `/api/kb/upload` | 文档 / 经验上传（支持 `parent_id` 关联附件） |
+| POST | `/api/kb/text` | 纯文本知识入库 |
+| GET | `/api/kb/list` | 浏览列表（主条目下挂 `attachments[]`） |
+| GET | `/api/kb/{id}` | 文档详情 |
+| GET | `/api/kb/{id}/download` | 原始文件下载（PDF/DOCX inline 预览） |
 | GET | `/api/kb/{id}/export?format=pdf\|md` | 导出 |
-| POST | `/api/kb/{id}/review` | 审核通过 / 驳回 |
+| PUT | `/api/kb/{id}` | 编辑文档（审查员/管理员，含重建向量） |
+| POST | `/api/kb/{id}/review` | 审核通过 / 驳回（级联附件） |
 | POST | `/api/chat/query` | 多模态问答（文本 + 可选图片） |
 | GET / POST | `/api/ticket` | 列出 / 创建工单 |
-| POST | `/api/ticket/recommend` | 相似工单推荐 |
+| POST | `/api/ticket/recommend` | 相似工单推荐（仅排除当前 TB 进度） |
 | POST | `/api/ticket/{id}/add` | 加入他人工单（新建独立进度） |
-| PUT | `/api/ticket/{id}/progress` | 推进步骤 |
+| PUT | `/api/ticket/{id}/progress` | 推进步骤（附带 `stepIndex`） |
 | DELETE | `/api/ticket/{id}` | 删除（未完成需理由） |
 | GET | `/api/ticket/{id}/timeline` | 时间线（审查员 / 管理员可看所有用户） |
-| GET | `/api/ticket/history` | 个人历史工单 |
-| GET | `/api/kg/graph` | 知识图谱节点 + 边 |
+| GET | `/api/ticket/history` | 个人历史工单（含已删除） |
+| GET | `/api/kg/graph` | 知识图谱节点 + 边（支持 `filter_doc_id`） |
+| PUT/DELETE | `/api/kg/node/{node_id}` | 图谱节点编辑 / 删除（审查员/管理员） |
+| PUT/DELETE | `/api/kg/edge/{edge_id}` | 图谱边关系编辑 / 删除（审查员/管理员） |
 | GET | `/api/kb/{docId}/chunk/{chunkId}` | 节点对应原文片段 |
 
 ---
@@ -234,11 +243,19 @@ uvicorn app.main:app --reload   # → http://127.0.0.1:8000
 | `npm run typecheck` | ✅ 0 错误 |
 | 注册仅创建员工账户 | ✅ |
 | 默认管理员 `admin / 123456`，不可删除 | ✅ |
-| 个人改密 + 管理员重置 | ✅ |
+| 个人改密（验旧密码）+ 管理员重置（按路径参数锁定目标） | ✅ |
+| 单点登录：新登录使旧设备 token 失效（`token_version`） | ✅ FIX6 第 10 项 |
+| Token 隔离：用户端 `user_token` / 管理端 `admin_token` 按路由前缀分流 | ✅ FIX6 第 11 项 |
 | 审查员 `/auditor/review` + `/auditor/knowledge`，操作前二次确认 | ✅ |
-| 知识库导出 PDF / Markdown | ✅ |
+| 知识库导入：附件 `parent_id` 关联主条目，审核级联 | ✅ FIX6 第 5 项 |
+| 知识库导出 PDF / Markdown + PDF 二进制原生预览 | ✅ FIX6 第 2 项 |
+| 知识库编辑：审查员/管理员可修改文档内容，自动重建向量 | ✅ FIX6 第 6 项 |
 | 工单：完成可直接删，未完成需理由；他人工单可"添加到我的" | ✅ |
-| 工单时间线（员工只看自己 / 审查员 admin 看全部） | ✅ |
+| 工单软删除仅隐藏当前用户视图，仍参与平台推荐 | ✅ FIX6 第 3 项 |
+| 工单时间线（员工只看自己 / 审查员 admin 看全部，带图标配色） | ✅ FIX6 第 4 项 |
+| 知识图谱节点编辑/删除、边编辑/删除（`kg_overrides` 覆盖层） | ✅ FIX6 第 6 项 |
+| 知识图谱节点关联文档列表 + 按文档筛选 | ✅ FIX6 第 8 项 |
+| 搜索 / 上传页表单内容跨页面保留草稿 | ✅ FIX6 第 9 项 |
 | 多模态检索：引用折叠，推荐工单自动展示 | ✅ |
 | 知识图谱弹性入场动画 | ✅ |
 | 全站无 Mock 兜底数据 | ✅ |

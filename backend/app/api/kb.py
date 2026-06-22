@@ -1,7 +1,8 @@
-import os, shutil, io
+import os, shutil, io, mimetypes
 from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from urllib.parse import quote as _urlquote
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -45,7 +46,9 @@ def _uploader_name_map(db: Session, docs) -> dict:
 
 
 @router.post("/upload")
-async def upload(file: UploadFile = File(...), db: Session = Depends(get_db),
+async def upload(file: UploadFile = File(...),
+                 parent_id: Optional[int] = Form(None, description="FIX6 第 5 项：经验主条目 id"),
+                 db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
     fname = file.filename or ""
     if not fname.lower().endswith(ALLOWED_EXT):
@@ -57,6 +60,12 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db),
     with open(path, "wb") as f:
         f.write(data)
     text = read_any(path)
+    # 校验 parent_id：必须为同一用户的同类条目
+    parent: Optional[Document] = None
+    if parent_id is not None:
+        parent = db.query(Document).get(parent_id)
+        if not parent:
+            raise HTTPException(400, "关联的主条目不存在")
     # 管理员/审查员上传直接入库（approved）；员工上传进入待审（pending）
     approved = _is_auditor(user.role)
     doc = Document(
@@ -64,12 +73,13 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db),
         category="manual", content=text[:20000] if text else "",
         status="approved" if approved else "pending",
         uploader_id=user.id,
+        parent_id=parent.id if parent else None,
     )
     db.add(doc); db.commit(); db.refresh(doc)
     n = 0
     if approved:
         n = ingest_document(doc.id, doc.title, text)
-    return {"doc_id": doc.id, "chunks": n, "status": doc.status}
+    return {"doc_id": doc.id, "chunks": n, "status": doc.status, "parent_id": doc.parent_id}
 
 
 class TextDocIn(BaseModel):
@@ -102,6 +112,83 @@ def upload_text(body: TextDocIn, db: Session = Depends(get_db),
     return {"doc_id": doc.id, "chunks": n, "status": doc.status}
 
 
+# FIX6-resume O3：经验 + 附件原子提交端点
+# 一次 multipart 请求带 title/content/category + files[]，事务内建 parent + children
+# 客户端不再需要先 POST /text 拿 parent_id 再逐个 POST /upload
+@router.post("/text-with-files")
+async def upload_text_with_files(
+    title: str = Form(...),
+    content: str = Form(...),
+    category: Optional[str] = Form("experience"),
+    files: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    title = (title or "").strip()
+    content = (content or "").strip()
+    if not title or not content:
+        raise HTTPException(400, "标题和正文不能为空")
+    approved = _is_auditor(user.role)
+    final_category = (category or "experience") if approved else "experience"
+
+    # 预校验所有附件后再写库，避免主条目已提交、附件失败导致脏数据
+    attach_buf: list[tuple[str, bytes]] = []
+    for f in files or []:
+        fname = f.filename or ""
+        if not fname.lower().endswith(ALLOWED_EXT):
+            raise HTTPException(400, f"附件 {fname} 不支持的格式，仅支持 PDF / DOCX / TXT / MD")
+        data = await f.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(400, f"附件 {fname} 超过 50MB 限制")
+        attach_buf.append((fname, data))
+
+    target_status = "approved" if approved else "pending"
+    parent = Document(
+        title=title, file_path=None, type="experience",
+        category=final_category, content=content,
+        status=target_status,
+        uploader_id=user.id,
+    )
+    db.add(parent); db.flush()  # 拿到 parent.id 但不提交
+
+    attachments_meta: list[dict] = []
+    try:
+        for fname, data in attach_buf:
+            path = os.path.join(settings.UPLOAD_DIR, fname)
+            with open(path, "wb") as fh:
+                fh.write(data)
+            text = read_any(path)
+            child = Document(
+                title=fname, file_path=path, type=fname.split(".")[-1].lower(),
+                category="manual", content=text[:20000] if text else "",
+                status=target_status,
+                uploader_id=user.id,
+                parent_id=parent.id,
+            )
+            db.add(child); db.flush()
+            attachments_meta.append({"id": child.id, "title": fname})
+        db.commit(); db.refresh(parent)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"提交失败：{e}")
+
+    n_parent = 0
+    n_attach_total = 0
+    if approved:
+        n_parent = ingest_document(parent.id, parent.title, content)
+        for meta in attachments_meta:
+            child = db.query(Document).get(meta["id"])
+            if child and child.content:
+                n_attach_total += ingest_document(child.id, child.title, child.content)
+    return {
+        "doc_id": parent.id,
+        "chunks": n_parent,
+        "status": parent.status,
+        "attachments": attachments_meta,
+        "attachment_chunks": n_attach_total,
+    }
+
+
 @router.get("/list")
 def list_docs(status: Optional[str] = Query(None), uploader: Optional[str] = Query(None),
               db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -115,7 +202,20 @@ def list_docs(status: Optional[str] = Query(None), uploader: Optional[str] = Que
         q = q.filter(Document.status.in_(["approved", "ready"]))
     docs = q.order_by(Document.id.desc()).all()
     names = _uploader_name_map(db, docs)
-    return [_doc_out(d, names.get(d.uploader_id)) for d in docs]
+    # FIX6 第 5 项：主条目（parent_id IS NULL）下挂 attachments（parent_id = id）
+    main_docs = [d for d in docs if d.parent_id is None]
+    attach_map: dict[int, list[dict]] = {}
+    for d in docs:
+        if d.parent_id is not None:
+            attach_map.setdefault(d.parent_id, []).append(_doc_out(d, names.get(d.uploader_id)))
+    result = []
+    for d in main_docs:
+        item = _doc_out(d, names.get(d.uploader_id))
+        ch = attach_map.get(d.id)
+        if ch:
+            item["attachments"] = ch
+        result.append(item)
+    return result
 
 
 @router.get("/{doc_id}")
@@ -143,21 +243,31 @@ def review_doc(doc_id: int, body: ReviewIn, db: Session = Depends(get_db),
     if not d:
         raise HTTPException(404, "文档不存在")
     action = (body.action or "").lower()
+    target_status = ""
     if action == "approve":
-        d.status = "approved"
+        target_status = "approved"
         d.review_reason = None
         text = d.content or (read_any(d.file_path) if d.file_path else "")
         if text:
             remove_document(d.id)
             ingest_document(d.id, d.title, text)
+        # FIX6 第 5 项：同步通过附件
+        for att in db.query(Document).filter(Document.parent_id == doc_id).all():
+            att.status = "approved"; att.reviewer_id = user.id; att.reviewed_at = datetime.utcnow()
     elif action in ("reject", "take_down"):
         if not (body.reason or "").strip():
             raise HTTPException(400, "请填写理由")
-        d.status = "rejected" if action == "reject" else "taken_down"
+        target_status = "rejected" if action == "reject" else "taken_down"
+        d.status = target_status
         d.review_reason = body.reason.strip()
         remove_document(d.id)
+        # FIX6 第 5 项：同步驳回附件
+        for att in db.query(Document).filter(Document.parent_id == doc_id).all():
+            setattr(att, "status", target_status); att.review_reason = body.reason.strip()
+            remove_document(att.id)
     else:
         raise HTTPException(400, f"非法操作：{body.action}")
+    d.status = target_status if target_status else d.status
     d.reviewer_id = user.id
     d.reviewed_at = datetime.utcnow()
     db.commit()
@@ -172,6 +282,71 @@ def delete_doc(doc_id: int, db: Session = Depends(get_db), _user: User = Depends
     remove_document(d.id)
     db.delete(d); db.commit()
     return {"ok": True}
+
+
+# FIX6 第 2 项：PDF 等原始文件下载/预览端点，inline 返回二进制以便前端 <iframe> 预览
+@router.get("/{doc_id}/download")
+def download_doc(doc_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    d = db.query(Document).get(doc_id)
+    if not d:
+        raise HTTPException(404, "文档不存在")
+    if d.status not in ("approved", "ready") and not _is_auditor(user.role) and d.uploader_id != user.id:
+        raise HTTPException(403, "无权查看该文档")
+    if not d.file_path or not os.path.exists(d.file_path):
+        raise HTTPException(404, "原始文件不存在")
+    ext = (d.type or "").lower()
+    mime_map = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt": "text/plain; charset=utf-8",
+        "md":  "text/markdown; charset=utf-8",
+    }
+    media_type = mime_map.get(ext) or mimetypes.guess_type(d.file_path)[0] or "application/octet-stream"
+    safe_title = "".join(c for c in (d.title or "") if c not in '\\/:*?"<>|').strip() or f"doc-{d.id}"
+    # FIX6-resume：HTTP header 必须 latin-1 编码，中文文件名要按 RFC 5987 做 percent-encoding
+    # 否则 Starlette 在序列化响应头时 UnicodeEncodeError → 500
+    fname_enc = _urlquote(safe_title, safe="")
+    ascii_fallback = safe_title.encode("ascii", "replace").decode("ascii").replace("?", "_") or f"doc-{d.id}"
+    return FileResponse(
+        d.file_path,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{fname_enc}'},
+    )
+
+
+# FIX6 第 6 项：审查员 / 管理员可编辑知识库文档（含 AI 来源条目）
+class KbUpdateIn(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.put("/{doc_id}")
+def update_doc(doc_id: int, body: KbUpdateIn, db: Session = Depends(get_db),
+               _user: User = Depends(require_auditor)):
+    d = db.query(Document).get(doc_id)
+    if not d:
+        raise HTTPException(404, "文档不存在")
+    changed_text = False
+    if body.title is not None:
+        d.title = body.title.strip() or d.title
+    if body.content is not None:
+        d.content = body.content
+        changed_text = True
+    if body.category is not None:
+        d.category = body.category.strip() or d.category
+    if body.status is not None and body.status in ("pending", "approved", "rejected", "taken_down", "ready"):
+        d.status = body.status
+    db.commit(); db.refresh(d)
+    # 若文档已通过且文本内容有变化，重建向量
+    if changed_text and d.status in ("approved", "ready"):
+        try:
+            remove_document(d.id)
+            ingest_document(d.id, d.title, d.content or "")
+        except Exception:
+            pass
+    return {"ok": True, "id": d.id, "status": d.status}
 
 
 def _doc_full_text(d: Document) -> str:
@@ -193,38 +368,68 @@ def export_doc(doc_id: int, format: str = Query("md"), db: Session = Depends(get
     text = _doc_full_text(d)
     fmt = (format or "md").lower()
     safe_title = "".join(c for c in d.title if c not in '\\/:*?"<>|').strip() or f"doc-{d.id}"
+    # FIX6-resume：同 download_doc，中文文件名必须 percent-encoding
+    fname_enc = _urlquote(safe_title, safe="")
+    ascii_fallback = safe_title.encode("ascii", "replace").decode("ascii").replace("?", "_") or f"doc-{d.id}"
 
     if fmt == "md":
         body = f"# {d.title}\n\n{text}\n"
         return StreamingResponse(
             io.BytesIO(body.encode("utf-8")),
             media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_title}.md"},
+            headers={"Content-Disposition": f'attachment; filename="{ascii_fallback}.md"; filename*=UTF-8\'\'{fname_enc}.md'},
         )
     if fmt == "pdf":
-        pdf_bytes = _render_pdf(d.title, text)
+        try:
+            pdf_bytes = _render_pdf(d.title, text)
+        except Exception as e:
+            raise HTTPException(500, f"PDF 生成失败：{e}")
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_title}.pdf"},
+            headers={"Content-Disposition": f'attachment; filename="{ascii_fallback}.pdf"; filename*=UTF-8\'\'{fname_enc}.pdf'},
         )
     raise HTTPException(400, "format 仅支持 md / pdf")
 
 
 def _render_pdf(title: str, text: str) -> bytes:
-    """用 reportlab 生成 PDF；使用内置 CJK 字体 STSong-Light 支持中文，无需外部字体文件。"""
+    """用 reportlab 生成 PDF；尝试 CJK 字体链以保证中文可显示。
+    优先级：内置 CIDFont(STSong-Light) → 系统 NotoSansCJK / SimSun → Helvetica（纯 ASCII 兜底）。
+    任何一级失败都不抛异常，最差降级到 ASCII。
+    """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
+    font_name = "Helvetica"
+    # 1) 优先使用内置 CIDFont（无需外部字体文件）
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
         font_name = "STSong-Light"
     except Exception:
-        font_name = "Helvetica"
+        # 2) 退到系统 CJK TTF
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+            "C:/Windows/Fonts/msyh.ttc",
+        ]
+        for path in candidates:
+            try:
+                if os.path.exists(path):
+                    pdfmetrics.registerFont(TTFont("CJKFallback", path))
+                    font_name = "CJKFallback"
+                    break
+            except Exception:
+                continue
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=20 * mm)
@@ -235,8 +440,14 @@ def _render_pdf(title: str, text: str) -> bytes:
     def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    flow = [Paragraph(esc(title), title_style), Spacer(1, 8 * mm)]
+    # 若最终回退到 Helvetica，非 ASCII 字符无法渲染；用 ? 替换避免抛出
+    def safe(s: str) -> str:
+        if font_name == "Helvetica":
+            return s.encode("ascii", errors="replace").decode("ascii")
+        return s
+
+    flow = [Paragraph(esc(safe(title)), title_style), Spacer(1, 8 * mm)]
     for line in (text or "").split("\n"):
-        flow.append(Paragraph(esc(line) if line.strip() else "&nbsp;", body_style))
+        flow.append(Paragraph(esc(safe(line)) if line.strip() else "&nbsp;", body_style))
     doc.build(flow)
     return buf.getvalue()

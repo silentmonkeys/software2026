@@ -1,13 +1,12 @@
 <script setup lang="ts">
 /**
- * 员工经验分享（FIX5）
+ * 员工经验分享（FIX5 / FIX6 第 5 项 / FIX6-resume O3）
  * - 路由 /knowledge/upload，roles: ['frontline']（worker-only）
- * - 主入口：经验分享表单（标题 + 正文 Markdown）→ uploadText({title, content, category:'experience'})
- * - 次入口：可选附件上传（手册 / 现场照片）→ uploadDoc
+ * - 经验 + 附件原子提交：一次 multipart 调 /api/kb/text-with-files，整体成功或失败
  * - 我的上传记录：listDocs({uploader:'me'})，状态徽标 + 驳回后「重提」（预填表单）
  * - worker 不可删除自己的上传
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import {
@@ -15,12 +14,14 @@ import {
   Sparkles, Send, X, Check, AlertTriangle, Database, ShieldCheck, RefreshCw, Lightbulb, Paperclip
 } from 'lucide-vue-next'
 import { showToast, showFailToast } from 'vant'
-import { uploadDoc, uploadText, listDocs, type KbDoc, STATUS_LABEL, isApprovedStatus } from '@/api/kb'
+import { uploadTextWithFiles, listDocs, type KbDoc, STATUS_LABEL, isApprovedStatus } from '@/api/kb'
 import { useUserStore } from '@/stores/user'
+import { useSearchStore } from '@/stores/search'  // FIX6 第 9 项：草稿持久化
 
 const router = useRouter()
 const { isPC } = useDevice()
 const user = useUserStore()
+const searchStore = useSearchStore()
 
 const ALLOWED = ['pdf', 'docx', 'txt', 'md']
 
@@ -28,6 +29,8 @@ const ALLOWED = ['pdf', 'docx', 'txt', 'md']
 const title = ref('')
 const body = ref('')
 const submitting = ref(false)
+// FIX6-resume O3：原子提交——附件暂存在前端，点"提交分享"时随经验一起发送
+const pendingFiles = ref<File[]>([])
 
 interface UploadItem { name: string; size: number; status: 'uploading' | 'done' | 'failed'; docId?: number }
 const uploads = ref<UploadItem[]>([])
@@ -51,7 +54,21 @@ const refresh = async () => {
     loading.value = false
   }
 }
-onMounted(refresh)
+
+// FIX6 第 9 项：挂载时恢复草稿；卸载时持久化
+onMounted(() => {
+  const d = searchStore.uploadDraft
+  if (d.title || d.content) {
+    title.value = d.title
+    body.value = d.content
+  }
+  refresh()
+})
+onBeforeUnmount(() => {
+  if (title.value || body.value) {
+    searchStore.setUploadDraft(title.value, body.value, [])
+  }
+})
 
 const filtered = computed(() =>
   docs.value.filter(d => !q.value || d.title.toLowerCase().includes(q.value.toLowerCase()))
@@ -66,28 +83,50 @@ const stats = computed(() => ({
 
 const fmtSize = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 
-/* ---------- 提交经验分享 ---------- */
+/* ---------- 经验 + 附件原子提交（FIX6-resume O3） ---------- */
 const submitExperience = async () => {
   const t = title.value.trim()
   const content = body.value.trim()
   if (!t) { showFailToast('请输入标题'); return }
   if (!content) { showFailToast('请输入经验内容'); return }
   submitting.value = true
+  // 把 pendingFiles 同步登记到 uploads 显示列表
+  const startIdx = uploads.value.length
+  for (const f of pendingFiles.value) {
+    uploads.value.push({ name: f.name, size: f.size, status: 'uploading' })
+  }
   try {
-    await uploadText({ title: t, content, category: 'experience' })
-    showToast({ type: 'success', message: '已提交，进入待审核' })
+    const res = await uploadTextWithFiles(
+      { title: t, content, category: 'experience' },
+      pendingFiles.value
+    )
+    // 把后端返回的附件 id 回填到对应 UploadItem
+    res.attachments.forEach((a, i) => {
+      const item = uploads.value[startIdx + i]
+      if (item) { item.status = 'done'; item.docId = a.id }
+    })
+    const msg = pendingFiles.value.length
+      ? `已提交（含 ${pendingFiles.value.length} 个附件），进入待审核`
+      : '已提交，进入待审核'
+    showToast({ type: 'success', message: msg })
     title.value = ''
     body.value = ''
+    pendingFiles.value = []
+    searchStore.clearUploadDraft()
     await refresh()
   } catch {
+    // 失败：把刚刚标记 uploading 的 item 全部置为 failed
+    for (let i = startIdx; i < uploads.value.length; i++) {
+      if (uploads.value[i].status === 'uploading') uploads.value[i].status = 'failed'
+    }
     showFailToast('提交失败，请稍后重试')
   } finally {
     submitting.value = false
   }
 }
 
-/* ---------- 可选附件上传 ---------- */
-const handleFiles = async (files: FileList | File[] | null) => {
+/* ---------- 暂存附件（不立即上传，等"提交分享"时一起发） ---------- */
+const handleFiles = (files: FileList | File[] | null) => {
   if (!files) return
   const arr = Array.from(files)
   if (!arr.length) return
@@ -97,19 +136,12 @@ const handleFiles = async (files: FileList | File[] | null) => {
       showFailToast(`仅支持 ${ALLOWED.join(' / ')}：${f.name}`)
       continue
     }
-    const item: UploadItem = { name: f.name, size: f.size, status: 'uploading' }
-    uploads.value.push(item)
-    try {
-      const res = await uploadDoc(f)
-      item.docId = res.doc_id
-      item.status = 'done'
-      showToast({ type: 'success', message: `${f.name} 已提交，等待审核` })
-    } catch {
-      item.status = 'failed'
-      showFailToast(`${f.name} 上传失败`)
-    }
+    pendingFiles.value.push(f)
   }
-  await refresh()
+}
+
+const removePending = (idx: number) => {
+  pendingFiles.value.splice(idx, 1)
 }
 
 const onPick = (e: Event) => {
@@ -221,7 +253,9 @@ const goReview = () => router.push('/auditor/review')
                     placeholder="可使用 Markdown 标题、列表、表格记录现象、原因、处理步骤……如需附图片/手册，可在下方添加附件。"
                     :disabled="submitting"
                     class="w-full px-3 py-2 rounded-btn border border-border bg-bg outline-none focus:border-accent focus:bg-card text-sm leading-relaxed"></textarea>
-          <div class="text-[11px] text-text-2 mt-1">提交后状态为「待审」，由审核员通过后才进入检索 / 图谱</div>
+          <div class="text-[11px] text-text-2 mt-1">
+            提交后状态为「待审」。如需添加附件，请在提交文字后再添加，附件会自动关联为本条经验的补充材料。
+          </div>
         </div>
         <div class="flex justify-end">
           <button class="h-10 px-5 rounded-btn bg-accent hover:bg-accent-2 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
@@ -233,10 +267,13 @@ const goReview = () => router.push('/auditor/review')
         </div>
       </section>
 
-      <!-- 可选附件上传 -->
+      <!-- FIX6-resume O3：附件原子提交——选好附件后点上方"提交分享"一起发 -->
       <section class="industrial-card p-5">
         <div class="text-sm font-semibold mb-2 flex items-center gap-2">
           <Paperclip class="w-4 h-4 text-text-2" /> 添加附件（可选）
+        </div>
+        <div class="text-xs text-text-2 mb-2">
+          附件会和经验一起原子提交，整体成功或失败；点击上方「提交分享」一起发送。
         </div>
         <div @click="fileInput?.click()"
              @dragover.prevent="dragging = true"
@@ -246,13 +283,29 @@ const goReview = () => router.push('/auditor/review')
              :class="dragging ? 'border-accent bg-accent/5' : 'border-border hover:border-accent'">
           <Upload class="w-8 h-8" :class="dragging ? 'text-accent' : 'text-text-2'" />
           <div class="mt-2 text-sm font-medium" :class="dragging ? 'text-accent' : 'text-text'">
-            {{ dragging ? '松手即可上传' : '上传手册 / 现场照片等附件' }}
+            {{ dragging ? '松手即可加入待提交列表' : '选择附件加入待提交列表' }}
           </div>
           <div class="mt-1 text-xs text-text-2 mono">支持 {{ ALLOWED.map(e => '.' + e).join(' · ') }} · 单文件 ≤ 50MB</div>
         </div>
         <input ref="fileInput" type="file" multiple class="hidden"
                :accept="ALLOWED.map(e => '.' + e).join(',')" @change="onPick" />
 
+        <!-- 待提交附件列表（前端暂存，未上传） -->
+        <ul v-if="pendingFiles.length" class="mt-3 space-y-1.5">
+          <li v-for="(f, i) in pendingFiles" :key="i"
+              class="flex items-center gap-2 px-3 py-2 rounded-btn border border-border bg-bg text-sm">
+            <Paperclip class="w-4 h-4 text-accent" />
+            <span class="flex-1 truncate">{{ f.name }}</span>
+            <span class="text-xs text-text-2 mono">{{ fmtSize(f.size) }}</span>
+            <span class="text-xs text-warning">待提交</span>
+            <button @click="removePending(i)" :disabled="submitting"
+                    class="ml-1 w-6 h-6 rounded hover:bg-danger/10 text-text-2 hover:text-danger flex items-center justify-center disabled:opacity-40">
+              <X class="w-3.5 h-3.5" />
+            </button>
+          </li>
+        </ul>
+
+        <!-- 已提交附件状态（提交成功 / 失败回显） -->
         <ul v-if="uploads.length" class="mt-3 space-y-1.5">
           <li v-for="(u, i) in uploads" :key="i"
               class="flex items-center gap-2 px-3 py-2 rounded-btn border border-border bg-bg text-sm">
@@ -261,8 +314,8 @@ const goReview = () => router.push('/auditor/review')
             <X v-else class="w-4 h-4 text-danger" />
             <span class="flex-1 truncate">{{ u.name }}</span>
             <span class="text-xs text-text-2 mono">{{ fmtSize(u.size) }}</span>
-            <span v-if="u.status === 'uploading'" class="text-xs text-text-2">上传中…</span>
-            <span v-else-if="u.status === 'done'" class="text-xs text-warning mono">#{{ u.docId }} · 待审</span>
+            <span v-if="u.status === 'uploading'" class="text-xs text-text-2">提交中…</span>
+            <span v-else-if="u.status === 'done'" class="text-xs text-warning mono">#{{ u.docId }} · 附件 · 待审</span>
             <span v-else class="text-xs text-danger">失败</span>
           </li>
         </ul>
@@ -303,6 +356,9 @@ const goReview = () => router.push('/auditor/review')
                 <span class="px-1.5 py-0.5 rounded mono uppercase bg-bg border border-border">{{ d.type }}</span>
                 <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[d.status] || 'bg-bg border-border'">
                   {{ STATUS_LABEL[d.status] || d.status }}
+                </span>
+                <span v-if="d.attachments?.length" class="text-xs text-accent">
+                  · 附件 x{{ d.attachments.length }}
                 </span>
                 <span class="mono opacity-70 hidden sm:inline">{{ d.created_at }}</span>
               </div>

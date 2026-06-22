@@ -16,7 +16,11 @@ const graph = ref<KGGraph | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
 const q = ref('')
-const filterType = ref<'all' | KGType>('all')
+// FIX6-resume O1：两个独立过滤器，都影响图谱节点
+type EntityType = 'device' | 'part' | 'fault' | 'method'
+type DocType = 'case' | 'manual'
+const filterEntity = ref<'all' | EntityType>('all')
+const filterDocType = ref<'all' | DocType>('all')
 const expanded = ref<Set<string>>(new Set())
 const chunks = ref<Record<string, ChunkContent | null>>({})
 
@@ -33,21 +37,36 @@ const TYPE_META: Record<KGType, { name: string; cls: string }> = {
   manual: { name: '手册', cls: 'bg-text-2 text-white' }
 }
 
-const FILTERS: Array<{ k: 'all' | KGType; l: string }> = [
+const ENTITY_FILTERS: Array<{ k: 'all' | EntityType; l: string }> = [
   { k: 'all', l: '全部' },
   { k: 'device', l: '设备' },
   { k: 'part',   l: '部件' },
   { k: 'fault',  l: '故障' },
-  { k: 'method', l: '处理' },
-  { k: 'case',   l: '案例' }
+  { k: 'method', l: '处理' }
+]
+const DOC_FILTERS: Array<{ k: 'all' | DocType; l: string }> = [
+  { k: 'all', l: '全部' },
+  { k: 'case',   l: '案例' },
+  { k: 'manual', l: '手册' }
 ]
 
 const filtered = computed(() => {
   if (!graph.value) return []
-  return graph.value.nodes.filter(n =>
-    (filterType.value === 'all' || n.type === filterType.value) &&
-    (!q.value || n.label.includes(q.value))
-  )
+  const ENTITY_SET: KGType[] = ['device', 'part', 'fault', 'method']
+  const DOC_SET: KGType[] = ['case', 'manual']
+  return graph.value.nodes.filter(n => {
+    const entityOk = (() => {
+      if (n.type === 'case' || n.type === 'manual') return true
+      if (filterEntity.value === 'all') return ENTITY_SET.includes(n.type)
+      return n.type === filterEntity.value
+    })()
+    const docOk = (() => {
+      if (n.type !== 'case' && n.type !== 'manual') return true
+      if (filterDocType.value === 'all') return DOC_SET.includes(n.type)
+      return n.type === filterDocType.value
+    })()
+    return entityOk && docOk && (!q.value || n.label.includes(q.value))
+  })
 })
 
 const reload = async () => {
@@ -114,10 +133,19 @@ onMounted(async () => {
           <span>{{ selectedDocs.size ? `已选 ${selectedDocs.size}` : '文档' }}</span>
         </button>
       </div>
+      <!-- FIX6-resume O1：实体类型组 -->
       <div class="flex gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1">
-        <button v-for="f in FILTERS" :key="f.k" @click="filterType = f.k"
+        <button v-for="f in ENTITY_FILTERS" :key="f.k" @click="filterEntity = f.k"
                 :class="['px-4 h-8 rounded-pill text-sm flex-shrink-0',
-                         filterType === f.k ? 'bg-accent text-white' : 'bg-card border border-border text-text-2']">
+                         filterEntity === f.k ? 'bg-accent text-white' : 'bg-card border border-border text-text-2']">
+          {{ f.l }}
+        </button>
+      </div>
+      <!-- FIX6-resume O1：文档类型组 -->
+      <div class="flex gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1">
+        <button v-for="f in DOC_FILTERS" :key="f.k" @click="filterDocType = f.k"
+                :class="['px-4 h-8 rounded-pill text-sm flex-shrink-0',
+                         filterDocType === f.k ? 'bg-primary-2 text-white' : 'bg-card border border-border text-text-2']">
           {{ f.l }}
         </button>
       </div>

@@ -19,11 +19,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/workflow',  component: () => import('@/views/workflow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
   { path: '/workflow/:id', component: () => import('@/views/workflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情' } },
 
-  // 知识库浏览（所有登录角色只读预览）
-  { path: '/knowledge/browse', component: () => import('@/views/knowledge/Browse.vue'), meta: { layout: 'app', title: '知识库' } },
+  // 知识库浏览（FIX6 第 1 项：三种角色均可只读浏览）
+  { path: '/knowledge/browse', component: () => import('@/views/knowledge/Browse.vue'),
+    meta: { layout: 'app', title: '知识库', roles: ['frontline', 'auditor', 'admin'] } },
   // 员工经验分享上传
   { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '经验分享', roles: ['frontline'] } },
-  { path: '/kb/preview/:docId', component: () => import('@/views/knowledge/Preview.vue'), meta: { layout: 'app', title: '文档预览' } },
+  { path: '/kb/preview/:docId', component: () => import('@/views/knowledge/Preview.vue'),
+    meta: { layout: 'app', title: '文档预览', roles: ['frontline', 'auditor', 'admin'] } },
 
   // 审查员：待审核列表
   { path: '/auditor/review', component: () => import('@/views/audit/KnowledgeReview.vue'),

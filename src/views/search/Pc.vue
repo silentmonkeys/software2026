@@ -7,7 +7,7 @@
  * - 来源引用与本条消息绑定（FIX3 第 3.2 项）
  * - 整条会话落 chatHistory store，按 userId 隔离（FIX3 第 2.1/3.3 项）
  */
-import { ref, nextTick, computed, onMounted, watch } from 'vue'
+import { ref, nextTick, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next'
 import * as searchApi from '@/api/search'
@@ -39,6 +39,7 @@ const ensureSession = () => {
   if (!sessionId.value) {
     const s = chat.createSession()
     sessionId.value = s.id
+    store.setActiveSession(s.id)  // FIX6-resume M2：登记为活动会话
   }
   return sessionId.value
 }
@@ -108,32 +109,41 @@ const onSend = async () => {
   input.value = ''
   imageList.value = []
   if (text) store.push(text)
+  store.clearDraft()  // FIX6 第 9 项：提交成功后清除草稿
   sending.value = true
   await scrollToBottom()
 
+  // FIX6-resume M2：把异步流程包成 Promise 存到 store，切走时后台继续，切回时同步
+  const job = (async () => {
+    try {
+      const res = await searchApi.multimodalSearch({ text, imageFile: file })
+      const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
+        id: h.id || `src-${i}`,
+        docId: (h.meta as any)?.docId,
+        title: h.title,
+        snippet: h.snippet || '',
+        similarity: h.similarity,
+        page: (h.meta as any)?.page
+      }))
+      chat.updateMessage(sid, aiId, {
+        content: res.summary || '（后端未返回内容）',
+        sources,
+        imageObservation: res.imageObservation || '',
+        recommendedTickets: res.recommendedTickets || []
+      })
+      expandedSources.value[aiId] = false
+    } catch (e: any) {
+      chat.updateMessage(sid, aiId, {
+        error: e?.message || '检索失败，请稍后重试'
+      })
+    }
+  })()
+  store.setPending(aiId, job)
   try {
-    const res = await searchApi.multimodalSearch({ text, imageFile: file })
-    const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
-      id: h.id || `src-${i}`,
-      docId: (h.meta as any)?.docId,
-      title: h.title,
-      snippet: h.snippet || '',
-      similarity: h.similarity,
-      page: (h.meta as any)?.page
-    }))
-    chat.updateMessage(sid, aiId, {
-      content: res.summary || '（后端未返回内容）',
-      sources,
-      imageObservation: res.imageObservation || '',
-      recommendedTickets: res.recommendedTickets || []
-    })
-    // FIX5 第 13 项：引用材料默认折叠；推荐工单自动展示
-    expandedSources.value[aiId] = false
-  } catch (e: any) {
-    chat.updateMessage(sid, aiId, {
-      error: e?.message || '检索失败，请稍后重试'
-    })
+    await job
   } finally {
+    // 仅当当前 pending 仍是这一条时清；否则可能已被另一条 onSend 覆盖
+    if (store.pendingAssistantId === aiId) store.setPending('', null)
     sending.value = false
     await scrollToBottom()
   }
@@ -154,6 +164,7 @@ const clearHistory = async () => {
     })
   } catch { return }
   sessionId.value = ''
+  store.clearActiveSession()  // FIX6-resume M2：开启新对话时同时清掉活动会话
 }
 
 const toggleStar = () => { if (sessionId.value) chat.toggleStar(sessionId.value) }
@@ -165,7 +176,45 @@ watch(() => route.query.session, (v) => {
   }
 }, { immediate: true })
 
-onMounted(() => { if (input.value) onSend() })
+// FIX6-resume M2：跨路由保留检索表单草稿 + 活动会话
+onMounted(() => {
+  // 1) 优先 query.q（外部跳入）→ 自动发送一次
+  // 2) 否则恢复活动会话（切走再回来仍能看到正在进行的对话）
+  // 3) 仅在没 query.q 也没活动会话时恢复输入草稿（不自动发送！）
+  if (input.value) {
+    onSend()
+  } else if (store.activeSessionId && chat.getSession(store.activeSessionId)) {
+    sessionId.value = store.activeSessionId
+    // 若有 pending 任务（切走时仍在进行），等待其完成以同步 UI
+    if (store.pendingAssistantId && store.pendingPromise) {
+      sending.value = true
+      store.pendingPromise.finally(() => {
+        sending.value = false
+        scrollToBottom()
+      })
+    }
+    scrollToBottom()
+  } else {
+    const d = store.draft
+    if (d.question) input.value = d.question
+    if (store.draftImages.length) {
+      imageList.value = store.draftImages.map((f, i) => ({
+        url: store.draft.imageUrls[i] || URL.createObjectURL(f),
+        name: f.name,
+        file: f
+      }))
+    }
+  }
+})
+onBeforeUnmount(() => {
+  if (input.value || imageList.value.length) {
+    store.setDraft(
+      input.value,
+      imageList.value.map(i => i.file),
+      imageList.value.map(i => i.url)
+    )
+  }
+})
 </script>
 
 <template>

@@ -4,7 +4,7 @@
  * - 删除"试试这些问题"+ "建议追问"
  * - markdown 渲染、来源与消息绑定、按 userId 持久化
  */
-import { ref, nextTick, computed, watch, onMounted } from 'vue'
+import { ref, nextTick, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { Sparkles, Bot, User as UserIcon, BookOpen, Image as ImageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
@@ -32,7 +32,10 @@ const messages = computed(() => session.value?.messages || [])
 const hasMessages = computed(() => messages.value.length > 0)
 
 const ensureSession = () => {
-  if (!sessionId.value) sessionId.value = chat.createSession().id
+  if (!sessionId.value) {
+    sessionId.value = chat.createSession().id
+    store.setActiveSession(sessionId.value)  // FIX6-resume M2
+  }
   return sessionId.value
 }
 
@@ -85,28 +88,37 @@ const onSend = async () => {
   images.value = []
   imageFiles.value = []
   if (t) store.push(t)
+  store.clearDraft()  // FIX6 第 9 项：提交成功后清除草稿
   sending.value = true
   await scrollToBottom()
 
+  // FIX6-resume M2：异步流程登记到 store；切走时后台继续，切回时同步
+  const job = (async () => {
+    try {
+      const res = await searchApi.multimodalSearch({ text: t, imageFile: file })
+      const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
+        id: h.id || `src-${i}`,
+        docId: (h.meta as any)?.docId,
+        title: h.title,
+        snippet: h.snippet || '',
+        similarity: h.similarity,
+        page: (h.meta as any)?.page
+      }))
+      chat.updateMessage(sid, aiId, {
+        content: res.summary || '（后端未返回内容）',
+        sources,
+        imageObservation: res.imageObservation || '',
+        recommendedTickets: res.recommendedTickets || []
+      })
+    } catch (e: any) {
+      chat.updateMessage(sid, aiId, { error: e?.message || '检索失败，请稍后重试' })
+    }
+  })()
+  store.setPending(aiId, job)
   try {
-    const res = await searchApi.multimodalSearch({ text: t, imageFile: file })
-    const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
-      id: h.id || `src-${i}`,
-      docId: (h.meta as any)?.docId,
-      title: h.title,
-      snippet: h.snippet || '',
-      similarity: h.similarity,
-      page: (h.meta as any)?.page
-    }))
-    chat.updateMessage(sid, aiId, {
-      content: res.summary || '（后端未返回内容）',
-      sources,
-      imageObservation: res.imageObservation || '',
-      recommendedTickets: res.recommendedTickets || []
-    })
-  } catch (e: any) {
-    chat.updateMessage(sid, aiId, { error: e?.message || '检索失败，请稍后重试' })
+    await job
   } finally {
+    if (store.pendingAssistantId === aiId) store.setPending('', null)
     sending.value = false
     await scrollToBottom()
   }
@@ -119,6 +131,7 @@ const clearHistory = async () => {
     await showConfirmDialog({ title: '清空当前对话?', message: '清空后将开始新会话，已保存的历史不受影响。' })
   } catch { return }
   sessionId.value = ''
+  store.clearActiveSession()  // FIX6-resume M2
 }
 
 const toggleStar = () => { if (sessionId.value) chat.toggleStar(sessionId.value) }
@@ -127,7 +140,34 @@ watch(() => route.query.session, (v) => {
   if (typeof v === 'string' && chat.getSession(v)) sessionId.value = v
 }, { immediate: true })
 
-onMounted(() => { if (text.value) onSend() })
+// FIX6-resume M2：跨路由保留检索表单草稿 + 活动会话
+onMounted(() => {
+  if (text.value) {
+    onSend()
+  } else if (store.activeSessionId && chat.getSession(store.activeSessionId)) {
+    sessionId.value = store.activeSessionId
+    if (store.pendingAssistantId && store.pendingPromise) {
+      sending.value = true
+      store.pendingPromise.finally(() => {
+        sending.value = false
+        scrollToBottom()
+      })
+    }
+    scrollToBottom()
+  } else {
+    const d = store.draft
+    if (d.question) text.value = d.question
+    if (store.draftImages.length) {
+      imageFiles.value = [...store.draftImages]
+      images.value = store.draft.imageUrls.slice()
+    }
+  }
+})
+onBeforeUnmount(() => {
+  if (text.value || imageFiles.value.length) {
+    store.setDraft(text.value, imageFiles.value, images.value)
+  }
+})
 </script>
 
 <template>

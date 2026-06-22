@@ -1,16 +1,20 @@
 <script setup lang="ts">
 /**
- * 工单时间线（FIX5 第 11 项）
+ * 工单时间线（FIX5 第 11 项 / FIX6 第 4 项）
  * - 员工：只看自己（events）
  * - 审查员/管理员：按用户分组（grouped）
- * 竖向步骤条样式，复用现有设计系统。
+ * - 完整覆盖 5 种事件类型（created / added / step_completed / completed / deleted）
+ *   各自配独立图标与颜色，对未知类型 fallback 到 Info。
  */
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { getTimeline, type TicketEvent } from '@/api/ticket'
 import { formatTime } from '@/utils/format'
-import { Loader, AlertTriangle, X, Clock } from 'lucide-vue-next'
+import {
+  Loader, AlertTriangle, X, Clock,
+  PlusCircle, UserPlus, CheckCircle, Award, Trash2, Info
+} from 'lucide-vue-next'
 
-const props = defineProps<{ ticketId: number | string; open: boolean }>()
+const props = defineProps<{ ticketId: number | string; open: boolean; steps?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const loading = ref(false)
@@ -18,12 +22,49 @@ const error = ref<string | null>(null)
 const events = ref<TicketEvent[]>([])
 const grouped = ref<{ userId: number; user: string | null; events: TicketEvent[] }[]>([])
 
-const EVENT_LABEL: Record<string, string> = {
-  created:        '创建工单',
-  added:          '加入作业指引',
-  step_completed: '完成步骤',
-  completed:      '完成工单',
-  deleted:        '删除工单'
+interface EventStyle {
+  icon: any
+  iconCls: string
+  dotCls: string
+  label: string
+}
+
+const EVENT_STYLES: Record<string, EventStyle> = {
+  created:        { icon: PlusCircle,  iconCls: 'text-accent',  dotCls: 'bg-accent',  label: '创建了工单' },
+  added:          { icon: UserPlus,    iconCls: 'text-success', dotCls: 'bg-success', label: '加入了工单' },
+  step_completed: { icon: CheckCircle, iconCls: 'text-warning', dotCls: 'bg-warning', label: '完成步骤' },
+  completed:      { icon: Award,       iconCls: 'text-ai',      dotCls: 'bg-ai',      label: '完成工单' },
+  deleted:        { icon: Trash2,      iconCls: 'text-danger',  dotCls: 'bg-danger',  label: '删除工单' }
+}
+const FALLBACK_STYLE: EventStyle = {
+  icon: Info, iconCls: 'text-text-2', dotCls: 'bg-text-2', label: '事件'
+}
+
+const styleFor = (type: string): EventStyle => EVENT_STYLES[type] || FALLBACK_STYLE
+
+/** 步骤索引/ID 解析为步骤标题（如可识别） */
+const stepLabel = (ev: TicketEvent): string => {
+  const sid = ev.detail?.stepId
+  const sIdx = ev.detail?.stepIndex
+  const steps = props.steps || []
+  if (typeof sIdx === 'number' && steps[sIdx]?.title) return `第 ${sIdx + 1} 步：${steps[sIdx].title}`
+  if (sid != null) {
+    const m = steps.find((s: any) => String(s.id) === String(sid))
+    if (m?.title) return `${sid} · ${m.title}`
+    return `步骤 ${sid}`
+  }
+  return ''
+}
+
+const describe = (ev: TicketEvent): string => {
+  const base = styleFor(ev.type).label
+  if (ev.type === 'step_completed') {
+    const sl = stepLabel(ev)
+    return sl ? `${base} · ${sl}` : base
+  }
+  if (ev.type === 'deleted' && ev.detail?.reason) return `${base}：${ev.detail.reason}`
+  if (ev.type === 'added' && ev.detail?.from) return `${base} · 来源 ${ev.detail.from}`
+  return base
 }
 
 const load = async () => {
@@ -43,6 +84,8 @@ const load = async () => {
 }
 
 watch(() => props.open, (v) => { if (v) load() })
+
+const isEmpty = computed(() => !loading.value && !error.value && !grouped.value.length && !events.value.length)
 </script>
 
 <template>
@@ -69,14 +112,15 @@ watch(() => props.open, (v) => { if (v) load() })
         <template v-else-if="grouped.length">
           <div v-for="g in grouped" :key="g.userId" class="mb-5 last:mb-0">
             <div class="text-sm font-semibold text-text mb-2">{{ g.user || ('用户 #' + g.userId) }}</div>
-            <ol class="relative pl-5 space-y-3">
+            <ol class="relative pl-6 space-y-3">
               <li v-for="(ev, i) in g.events" :key="i" class="relative">
-                <span class="absolute -left-5 top-1 w-2.5 h-2.5 rounded-full bg-accent ring-2 ring-card"></span>
-                <span v-if="i < g.events.length - 1" class="absolute -left-[15px] top-3.5 w-px h-[calc(100%+0.75rem)] bg-border"></span>
-                <div class="text-sm font-medium">
-                  {{ EVENT_LABEL[ev.type] || ev.type }}
-                  <span v-if="ev.detail?.stepId" class="text-text-2 font-normal">· 步骤 {{ ev.detail.stepId }}</span>
-                  <span v-if="ev.detail?.reason" class="text-danger font-normal">· {{ ev.detail.reason }}</span>
+                <span class="absolute -left-6 top-0.5 w-5 h-5 rounded-full ring-2 ring-card flex items-center justify-center text-white"
+                      :class="styleFor(ev.type).dotCls">
+                  <component :is="styleFor(ev.type).icon" class="w-3 h-3" />
+                </span>
+                <span v-if="i < g.events.length - 1" class="absolute -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-border"></span>
+                <div class="text-sm font-medium" :class="styleFor(ev.type).iconCls">
+                  {{ describe(ev) }}
                 </div>
                 <div class="text-xs text-text-2 mono mt-0.5">{{ formatTime(ev.at) }}</div>
               </li>
@@ -85,20 +129,21 @@ watch(() => props.open, (v) => { if (v) load() })
         </template>
 
         <!-- 员工：自己的时间线 -->
-        <ol v-else-if="events.length" class="relative pl-5 space-y-3">
+        <ol v-else-if="events.length" class="relative pl-6 space-y-3">
           <li v-for="(ev, i) in events" :key="i" class="relative">
-            <span class="absolute -left-5 top-1 w-2.5 h-2.5 rounded-full bg-accent ring-2 ring-card"></span>
-            <span v-if="i < events.length - 1" class="absolute -left-[15px] top-3.5 w-px h-[calc(100%+0.75rem)] bg-border"></span>
-            <div class="text-sm font-medium">
-              {{ EVENT_LABEL[ev.type] || ev.type }}
-              <span v-if="ev.detail?.stepId" class="text-text-2 font-normal">· 步骤 {{ ev.detail.stepId }}</span>
-              <span v-if="ev.detail?.reason" class="text-danger font-normal">· {{ ev.detail.reason }}</span>
+            <span class="absolute -left-6 top-0.5 w-5 h-5 rounded-full ring-2 ring-card flex items-center justify-center text-white"
+                  :class="styleFor(ev.type).dotCls">
+              <component :is="styleFor(ev.type).icon" class="w-3 h-3" />
+            </span>
+            <span v-if="i < events.length - 1" class="absolute -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-border"></span>
+            <div class="text-sm font-medium" :class="styleFor(ev.type).iconCls">
+              {{ describe(ev) }}
             </div>
             <div class="text-xs text-text-2 mono mt-0.5">{{ formatTime(ev.at) }}</div>
           </li>
         </ol>
 
-        <div v-else class="py-10 text-center text-text-2 text-sm">暂无时间线记录</div>
+        <div v-else-if="isEmpty" class="py-10 text-center text-text-2 text-sm">暂无时间线记录</div>
       </div>
     </div>
   </div>

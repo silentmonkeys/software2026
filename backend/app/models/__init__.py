@@ -10,6 +10,7 @@ class User(Base):
     password_hash = Column(String(256), nullable=False)
     role = Column(String(16), default="worker")  # worker / leader / auditor / admin
     is_default_admin = Column(Boolean, default=False)  # FIX5：默认管理员账户不可删除
+    token_version = Column(Integer, default=1)  # FIX6 第 10 项：用于单点登录会话失效
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -27,6 +28,7 @@ class Document(Base):
     reviewer_id = Column(Integer, ForeignKey("users.id"))
     reviewed_at = Column(DateTime)
     uploader_id = Column(Integer, ForeignKey("users.id"))
+    parent_id = Column(Integer, ForeignKey("documents.id"))  # FIX6 第 5 项：附件关联主条目
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -76,4 +78,17 @@ class QALog(Base):
     question = Column(Text)
     answer = Column(Text)
     sources = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# FIX6 第 6 项：审查员 / 管理员对图谱节点/边的人工修正与删除
+class KGOverride(Base):
+    """图谱编辑覆盖层：人工修正的节点/边在动态构图后叠加。"""
+    __tablename__ = "kg_overrides"
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(8))                   # 'node' / 'edge'
+    target_id = Column(String(128), index=True)  # node_id 或 "{source}|{target}"
+    op = Column(String(8))                     # 'update' / 'delete'
+    payload = Column(JSON)                     # 更新内容（label/desc/rel 等）
+    operator_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
