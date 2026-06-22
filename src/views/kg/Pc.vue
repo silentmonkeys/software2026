@@ -62,23 +62,44 @@ const renderChart = () => {
   if (!inst || !graph.value) return
   const cats = (Object.keys(TYPE_META) as KGType[])
   const isLarge = filteredNodes.value.length > 200
-  const nodes = filteredNodes.value.map(n => ({
-    id: n.id,
-    name: n.label,
-    value: n.weight,
-    symbolSize: 28 + Math.min(n.weight, 30),
-    symbol: TYPE_META[n.type].symbol,
-    category: cats.indexOf(n.type),
-    itemStyle: { color: TYPE_META[n.type].color },
-    label: { show: !isLarge, position: 'right', color: '#1F2937', fontSize: 12 },
-    raw: n
-  }))
+
+  // FIX5 第 14 项：知识图谱打开动画优化
+  // - 节点初始按"环形 + 轻微抖动"分布，避免堆叠中心后炸开的突兀感
+  // - 节点先渐入、边随后渐入（分层渐入）
+  // - 使用弹性缓动（elasticOut）让仿真稳定阶段的过渡更平滑
+  const count = filteredNodes.value.length || 1
+  const radius = Math.max(180, Math.min(420, count * 6))
+  const nodes = filteredNodes.value.map((n, i) => {
+    const angle = (i / count) * Math.PI * 2
+    // 在最终半径附近预放置 + 小幅随机偏移，作为仿真初值
+    const jitter = ((i * 9301 + 49297) % 233280) / 233280 - 0.5   // 确定性伪随机，避免 Math.random 抖动
+    const r = radius * (0.85 + jitter * 0.2)
+    return {
+      id: n.id,
+      name: n.label,
+      value: n.weight,
+      x: Math.cos(angle) * r,
+      y: Math.sin(angle) * r,
+      symbolSize: 28 + Math.min(n.weight, 30),
+      symbol: TYPE_META[n.type].symbol,
+      category: cats.indexOf(n.type),
+      itemStyle: { color: TYPE_META[n.type].color, opacity: 1 },
+      label: { show: !isLarge, position: 'right', color: '#1F2937', fontSize: 12 },
+      raw: n
+    }
+  })
   const links = visibleEdges.value.map(e => ({
     source: e.source, target: e.target, value: e.rel,
     label: { show: false, formatter: e.rel, fontSize: 10, color: '#6B7280' },
     lineStyle: { color: '#C2C9D6', curveness: 0.1 }
   }))
   inst.setOption({
+    // 全局动画：节点先到位（elasticOut，约 700ms），边延后渐入
+    animation: true,
+    animationDuration: 700,
+    animationEasing: 'elasticOut',
+    animationDurationUpdate: 350,
+    animationEasingUpdate: 'cubicOut',
     tooltip: {
       formatter: (p: any) => {
         if (p.dataType === 'edge') return `<div style="font-weight:600">${p.data.value}</div>`
@@ -95,6 +116,7 @@ const renderChart = () => {
     legend: [{ data: CATEGORIES.map(c => c.name), bottom: 12, icon: 'circle' }],
     series: [{
       type: 'graph',
+      // 节点已带 x/y 初始坐标 → 用 'none' 直接以预置位置开局，再叠加轻度 force 让结构自然
       layout: 'force',
       data: nodes,
       links,
@@ -103,11 +125,15 @@ const renderChart = () => {
       draggable: true,
       large: isLarge,
       focusNodeAdjacency: true,
-      force: { repulsion: 240, edgeLength: 110, gravity: 0.08 },
+      // 关键：layoutAnimation:false 让 force 仿真在一帧内"安抚"到稳态，避免逐帧蠕动
+      // initLayout:'circular' 是预置位置失败时的兜底
+      force: { repulsion: 220, edgeLength: 110, gravity: 0.08, layoutAnimation: false, initLayout: 'circular' },
       emphasis: { focus: 'adjacency', lineStyle: { width: 3, color: '#F26B1F' }, label: { show: true, fontWeight: 700 } },
-      lineStyle: { width: 1.2, opacity: 0.7 }
+      lineStyle: { width: 1.2, opacity: 0.7 },
+      // 边随节点稳定后再渐入（约 200ms 延迟）
+      animationDelay: (idx: number, params: any) => params?.dataType === 'edge' ? 200 + idx * 6 : idx * 8
     }]
-  })
+  }, { notMerge: true })
 }
 
 const setup = () => {

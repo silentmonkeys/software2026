@@ -150,9 +150,11 @@ onMounted(async () => {
       <div class="mt-2 text-sm">加载中…</div>
     </div>
 
-    <!-- 卡片列表 -->
+    <!-- 卡片列表（FIX5 第 14 项：分层渐入，避免一次性渲染产生视觉噪音） -->
     <div v-else-if="filtered.length" class="space-y-2">
-      <div v-for="n in filtered" :key="n.id" class="industrial-card overflow-hidden">
+      <div v-for="(n, idx) in filtered" :key="n.id"
+           class="industrial-card overflow-hidden kg-card-fade"
+           :style="{ animationDelay: `${Math.min(idx, 14) * 35}ms` }">
         <button class="w-full px-4 py-3 flex items-start gap-3 active:bg-bg" @click="toggle(n)">
           <span class="w-10 h-10 rounded-card flex-shrink-0 flex items-center justify-center text-xs font-bold" :class="TYPE_META[n.type].cls">
             {{ TYPE_META[n.type].name }}
@@ -201,4 +203,13 @@ onMounted(async () => {
 .collapse-enter-active, .collapse-leave-active { transition: opacity .2s, max-height .25s ease; max-height: 600px; overflow: hidden; }
 .collapse-enter-from, .collapse-leave-to { opacity: 0; max-height: 0; }
 .rotate-180 { transform: rotate(180deg); }
+
+/* FIX5 第 14 项：移动端卡片分层渐入 */
+.kg-card-fade {
+  animation: kgFadeIn 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes kgFadeIn {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
 </style>
