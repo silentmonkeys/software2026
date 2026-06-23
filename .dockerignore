@@ -1,0 +1,23 @@
+# 前端构建上下文 ignore
+node_modules
+dist
+dist-ssr
+.git
+.gitignore
+.idea
+.vscode
+*.log
+.DS_Store
+.env.local
+.env.*.local
+
+# 后端独立构建，不需要进前端镜像
+backend
+
+# 文档 / 元数据
+NEEDS
+CHANGE
+README.md
+CLAUDE.md
+.claude
+.codegraph

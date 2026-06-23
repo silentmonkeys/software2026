@@ -1,0 +1,61 @@
+# ===== 设备检修知识检索与作业系统 — Docker 编排 =====
+# 用法：
+#   1) cp backend/.env.example backend/.env  并填入 DASHSCOPE_API_KEY
+#   2) docker compose up -d --build
+#   3) 浏览器访问 http://localhost:8080
+# 默认管理员：admin / 123456
+# =====================================================
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      network: host
+    image: loongchip-backend:latest
+    container_name: loongchip-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # 与 settings 默认值对齐，确保数据落到挂载卷
+      DB_URL: sqlite:////app/data/loongchip.db
+      CHROMA_DIR: /app/chroma_db
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      # SQLite 数据库
+      - backend_data:/app/data
+      # 向量库
+      - backend_chroma:/app/chroma_db
+      # 上传文件
+      - backend_uploads:/app/uploads
+    expose:
+      - "8000"
+    # 如需外部直接访问后端 API（调试用），取消下面注释
+    # ports:
+    #   - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    image: loongchip-frontend:latest
+    container_name: loongchip-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # 宿主机 8080 → 容器 80
+      - "8080:80"
+
+volumes:
+  backend_data:
+  backend_chroma:
+  backend_uploads:

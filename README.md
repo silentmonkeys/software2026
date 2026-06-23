@@ -105,6 +105,11 @@ software2026/
 ├── NEEDS/                     需求与历次修复清单（NEEDS.md / FIX1..5.md）
 ├── CHANGE/                    变更记录
 ├── CLAUDE.md                  对 Claude Code 的工程上下文说明
+├── DOCKER.md                  ★ Docker 构建 / 运行 / 分发 / 备份完整指南
+├── Dockerfile                 前端镜像（多阶段：node 构建 → nginx 托管）
+├── backend/Dockerfile         后端镜像（python:3.11-slim + gunicorn）
+├── docker-compose.yml         前后端编排 + 三个数据卷
+├── docker/nginx.conf          前端 nginx 配置（/api → backend 反代）
 ├── public/  index.html
 ├── vite.config.ts  tailwind.config.js  tsconfig.json  package.json
 ```
@@ -112,6 +117,12 @@ software2026/
 ---
 
 ## 快速开始
+
+> **想跳过环境配置直接跑？** 仓库已内置 Docker 化能力，详见 [`DOCKER.md`](./DOCKER.md)：
+> ```bash
+> cp backend/.env.example backend/.env   # 填 DASHSCOPE_API_KEY
+> docker compose up -d --build           # → http://localhost:8080
+> ```
 
 ### 前端
 
@@ -267,7 +278,17 @@ uvicorn app.main:app --reload   # → http://127.0.0.1:8000
 
 ## 部署
 
-前端构建产物 `dist/` 为标准静态文件，可由 nginx / Apache 托管；后端任意能跑 Python 3.10+ 的服务器即可。
+仓库已内置 Docker 化能力：前端 Vue + 后端 FastAPI 一键编排，含 Nginx 反代、CJK PDF 字体、健康检查与三个持久化数据卷。
+
+```bash
+cp backend/.env.example backend/.env   # 填入 DASHSCOPE_API_KEY
+docker compose up -d --build
+# 浏览器打开 http://localhost:8080  ·  默认 admin / 123456
+```
+
+**完整的构建、运行、镜像分发（save/load）、数据备份、国内网络排错与生产注意事项请见 → [`DOCKER.md`](./DOCKER.md)。**
+
+如不使用 Docker，前端构建产物 `dist/` 为标准静态文件，可由 nginx / Apache 托管；后端任意能跑 Python 3.10+ 的服务器即可：
 
 ```nginx
 server {
