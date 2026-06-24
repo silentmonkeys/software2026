@@ -2,25 +2,47 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { SopFlow } from '@/api/workflow'
 import { storage } from '@/utils/storage'
+import { useUserStore } from '@/stores/user'
 
 /**
  * 作业指引状态（FIX3 第 4 项 + FIX4 第 2 项）
- * - 步骤勾选 done 状态按 orderId 持久化到 localStorage
- * - 校验点 checks 也按 orderId 持久化（页面刷新不丢）
+ * - 步骤勾选 done 状态：以**后端 progress.stepDone 为唯一权威**（FIX7 续）
+ * - 校验点 checks / 子步骤 subDone：UI 辅助状态，按 (userId, orderId) 持久化
  * - FIX4 第 2 项：subDone 跟踪每个大步骤下子步骤的完成；
  *   严格顺序约束（前序未完则后序不可勾）；
  *   全部子步骤勾选完毕，大步骤自动 done。
+ *
+ * FIX7 续：localStorage key 加入 userId 隔离，并不再缓存 stepDone——
+ * 之前 `workorder:steps:t-5` 是全局 key，会导致：
+ *   1) 不同用户共用同一台机器时互相污染勾选；
+ *   2) 开发期重建 DB 后新工单复用旧 ticket id 时显示"默认全部完成"，
+ *      首次同步还会把脏状态刷到后端。
  */
-const STEP_KEY  = (orderId: string) => `workorder:steps:${orderId}`
-const CHECK_KEY = (orderId: string) => `workorder:checks:${orderId}`
-const SUB_KEY   = (orderId: string) => `workorder:subs:${orderId}`
+const CHECK_KEY = (uid: string, orderId: string) => `workorder:checks:${uid}:${orderId}`
+const SUB_KEY   = (uid: string, orderId: string) => `workorder:subs:${uid}:${orderId}`
 
 export const useWorkflowStore = defineStore('workflow', () => {
+  const userStore = useUserStore()
+  const uid = () => String(userStore.info?.id || 'anonymous')
+
+  // FIX7 续：一次性清理旧版（未隔离用户、且会污染勾选）的 localStorage key
+  // 旧 key 形如 `workorder:steps:t-N` / `workorder:checks:t-N` / `workorder:subs:t-N`，
+  // 新 key 形如 `workorder:checks:<uid>:t-N` / `workorder:subs:<uid>:t-N`（stepDone 不再缓存）
+  try {
+    const LEGACY_RE = /^workorder:(steps|checks|subs):t-\d+$/
+    const removed: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && LEGACY_RE.test(k)) removed.push(k)
+    }
+    removed.forEach(k => localStorage.removeItem(k))
+  } catch { /* 浏览器禁用 localStorage 时静默忽略 */ }
+
   const flow = ref<SopFlow | null>(null)
   const currentIdx = ref(0)
   /** 步骤校验点的勾选 */
   const checks = ref<Record<string, boolean[]>>({})
-  /** 整步是否已完成（FIX3 第 4.1 项） */
+  /** 整步是否已完成（来源：后端 progress.stepDone，唯一权威） */
   const stepDone = ref<Record<string, boolean>>({})
   /** 子步骤完成状态：subDone[stepId][subId] = true（FIX4 第 2 项） */
   const subDone = ref<Record<string, Record<string, boolean>>>({})
@@ -43,43 +65,50 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const setFlow = (f: SopFlow) => {
     flow.value = f
     currentIdx.value = 0
-    // 加载持久化的勾选
-    const persistedChecks = storage.get<Record<string, boolean[]>>(CHECK_KEY(f.id)) || {}
-    const persistedDone   = storage.get<Record<string, boolean>>(STEP_KEY(f.id)) || {}
-    const persistedSubs   = storage.get<Record<string, Record<string, boolean>>>(SUB_KEY(f.id)) || {}
+    const u = uid()
+    // 加载持久化的勾选（仅 UI 辅助状态——checks / subs）
+    const persistedChecks = storage.get<Record<string, boolean[]>>(CHECK_KEY(u, f.id)) || {}
+    const persistedSubs   = storage.get<Record<string, Record<string, boolean>>>(SUB_KEY(u, f.id)) || {}
+
+    // FIX7 续：stepDone 严格来自后端 progress.stepDone，不读 localStorage
+    const doneFromBackend = new Set((f.stepDone || []).map(String))
     const checksMap: Record<string, boolean[]> = {}
     const subsMap: Record<string, Record<string, boolean>> = {}
+    const doneMap: Record<string, boolean> = {}
     f.steps.forEach(s => {
       const saved = persistedChecks[s.id]
       checksMap[s.id] = (s.checkPoints || []).map((_, i) =>
         Array.isArray(saved) && typeof saved[i] === 'boolean' ? saved[i] : false
       )
-      // 子步骤
       const savedSubs = persistedSubs[s.id] || {}
       const subMap: Record<string, boolean> = {}
-      ;(s.subSteps || []).forEach(ss => { subMap[ss.id] = !!savedSubs[ss.id] })
+      const stepDoneByBackend = doneFromBackend.has(String(s.id))
+      ;(s.subSteps || []).forEach(ss => {
+        // 大步骤后端已标完成时，把它的所有子步骤补勾上（UI 一致性）
+        subMap[ss.id] = stepDoneByBackend ? true : !!savedSubs[ss.id]
+      })
       subsMap[s.id] = subMap
+      doneMap[s.id] = stepDoneByBackend
     })
     checks.value = checksMap
-    stepDone.value = { ...persistedDone }
+    stepDone.value = doneMap
     subDone.value = subsMap
   }
 
-  // 持久化（节流到 200ms）
+  // 持久化（节流到 200ms）—— 仅 UI 辅助状态
   let saveTimer: number | null = null
   const persist = () => {
     if (!flow.value) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = window.setTimeout(() => {
       if (!flow.value) return
-      storage.set(CHECK_KEY(flow.value.id), checks.value)
-      storage.set(STEP_KEY(flow.value.id),  stepDone.value)
-      storage.set(SUB_KEY(flow.value.id),   subDone.value)
+      const u = uid()
+      storage.set(CHECK_KEY(u, flow.value.id), checks.value)
+      storage.set(SUB_KEY(u,   flow.value.id), subDone.value)
     }, 200)
   }
   watch(checks,  persist, { deep: true })
-  watch(stepDone, persist, { deep: true })
-  watch(subDone,  persist, { deep: true })
+  watch(subDone, persist, { deep: true })
 
   const allChecked = (stepId: string) =>
     (checks.value[stepId] || []).every(Boolean)

@@ -40,6 +40,9 @@ export interface SopFlow {
   deviceModel: string
   level: 1 | 2 | 3
   steps: SopStep[]
+  // FIX7 续：后端权威的进度状态——避免 localStorage 跨工单/跨实例污染
+  stepDone?: string[]
+  status?: 'open' | 'doing' | 'done' | 'deleted'
 }
 
 export type WorkItemStatus = '待办' | '已完成'
@@ -175,7 +178,10 @@ function ticketToFlow(t: TicketDetail): SopFlow {
     name: t.fault || `工单 #${t.id}`,
     deviceModel: t.device || '未指定',
     level: 2,
-    steps: parseTicketSteps(t.steps)
+    steps: parseTicketSteps(t.steps),
+    // FIX7 续：后端进度作为唯一权威源（之前丢弃 progress 导致 localStorage 污染显示"全部完成"）
+    stepDone: (t.progress?.stepDone || []).map(String),
+    status: t.progress?.status || 'open',
   }
 }
 

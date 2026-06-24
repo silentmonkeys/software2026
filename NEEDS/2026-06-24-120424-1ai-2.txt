@@ -1,0 +1,2196 @@
+ ▐▛███▜▌   Claude Code v2.1.186
+▝▜█████▛▘  glm-5.2 · API Usage Billing
+  ▘▘ ▝▝    ~/Documents/software2026
+
+
+❯ 当前项目存在两个问题：1.AI回答的引用显示的内容与实际不搭边，且无法预览显示的  
+  内容 2.知识图谱切换显示案例或者手册时，对应手册或者案例的节点没有被屏蔽。分析 
+  问题并解决                                                                    
+
+  Thought for 3m 2s, searched for 6 patterns, read 11 files, listed 1 directory (ctrl+o to expand)
+
+● 我先看完关键代码，准备给两个问题各做针对性修复。
+
+  Thought for 1m 1s, read 2 files (ctrl+o to expand)
+
+● 我已经分析清楚了两个问题的根因。下面先简要说明：
+
+  问题 1：引用与问题不搭边 + 无法预览
+
+  两个独立 bug：
+
+  1. 无法预览原文 — src/views/search/Pc.vue:392 和 Mobile.vue:274 的 router-link
+  跳转用的是 /kb/preview?id=xxx（query 参数），但路由定义的是
+  /kb/preview/:docId（path 参数），永远命中 catch-all 被打回 /search。
+  2. snippet 与提问不搭边 — backend/app/api/chat.py:75 把 chunk[0:150] 当
+  snippet 返回。Chroma 命中的是整个 chunk（500 字），切片前 150 
+  字很可能是首段无关的过渡文字，并未包含命中关键词，让用户感觉「不搭边」。
+
+  问题 2：图谱切换案例/手册时节点不消失
+
+  根因： 后端 backend/app/api/kg.py 抽取出的节点 type 只可能是 device | part | 
+  fault | method 四种实体类型，根本没有 case 或 manual 类型的节点。前端
+  src/views/kg/Pc.vue:83-87 的过滤逻辑写的是「n.type !== 'case' && n.type !== 
+  'manual' → 直接放行」，所以切「案例/手册」永远不过滤任何节点。
+
+  正确做法是依据节点的 source_docs[].doc_type 来判别归属：
+  - 来源中存在 experience（经验分享） → 算「案例」
+  - 来源中存在 pdf/docx/txt/md → 算「手册」
+
+  后端 source_docs 已经携带 doc_type 字段了，所以这是纯前端修复。
+
+  ---
+  下面开始实施修复。
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 1 line, removed 1 line
+      389                                <div class="mt-1 flex items-cent
+           er gap-3 flex-wrap">
+      390                                  <span v-if="h.page" class="mon
+           o text-text-2 text-[10px]">页码 {{ h.page }}</span>
+      391                                  <router-link v-if="h.docId"
+      392 -                                             :to="{ path: '/kb
+          -/preview', query: { id: h.docId } }"                          
+      392 +                                             :to="`/kb/preview
+          +/${h.docId}`"                                                 
+      393                                               class="ref-link t
+           ext-[11px]">
+      394                                    查看原文 →
+      395                                  </router-link>
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 1 line, removed 1 line
+      271                              <div class="font-medium text-text"
+           >{{ h.title }}</div>
+      272                              <div v-if="h.snippet" class="mt-0.
+           5 ref-snippet leading-relaxed line-clamp-2">{{ h.snippet }}</d
+           iv>
+      273                              <router-link v-if="h.docId"
+      274 -                                         :to="{ path: '/kb/pre
+          -view', query: { id: h.docId } }"                              
+      274 +                                         :to="`/kb/preview/${h
+          +.docId}`"                                                     
+      275                                           class="ref-link mt-1 
+           inline-block text-[11px]">
+      276                                查看原文 →
+      277                              </router-link>
+
+● 现在修复 snippet「不搭边」问题 — 在后端用问题里出现的关键字定位 chunk
+  的相关窗口，而不是粗暴 [:150]。
+
+● Update(backend/app/api/chat.py)
+  ⎿  Added 48 lines, removed 1 line
+      1 -import os, shutil, uuid                                         
+      1 +import os, shutil, uuid, re                                     
+      2  from typing import Optional
+      3  from fastapi import APIRouter, UploadFile, File, Form, Depends
+      4  from sqlalchemy.orm import Session
+     ...
+      13  router = APIRouter(prefix="/api/chat", tags=["chat"])
+      14  
+      15  
+      16 +# FIX7 续：用提问中的关键字在 chunk 中定位"相关窗口"作为引用 sn
+         +ippet，                                                        
+      17 +# 而不是粗暴截取 chunk[:150]——否则首句很可能是无关过渡文字，用 
+         +户看了会觉得"引用与问题不搭边"                                 
+      18 +_STOPWORDS = {                                                 
+      19 +    "的", "了", "和", "是", "在", "我", "你", "他", "她", "它",
+         + "怎么", "如何", "什么",                                       
+      20 +    "怎样", "为什么", "为何", "请问", "请", "吗", "吧", "啊", "
+         +也", "都", "就", "还",                                         
+      21 +    "有", "没", "没有", "不", "会", "能", "可以", "需要", "要" 
+      22 +}                                                              
+      23 +                                                               
+      24 +                                                               
+      25 +def _extract_keywords(text: str) -> list[str]:                 
+      26 +    """从提问里抽出粗粒度关键词：中文 2 字及以上连续片段 + 英文
+         +/数字 token。"""                                               
+      27 +    if not text:                                               
+      28 +        return []                                              
+      29 +    cn = re.findall(r"[一-鿿]{2,}", text)                      
+      30 +    en = re.findall(r"[A-Za-z0-9_\-]{2,}", text)               
+      31 +    keywords: list[str] = []                                   
+      32 +    seen: set[str] = set()                                     
+      33 +    for tok in cn + en:                                        
+      34 +        if tok in _STOPWORDS or tok in seen:                   
+      35 +            continue                                           
+      36 +        seen.add(tok)                                          
+      37 +        keywords.append(tok)                                   
+      38 +    return keywords[:8]                                        
+      39 +                                                               
+      40 +                                                               
+      41 +def _build_snippet(content: str, keywords: list[str], window: i
+         +nt = 80, max_len: int = 220) -> str:                           
+      42 +    """围绕命中的关键词截取上下文窗口；找不到关键词时退回到首段
+         +。"""                                                          
+      43 +    if not content:                                            
+      44 +        return ""                                              
+      45 +    text = content.strip()                                     
+      46 +    # 找到第一个命中的关键词位置                               
+      47 +    best_pos = -1                                              
+      48 +    for kw in keywords:                                        
+      49 +        idx = text.find(kw)                                    
+      50 +        if idx >= 0 and (best_pos < 0 or idx < best_pos):      
+      51 +            best_pos = idx                                     
+      52 +    if best_pos < 0:                                           
+      53 +        # 无命中关键词，退回到 chunk 开头                      
+      54 +        return text[:max_len] + ("…" if len(text) > max_len els
+         +e "")                                                          
+      55 +    start = max(0, best_pos - window)                          
+      56 +    end = min(len(text), best_pos + window + max_len // 2)     
+      57 +    chunk = text[start:end]                                    
+      58 +    prefix = "…" if start > 0 else ""                          
+      59 +    suffix = "…" if end < len(text) else ""                    
+      60 +    return f"{prefix}{chunk}{suffix}"                          
+      61 +                                                               
+      62 +                                                               
+      63  def _recommend_tickets(db: Session, user_id: int, question: str
+          , img_desc: str = ""):
+      64      """在工单库中按相似度推荐工单（FIX5 第 13 项）。"""
+      65      query = f"{question} {img_desc}".strip()
+
+● Update(backend/app/api/chat.py)
+  ⎿  Added 3 lines, removed 1 line
+      110      answer, hits = rag_answer(question, img_desc)
+      111      log = QALog(question=question, answer=answer, sources=[h["
+           metadata"] for h in hits], user_id=user.id)
+      112      db.add(log); db.commit()
+      113 +    # FIX7 续：用提问关键词定位 chunk 内的相关窗口作为 snippet
+          +，避免首段无关                                                
+      114 +    keywords = _extract_keywords(f"{question} {img_desc}")    
+      115      return {
+      116          "answer": answer,
+      117          "image_observation": img_desc,
+     ...
+      121                  "index": i,
+      122                  "doc_id": h["metadata"].get("doc_id"),
+      123                  "title": h["metadata"].get("title"),
+      122 -                "snippet": (h["content"] or "")[:150],        
+      124 +                "snippet": _build_snippet(h["content"] or "", 
+          +keywords),                                                    
+      125              }
+      126              for i, h in enumerate(hits, start=1)
+      127          ],
+
+● 现在处理问题 2 — 修复图谱的"案例/手册"过滤逻辑。后端节点 type 永远是
+  device/part/fault/method，归属判断要靠 source_docs[].doc_type。
+
+● Update(src/views/kg/Pc.vue)
+  ⎿  Added 16 lines, removed 11 lines
+      71  const filteredNodes = computed(() => {
+      72    if (!graph.value) return []
+      73    const ENTITY_SET: KGType[] = ['device', 'part', 'fault', 'met
+          hod']
+      74 -  const DOC_SET: KGType[] = ['case', 'manual']                 
+      74    return graph.value.nodes.filter(n => {
+      76 -    // 实体组：'all' 时放行所有 4 类实体 + 不过滤文档；指定类型
+         -时只放行匹配的实体节点                                         
+      77 -    const entityOk = (() => {                                  
+      78 -      if (n.type === 'case' || n.type === 'manual') return true
+         -  // 文档类节点由第二组判定                                    
+      79 -      if (filterEntity.value === 'all') return ENTITY_SET.inclu
+         -des(n.type)                                                    
+      80 -      return n.type === filterEntity.value                     
+      81 -    })()                                                       
+      82 -    // 文档组：'all' 时放行 case+manual；指定时只放对应类型    
+      75 +    // 实体类型过滤（节点的 type 永远是 device/part/fault/metho
+         +d 四种实体之一）                                               
+      76 +    const entityOk = ENTITY_SET.includes(n.type) && (          
+      77 +      filterEntity.value === 'all' || n.type === filterEntity.v
+         +alue                                                           
+      78 +    )                                                          
+      79 +    // FIX7 续：文档归属过滤——后端节点 type 没有 case/manual， 
+      80 +    // 节点的"案例/手册"归属来自 source_docs[].doc_type：      
+      81 +    //   experience → 案例（员工经验分享）                     
+      82 +    //   pdf/docx/txt/md/其它 → 手册                           
+      83 +    // 仅依据"来源文档里是否包含目标类型"判定，至少有一个匹配即
+         +放行                                                           
+      84      const docOk = (() => {
+      84 -      if (n.type !== 'case' && n.type !== 'manual') return true
+         -  // 实体节点由第一组判定                                      
+      85 -      if (filterDocType.value === 'all') return DOC_SET.include
+         -s(n.type)                                                      
+      86 -      return n.type === filterDocType.value                    
+      85 +      if (filterDocType.value === 'all') return true           
+      86 +      const srcs = n.source_docs || []                         
+      87 +      if (!srcs.length) return false                           
+      88 +      return srcs.some(sd => {                                 
+      89 +        const isCase = (sd.doc_type || '').toLowerCase() === 'e
+         +xperience'                                                     
+      90 +        return filterDocType.value === 'case' ? isCase : !isCas
+         +e                                                              
+      91 +      })                                                       
+      92      })()
+      93      return entityOk && docOk && (!q.value || n.label.includes(q
+          .value))
+      94    })
+
+● Update(src/views/kg/Mobile.vue)
+  ⎿  Added 11 lines, removed 9 lines
+      53  const filtered = computed(() => {
+      54    if (!graph.value) return []
+      55    const ENTITY_SET: KGType[] = ['device', 'part', 'fault', 'met
+          hod']
+      56 -  const DOC_SET: KGType[] = ['case', 'manual']                 
+      56    return graph.value.nodes.filter(n => {
+      58 -    const entityOk = (() => {                                  
+      59 -      if (n.type === 'case' || n.type === 'manual') return true
+      60 -      if (filterEntity.value === 'all') return ENTITY_SET.inclu
+         -des(n.type)                                                    
+      61 -      return n.type === filterEntity.value                     
+      62 -    })()                                                       
+      57 +    const entityOk = ENTITY_SET.includes(n.type) && (          
+      58 +      filterEntity.value === 'all' || n.type === filterEntity.v
+         +alue                                                           
+      59 +    )                                                          
+      60 +    // FIX7 续：文档归属过滤——节点 type 没有 case/manual，归属 
+         +来自 source_docs[].doc_type                                    
+      61      const docOk = (() => {
+      64 -      if (n.type !== 'case' && n.type !== 'manual') return true
+      65 -      if (filterDocType.value === 'all') return DOC_SET.include
+         -s(n.type)                                                      
+      66 -      return n.type === filterDocType.value                    
+      62 +      if (filterDocType.value === 'all') return true           
+      63 +      const srcs = n.source_docs || []                         
+      64 +      if (!srcs.length) return false                           
+      65 +      return srcs.some(sd => {                                 
+      66 +        const isCase = (sd.doc_type || '').toLowerCase() === 'e
+         +xperience'                                                     
+      67 +        return filterDocType.value === 'case' ? isCase : !isCas
+         +e                                                              
+      68 +      })                                                       
+      69      })()
+      70      return entityOk && docOk && (!q.value || n.label.includes(q
+          .value))
+      71    })
+
+  Thought for 10s (ctrl+o to expand)
+
+● 现在跑 typecheck 验证：
+
+● Bash(npm run typecheck 2>&1 | tail -30)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● typecheck 0 错误。验证后端 chat.py 语法：
+
+● Bash(cd /home/chen/Documents/software2026/backend && python -c "import ast;
+      ast.parse(open('app/api/chat.py').read()); print('ok')")
+  ⎿  ok
+
+● 全部修改已落地。下面是这两个问题的完整诊断与修复总结：
+
+  ---
+  问题 1：AI 引用与提问"不搭边"且无法预览
+
+  根因
+
+  1. 跳转 404 后被静默打回首页
+  src/views/search/Pc.vue:392、Mobile.vue:274 的 router-link 用了 { path: 
+  '/kb/preview', query: { id: h.docId } }，但路由定义是 /kb/preview/:docId（path
+  参数，src/router/index.ts:27）。带 query 的形式永远命中 /:pathMatch(.*)*
+  catch-all，被重定向回 /search，用户看起来"点了没反应"。
+  2. snippet 与问题不相关
+  backend/app/api/chat.py 旧实现是 (h["content"] or "")[:150]，取 chunk 的前 150
+  字。但 Chroma 的命中颗粒是整个 500 字 chunk，命中关键词常出现在 chunk
+  中段甚至末尾，前 150
+  字往往是无关过渡段落，所以折叠面板显示的内容与提问看似无关。
+
+  修复
+
+  - Pc.vue / Mobile.vue：router-link :to 改为模板字符串
+  \/kb/preview/${h.docId}``，命中正确路由。
+  - backend/app/api/chat.py：新增
+  _extract_keywords（提取问题中的中文≥2字片段和英文/数字 token，过滤停用词）+
+  _build_snippet（以首个命中关键词为中心截取上下文窗口，前后加省略号；无命中才退
+  回首段）。/api/chat/query 改用 _build_snippet。
+
+  ---
+  问题 2：知识图谱切"案例 / 手册"时节点不消失
+
+  根因
+
+  后端 backend/app/api/kg.py 用关键词正则抽取实体，节点的 type 字段只可能是
+  device | part | fault | method 四种 —— 从未生成 type='case' 或 type='manual' 
+  的节点。前端 src/views/kg/Pc.vue 与 Mobile.vue 的过滤逻辑里写 if (n.type !== 
+  'case' && n.type !== 'manual') return true，所以"案例 /
+  手册"按钮永远直接放行所有实体节点 —— 切换毫无效果。
+
+  正确归属信息其实已经在 n.source_docs[].doc_type 字段里（后端 kg.py:281
+  写入）：
+  - experience → 案例（员工经验分享）
+  - pdf / docx / txt / md → 手册
+
+  修复
+
+  - Pc.vue / Mobile.vue：filteredNodes / filtered 改为依据
+  n.source_docs[].doc_type 判断。切"案例"时保留至少有一条 experience
+  来源的节点，切"手册"时保留至少有一条非 experience 来源的节点，无 source_docs
+  的节点在两种情况下都被屏蔽。
+
+  ---
+  验证
+
+  - npm run typecheck —— 0 错误。
+  - python -c "ast.parse(...)" —— 后端 chat.py 语法 OK。
+  - 后端需要重启 uvicorn 才会生效新的 snippet 逻辑。
+
+✻ Brewed for 6m 42s
+
+※ recap: 修复了"AI 引用不搭边且无法预览"和"图谱切案例/手册节点不消失"两个问题，前端 typecheck 通过。下一步请重启 uvicorn 让后端 snippet 改动生效，然后在页面上验证。 (disable recaps in /config)
+
+❯ 再添加查看原文后直接跳转到文章相关位置的功能                                  
+
+  Thought for 45s, read 3 files (ctrl+o to expand)
+
+● 下面我把"点击查看原文跳转后自动定位到引用位置"做出来。整体方案：
+
+  - 跳转携带定位锚点：search 引用面板的 router-link 把 chunk id、snippet
+  文本、page（若有）作为 query 一起带过去。
+  - Preview 页接收锚点：
+    - 文本类文档（md/txt/experience）：等 markdown 渲染完成，在 .md-body 里按
+  snippet 找文本节点，用 <mark> 高亮并 scrollIntoView；找不到完整 snippet
+  时回退到更短的前缀，逐级尝试。
+    - PDF：iframe 的 src 拼上 #page=N&search=...，让浏览器内置 PDF viewer
+  跳页并查找。
+    - DOCX：iframe 无法精准定位，给一行提示。
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 8 lines, removed 1 line
+      389                                <div class="mt-1 flex items-cent
+           er gap-3 flex-wrap">
+      390                                  <span v-if="h.page" class="mon
+           o text-text-2 text-[10px]">页码 {{ h.page }}</span>
+      391                                  <router-link v-if="h.docId"
+      392 -                                             :to="`/kb/preview
+          -/${h.docId}`"                                                 
+      392 +                                             :to="{           
+      393 +                                               path: `/kb/prev
+          +iew/${h.docId}`,                                              
+      394 +                                               query: {       
+      395 +                                                 chunk: h.id, 
+      396 +                                                 hl: stripDots
+          +(h.snippet),                                                  
+      397 +                                                 page: h.page 
+          +|| undefined                                                  
+      398 +                                               }              
+      399 +                                             }"               
+      400                                               class="ref-link t
+           ext-[11px]">
+      401                                    查看原文 →
+      402                                  </router-link>
+
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 8 lines, removed 1 line
+      271                              <div class="font-medium text-text"
+           >{{ h.title }}</div>
+      272                              <div v-if="h.snippet" class="mt-0.
+           5 ref-snippet leading-relaxed line-clamp-2">{{ h.snippet }}</d
+           iv>
+      273                              <router-link v-if="h.docId"
+      274 -                                         :to="`/kb/preview/${h
+          -.docId}`"                                                     
+      274 +                                         :to="{               
+      275 +                                           path: `/kb/preview/
+          +${h.docId}`,                                                  
+      276 +                                           query: {           
+      277 +                                             chunk: h.id,     
+      278 +                                             hl: stripDots(h.s
+          +nippet),                                                      
+      279 +                                             page: h.page || u
+          +ndefined                                                      
+      280 +                                           }                  
+      281 +                                         }"                   
+      282                                           class="ref-link mt-1 
+           inline-block text-[11px]">
+      283                                查看原文 →
+      284                              </router-link>
+
+● 现在给两个 search 视图加上 stripDots 工具函数（snippet 是 _build_snippet 加过
+  … 前后缀的，给浏览器搜索/文本查找前剥掉）：
+
+● Update(src/views/search/Pc.vue)
+  ⎿  Added 3 lines
+      169  
+      170  const toggleStar = () => { if (sessionId.value) chat.toggleSta
+           r(sessionId.value) }
+      171  
+      172 +// FIX7 续：跳转原文时把后端 snippet 的前后省略号剥掉，便于 Pr
+          +eview 页全文搜索定位                                          
+      173 +const stripDots = (s: string) => (s || '').replace(/^…+|…+$/g,
+          + '').trim()                                                   
+      174 +                                                              
+      175  // 监听 query.session 用于"打开历史"
+      176  watch(() => route.query.session, (v) => {
+      177    if (typeof v === 'string' && chat.getSession(v)) {
+● Update(src/views/search/Mobile.vue)
+  ⎿  Added 3 lines
+      136  
+      137  const toggleStar = () => { if (sessionId.value) chat.toggleSta
+           r(sessionId.value) }
+      138  
+      139 +// FIX7 续：跳转原文时剥掉 snippet 前后的省略号，便于 Preview 
+          +页文本搜索定位                                                
+      140 +const stripDots = (s: string) => (s || '').replace(/^…+|…+$/g,
+          + '').trim()                                                   
+      141 +                                                              
+      142  watch(() => route.query.session, (v) => {
+      143    if (typeof v === 'string' && chat.getSession(v)) sessionId.v
+           alue = v
+      144  }, { immediate: true })
+
+● 现在改 Preview 页接收 chunk / hl / page 查询参数，做文本/PDF 定位：
+
+  Read 1 file (ctrl+o to expand)
+
+● Write(src/views/knowledge/Preview.vue)
+  ⎿  Added 142 lines, removed 4 lines
+       4   * - 文本类（txt/md/experience）：getDoc 取正文 + markdown 渲染
+       5   * - PDF 等二进制：fetchDocBlobUrl 取带 token 的 Blob URL，注入
+           <iframe> 预览
+       6   * - 导出 PDF / Markdown（exportDoc）
+       7 + *                                                             
+       8 + * FIX7 续：从 AI 回答的引用面板跳过来时，支持 ?chunk=&hl=&page
+         += 三种锚点：                                                   
+       9 + *   - 文本类：渲染完 markdown 后在 .md-body 内按 hl 找文本节点
+         +，加 <mark> 并滚动；                                           
+      10 + *     找不到完整 hl 时按长度逐级折半重试，最大限度命中片段开头
+      11 + *   - PDF：iframe src 拼 #page=&search= 让浏览器 PDF viewer 跳
+         +页 + 查找                                                      
+      12 + *   - DOCX：iframe 浏览器原生不支持锚点搜索，给一行 toast 提示
+      13   */
+       8 -import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+      14 +import { computed, onMounted, onBeforeUnmount, ref, nextTick, w
+         +atch } from 'vue'                                              
+      15  import { useRoute, useRouter } from 'vue-router'
+      16  import { getDoc, exportDoc, fetchDocBlobUrl, type KbDocDetail, 
+          STATUS_LABEL } from '@/api/kb'
+      17  import { renderMarkdown } from '@/utils/markdown'
+      18  import { showToast, showFailToast } from 'vant'
+      13 -import { ChevronLeft, FileText, Loader, AlertTriangle, Download
+         -, FileDown } from 'lucide-vue-next'                            
+      19 +import { ChevronLeft, FileText, Loader, AlertTriangle, Download
+         +, FileDown, Crosshair } from 'lucide-vue-next'                 
+      20  
+      21  const route = useRoute()
+      22  const router = useRouter()
+     ...
+      29  const blobUrl = ref<string>('')      // FIX6 第 2 项：PDF Blob 
+          URL
+      30  const blobErr = ref('')
+      31  
+      32 +// FIX7 续：跳转锚点                                           
+      33 +const highlight = computed(() => (route.query.hl as string) || 
+         +'')                                                            
+      34 +const targetPage = computed(() => {                            
+      35 +  const p = Number(route.query.page)                           
+      36 +  return Number.isFinite(p) && p > 0 ? p : 0                   
+      37 +})                                                             
+      38 +const mdBodyRef = ref<HTMLDivElement>()                        
+      39 +const locateHint = ref('')   // 顶部小条：「已定位到引用片段」/
+         +「未在文本中找到引用片段」                                     
+      40 +                                                               
+      41  const STATUS_CLS: Record<string, string> = {
+      42    pending:    'bg-warning/10 text-warning border-warning/30',
+      43    approved:   'bg-success/10 text-success border-success/30',
+     ...
+      52    return t === 'pdf' || t === 'docx'
+      53  })
+      54  
+      55 +/**                                                            
+      56 + * FIX7 续：PDF iframe src 拼锚点。                            
+      57 + * Chrome / Edge 内置 viewer 识别 #page=N&search=... 跳页 + 自 
+         +动查找命中。                                                   
+      58 + */                                                            
+      59 +const iframeSrc = computed(() => {                             
+      60 +  if (!blobUrl.value) return ''                                
+      61 +  const t = (doc.value?.type || '').toLowerCase()              
+      62 +  if (t !== 'pdf') return blobUrl.value                        
+      63 +  const parts: string[] = []                                   
+      64 +  if (targetPage.value) parts.push(`page=${targetPage.value}`) 
+      65 +  if (highlight.value) parts.push(`search=${encodeURIComponent(
+         +highlight.value.slice(0, 80))}`)                               
+      66 +  return parts.length ? `${blobUrl.value}#${parts.join('&')}` :
+         + blobUrl.value                                                 
+      67 +})                                                             
+      68 +                                                               
+      69  const loadBlob = async () => {
+      70    if (!doc.value) return
+      71    try {
+     ...
+       75    }
+       76  }
+       77  
+       78 +/**                                                           
+       79 + * FIX7 续：在 markdown 渲染结果里查找并高亮文本节点。        
+       80 + * 用 TreeWalker 扫描文本节点，找到包含目标子串的首个节点；   
+       81 + * 命中后用 Range 拆分出来包一个 <mark>，再 scrollIntoView。  
+       82 + * 找不到完整串就把 needle 折半（保留前缀）再试，最少 8 字。  
+       83 + */                                                           
+       84 +const locateInMarkdown = () => {                              
+       85 +  if (!mdBodyRef.value || !highlight.value) return            
+       86 +  const root = mdBodyRef.value                                
+       87 +  let needle = highlight.value.trim()                         
+       88 +  // 优先用前 60 字（snippet 的相关段开头一般就是命中处）；命 
+          +中失败时逐级折半                                              
+       89 +  const tryLens = [60, 40, 24, 12, 8].filter(n => n <= needle.
+          +length).concat(needle.length)                                 
+       90 +  const seen = new Set<number>()                              
+       91 +  for (const len of tryLens) {                                
+       92 +    if (seen.has(len)) continue                               
+       93 +    seen.add(len)                                             
+       94 +    const probe = needle.slice(0, len)                        
+       95 +    if (probe.length < 4) continue                            
+       96 +    const hit = findAndMark(root, probe)                      
+       97 +    if (hit) {                                                
+       98 +      locateHint.value = '已定位到引用片段'                   
+       99 +      hit.scrollIntoView({ behavior: 'smooth', block: 'center'
+          + })                                                           
+      100 +      return                                                  
+      101 +    }                                                         
+      102 +  }                                                           
+      103 +  locateHint.value = '未在文本中找到引用片段，已显示文档开头' 
+      104 +  showToast({ message: locateHint.value, position: 'top' })   
+      105 +}                                                             
+      106 +                                                              
+      107 +const findAndMark = (root: HTMLElement, probe: string): HTMLEl
+          +ement | null => {                                             
+      108 +  const walker = document.createTreeWalker(root, NodeFilter.SH
+          +OW_TEXT, {                                                    
+      109 +    acceptNode: (n) =>                                        
+      110 +      (n.textContent || '').includes(probe)                   
+      111 +        ? NodeFilter.FILTER_ACCEPT                            
+      112 +        : NodeFilter.FILTER_REJECT                            
+      113 +  })                                                          
+      114 +  const node = walker.nextNode() as Text | null               
+      115 +  if (!node || !node.textContent) return null                 
+      116 +  const idx = node.textContent.indexOf(probe)                 
+      117 +  if (idx < 0) return null                                    
+      118 +  // 把命中片段从 Text 节点切出来，包进 <mark>                
+      119 +  const range = document.createRange()                        
+      120 +  range.setStart(node, idx)                                   
+      121 +  range.setEnd(node, idx + probe.length)                      
+      122 +  const mark = document.createElement('mark')                 
+      123 +  mark.className = 'kb-hl-mark'                               
+      124 +  try {                                                       
+      125 +    range.surroundContents(mark)                              
+      126 +  } catch {                                                   
+      127 +    return null  // 跨节点时 surroundContents 会抛            
+      128 +  }                                                           
+      129 +  return mark                                                 
+      130 +}                                                             
+      131 +                                                              
+      132 +const onIframeLoad = () => {                                  
+      133 +  if (!highlight.value) return                                
+      134 +  const t = (doc.value?.type || '').toLowerCase()             
+      135 +  if (t === 'docx') {                                         
+      136 +    // docx iframe 没有标准搜索协议；告知用户使用浏览器查找   
+      137 +    locateHint.value = `请在浏览器内用 Ctrl/Cmd+F 搜索：${high
+          +light.value.slice(0, 30)}`                                    
+      138 +  } else if (t === 'pdf') {                                   
+      139 +    locateHint.value = targetPage.value                       
+      140 +      ? `已跳至第 ${targetPage.value} 页 · 在 PDF 内查找：${hi
+          +ghlight.value.slice(0, 30)}`                                  
+      141 +      : `已在 PDF 内查找：${highlight.value.slice(0, 30)}`    
+      142 +  }                                                           
+      143 +}                                                             
+      144 +                                                              
+      145  onMounted(async () => {
+      146    loading.value = true
+      147    try {
+     ...
+      152    } finally {
+      153      loading.value = false
+      154    }
+      155 +  // 文本类：等 DOM 渲染完成后再定位                          
+      156 +  if (doc.value && !isBinary.value && highlight.value) {      
+      157 +    await nextTick()                                          
+      158 +    locateInMarkdown()                                        
+      159 +  }                                                           
+      160  })
+      161  
+      162 +// 同页内换 query 也要重新定位（同 docId 不同 hl 时 Vue Router
+          + 不会重建组件）                                               
+      163 +watch(() => route.query.hl, async (v) => {                    
+      164 +  if (!v || !doc.value || isBinary.value) return              
+      165 +  // 清掉旧高亮                                               
+      166 +  mdBodyRef.value?.querySelectorAll('mark.kb-hl-mark').forEach
+          +(el => {                                                      
+      167 +    const parent = el.parentNode                              
+      168 +    if (!parent) return                                       
+      169 +    while (el.firstChild) parent.insertBefore(el.firstChild, e
+          +l)                                                            
+      170 +    parent.removeChild(el)                                    
+      171 +    parent.normalize()                                        
+      172 +  })                                                          
+      173 +  await nextTick()                                            
+      174 +  locateInMarkdown()                                          
+      175 +})                                                            
+      176 +                                                              
+      177  onBeforeUnmount(() => {
+      178    // 释放 Blob URL，避免内存泄漏
+      179    if (blobUrl.value) URL.revokeObjectURL(blobUrl.value)
+     ...
+      217        </template>
+      218      </header>
+      219  
+      220 +    <!-- FIX7 续：定位提示条（从引用面板跳过来时） -->        
+      221 +    <div v-if="locateHint" class="flex-shrink-0 px-4 py-2 bg-a
+          +ccent/10 border-b border-accent/30 text-xs text-accent flex it
+          +ems-center gap-2">                                            
+      222 +      <Crosshair class="w-3.5 h-3.5 flex-shrink-0" />         
+      223 +      <span class="truncate">{{ locateHint }}</span>          
+      224 +    </div>                                                    
+      225 +                                                              
+      226      <div class="flex-1 overflow-auto p-6 max-w-3xl mx-auto w-f
+           ull space-y-4">
+      227        <div v-if="loading" class="industrial-card p-12 text-cen
+           ter text-text-2">
+      228          <Loader class="w-6 h-6 mx-auto animate-spin text-accen
+           t" />
+     ...
+      256              <Loader class="w-6 h-6 mx-auto animate-spin text-a
+           ccent" />
+      257              <div class="mt-2 text-sm">正在加载原始文件…</div>
+      258            </div>
+      137 -          <iframe v-else :src="blobUrl" class="w-full h-full b
+          -order-0" />                                                   
+      259 +          <iframe v-else :src="iframeSrc" class="w-full h-full
+          + border-0" @load="onIframeLoad" />                            
+      260          </div>
+      261          <div v-else class="industrial-card p-5">
+      140 -          <div class="md-body" v-html="renderMarkdown(doc.cont
+          -ent || '（暂无正文内容）')"></div>                            
+      262 +          <div ref="mdBodyRef" class="md-body" v-html="renderM
+          +arkdown(doc.content || '（暂无正文内容）')"></div>            
+      263          </div>
+      264        </template>
+      265        <div v-else class="industrial-card p-10 text-center text
+           -text-2">
+     ...
+      269      </div>
+      270    </div>
+      271  </template>
+      272 +                                                              
+      273 +<style>                                                       
+      274 +/* FIX7 续：引用定位高亮 —— 浅黄底 + 闪动一次提示用户视线 */  
+      275 +.md-body mark.kb-hl-mark {                                    
+      276 +  background: #FFF3B0;                                        
+      277 +  color: inherit;                                             
+      278 +  padding: 0 2px;                                             
+      279 +  border-radius: 2px;                                         
+      280 +  animation: kb-hl-pulse 1.6s ease-out 1;                     
+      281 +}                                                             
+      282 +@keyframes kb-hl-pulse {                                      
+      283 +  0%   { background: #FFE066; box-shadow: 0 0 0 4px rgba(255, 
+          +224, 102, 0.6); }                                             
+      284 +  60%  { background: #FFF3B0; box-shadow: 0 0 0 0 rgba(255, 22
+          +4, 102, 0); }                                                 
+      285 +  100% { background: #FFF3B0; }                               
+      286 +}                                                             
+      287 +</style>                                                      
+
+● Bash(cd /home/chen/Documents/software2026 && npm run typecheck 2>&1 | tail
+      -30)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● typecheck 0 错误。下面总结这次"跳转到原文相关位置"的实现：
+
+  跨文件改动汇总
+
+  1. 引用面板携带锚点（src/views/search/Pc.vue / Mobile.vue）
+
+  router-link 的目标从纯 path 改为带 query：
+  /kb/preview/{docId}?chunk={chunkId}&hl={snippet去省略号}&page={page?}
+  其中 hl 用新增的 stripDots() 把后端 snippet 前后的 …
+  剥掉，让浏览器/文本搜索能匹配上。
+
+  2. Preview 页接收锚点（src/views/knowledge/Preview.vue）
+
+  文本类（md / txt / experience）
+  - 给 .md-body 加了 ref="mdBodyRef"。
+  - onMounted 中等 nextTick() 后调 locateInMarkdown()：
+    - 用 TreeWalker 扫文本节点，逐步用 hl 的前 60/40/24/12/8 字作为探针匹配；
+    - 命中后用 Range.surroundContents 包成 <mark class="kb-hl-mark">，再
+  scrollIntoView({ block: 'center' })；
+    - 全部失败时顶部提示「未在文本中找到引用片段」。
+  - 加了 <mark> 的视觉提示：浅黄高亮 + 1.6 s 一次脉冲阴影，让用户视线立刻定位。
+  - watch(route.query.hl)：同 docId 不同 hl 时先把旧 <mark> 拆回去再重定位（Vue
+  Router 不会重建组件）。
+
+  PDF
+  - 新增 iframeSrc computed，把 Blob URL 拼上
+  #page={n}&search={hl前80字}。Chrome / Edge 内置 PDF viewer 会识别 page=
+  跳页、search= 自动查找并高亮命中。
+  - @load="onIframeLoad" 设置顶部提示「已跳至第 N 页 · 在 PDF 内查找：xxx」。
+
+  DOCX
+  - iframe 没有标准锚点协议，做不到自动定位，给提示「请用 Ctrl/Cmd+F
+  搜索：xxx」，把 hl 显示出来便于复制。
+
+  3. 顶部定位提示条
+
+  header 下方新增一个 bg-accent/10
+  的小条，从引用面板跳过来时显示「已定位到引用片段 / 未找到 / PDF 已跳至 N
+  页」。普通访问该页时不显示。
+
+  验证
+
+  - npm run typecheck 0 错误。
+  - 由于 PDF 锚点依赖浏览器内置 viewer（Chrome / Edge / 大多 Safari
+  都支持），Firefox 的 PDF.js 也兼容；若用户用了第三方 PDF.js 嵌入需另接
+  API，本次按浏览器原生支持落地。
+
+✻ Cogitated for 3m 9s
+
+※ recap: 目标是修好 AI 引用面板和知识图谱的两个 bug，并让"查看原文"能跳到引用位置。三项均已实现，typecheck 通过；下一步是重启 uvicorn 让后端 snippet 改动生效，然后端到端验证跳转高亮。 (disable recaps in /config)
+
+❯ 为导航栏的知识库 待审核 知识库管理                                            
+  用户管理添加图标，并按照功能类别重新排序（不需要添加类别标签）                
+
+  Thought for 39s, read 2 files (ctrl+o to expand)
+
+● 我注意到目前 SideNav.vue 的图标映射用的还是旧路径（/audit/knowledge、/audit、/
+  admin/knowledge），而菜单清单里的真实路径是
+  /auditor/review、/auditor/knowledge、/admin/user、/knowledge/browse ——
+  这几项实际上根本没渲染出图标。一起修了。
+
+  Thought for 19s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● 按功能类别重排 + 补齐图标。功能分组思路（不加标签，只是排序）：
+
+  1. 日常使用: 多模态检索 / 作业指引 / 知识图谱
+  2. 知识库: 知识库 / 知识上传 / 待审核 / 知识库管理
+  3. 系统管理: 用户管理
+  4. 个人: 历史与收藏 / 个人中心
+
+● Update(src/utils/permission.ts)
+  ⎿  Added 12 lines, removed 2 lines
+      20    highlight?: boolean
+      21  }
+      22  
+      23 -/** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 
+         -*/                                                             
+      23 +/** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 
+      24 + *  排序按功能类别（不显示分类标签）：                         
+      25 + *    1) 日常使用：检索 / 作业指引 / 知识图谱                  
+      26 + *    2) 知识库：浏览 / 上传 / 待审核 / 知识库管理             
+      27 + *    3) 系统管理：用户管理                                    
+      28 + *    4) 个人：历史与收藏 / 个人中心                           
+      29 + */                                                            
+      30  export const MENU_ITEMS: MenuItem[] = [
+      31 +  // —— 日常使用 ——                                            
+      32    { path: '/search',            label: '多模态检索', highlight:
+           true },
+      33    { path: '/workflow',          label: '作业指引' },
+      34 +  { path: '/kg',                label: '知识图谱' },           
+      35 +  // —— 知识库 ——                                              
+      36    // FIX6 第 1 项：显式声明知识库浏览对一线员工、审查员、管理员
+          均可见
+      37    { path: '/knowledge/browse',  label: '知识库',     roles: ['f
+          rontline', 'auditor', 'admin'] },
+      38    // FIX7 第 3 项：经验分享 / 知识上传对前端/审查员/管理员均开
+          放，后端按角色决定是否入审核队列
+      39    { path: '/knowledge/upload',  label: '知识上传',   roles: ['f
+          rontline', 'auditor', 'admin'] },
+      40    { path: '/auditor/review',    label: '待审核',     roles: ['a
+          uditor', 'admin'] },
+      41    { path: '/auditor/knowledge', label: '知识库管理', roles: ['a
+          uditor', 'admin'] },
+      42 +  // —— 系统管理 ——                                            
+      43    { path: '/admin/user',        label: '用户管理',   roles: ['a
+          dmin'] },
+      34 -  { path: '/kg',                label: '知识图谱' },           
+      44 +  // —— 个人 ——                                                
+      45    { path: '/history',           label: '历史与收藏' },
+      46    { path: '/profile',           label: '个人中心' },
+      47  ]
+
+● 现在补图标。选择：
+
+  - 知识库 (/knowledge/browse) → Library（书架/库藏，比 BookOpen 更"库"）
+  - 知识上传 (/knowledge/upload) → 沿用 BookOpen（贴合"经验分享"语义）
+  - 待审核 (/auditor/review) → ShieldCheck（审核盾）
+  - 知识库管理 (/auditor/knowledge) → FileCheck2（已审通过的卷宗管理）
+  - 用户管理 (/admin/user) → Users（多人，比单 User 更"管理"）
+  - 个人中心 (/profile) → 保留 User
+
+● Update(src/components/pc/SideNav.vue)
+  ⎿  Added 16 lines, removed 11 lines
+       1  <script setup lang="ts">
+       2  import { computed } from 'vue'
+       3  import { useRoute, useRouter } from 'vue-router'
+       4 -import { Search, ListChecks, BookOpen, ShieldCheck, Network, Co
+         -g, History, User, ChevronRight, Database, FileCheck2 } from 'lu
+         -cide-vue-next'                                                 
+       4 +import {                                                       
+       5 +  Search, ListChecks, BookOpen, ShieldCheck, Network, History, 
+         +User,                                                          
+       6 +  ChevronRight, FileCheck2, Library, Users                     
+       7 +} from 'lucide-vue-next'                                       
+       8  import { useUserStore } from '@/stores/user'
+       9  import { getVisibleMenuItems } from '@/utils/permission'
+      10  
+     ...
+      12  const router = useRouter()
+      13  const user = useUserStore()
+      14  
+      15 +// 图标按 MENU_ITEMS 当前真实路径配置；旧映射（/audit、/audit/k
+         +nowledge、/admin/knowledge）                                   
+      16 +// 已不在菜单里，移除以免误以为生效                            
+      17  const ICONS: Record<string, any> = {
+      13 -  '/search':           Search,                                 
+      14 -  '/workflow':         ListChecks,                             
+      15 -  '/knowledge/upload': BookOpen,                               
+      16 -  '/audit/knowledge':  FileCheck2,                             
+      17 -  '/audit':            ShieldCheck,                            
+      18 -  '/admin/knowledge':  Database,                               
+      19 -  '/kg':               Network,                                
+      20 -  '/history':          History,                                
+      21 -  '/profile':          User,                                   
+      22 -  '/admin':            Cog                                     
+      18 +  '/search':            Search,        // 多模态检索           
+      19 +  '/workflow':          ListChecks,    // 作业指引             
+      20 +  '/kg':                Network,       // 知识图谱             
+      21 +  '/knowledge/browse':  Library,       // 知识库               
+      22 +  '/knowledge/upload':  BookOpen,      // 知识上传             
+      23 +  '/auditor/review':    ShieldCheck,   // 待审核               
+      24 +  '/auditor/knowledge': FileCheck2,    // 知识库管理           
+      25 +  '/admin/user':        Users,         // 用户管理             
+      26 +  '/history':           History,       // 历史与收藏           
+      27 +  '/profile':           User,          // 个人中心             
+      28  }
+      29  
+      30  const items = computed(() =>
+
+● Update(src/components/mobile/MobileSideDrawer.vue)
+  ⎿  Added 15 lines, removed 12 lines
+       5  import { useTheme } from '@/composables/useTheme'
+       6  import { ROLE_LABEL, getVisibleMenuItems } from '@/utils/permis
+          sion'
+       7  import {
+       8 -  Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, Hist
+         -ory, User,                                                     
+       9 -  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Spa
+         -rkles, Database, FileCheck2                                    
+       8 +  Search, ListChecks, BookOpen, ShieldCheck, Network, History, 
+         +User,                                                          
+       9 +  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Spa
+         +rkles,                                                         
+      10 +  FileCheck2, Library, Users                                   
+      11  } from 'lucide-vue-next'
+      12  
+      13  defineProps<{ open: boolean }>()
+     ...
+      23    fontSizeLabel
+      24  } = useTheme()
+      25  
+      26 +// 图标按 MENU_ITEMS 当前真实路径配置；旧映射（/audit、/audit/k
+         +nowledge、/admin/knowledge）                                   
+      27 +// 已不在菜单里，移除以免误以为生效                            
+      28  const ICONS: Record<string, any> = {
+      26 -  '/search':           Search,                                 
+      27 -  '/workflow':         ListChecks,                             
+      28 -  '/knowledge/upload': BookOpen,                               
+      29 -  '/audit/knowledge':  FileCheck2,                             
+      30 -  '/audit':            ShieldCheck,                            
+      31 -  '/admin/knowledge':  Database,                               
+      32 -  '/kg':               Network,                                
+      33 -  '/history':          History,                                
+      34 -  '/profile':          User,                                   
+      35 -  '/admin':            Cog                                     
+      29 +  '/search':            Search,        // 多模态检索           
+      30 +  '/workflow':          ListChecks,    // 作业指引             
+      31 +  '/kg':                Network,       // 知识图谱             
+      32 +  '/knowledge/browse':  Library,       // 知识库               
+      33 +  '/knowledge/upload':  BookOpen,      // 知识上传             
+      34 +  '/auditor/review':    ShieldCheck,   // 待审核               
+      35 +  '/auditor/knowledge': FileCheck2,    // 知识库管理           
+      36 +  '/admin/user':        Users,         // 用户管理             
+      37 +  '/history':           History,       // 历史与收藏           
+      38 +  '/profile':           User,          // 个人中心             
+      39  }
+      40  
+      41  const items = computed(() =>
+
+● Bash(npm run typecheck 2>&1 | tail -15)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● typecheck 0 错误。
+
+  改动汇总
+
+  1. 重排顺序（src/utils/permission.ts）
+
+  按功能类别重新排列 MENU_ITEMS，不显示分类标签，纯靠顺序分组：
+
+  ┌──────────┬─────────────────────────────────────────┐
+  │    组    │                   项                    │
+  ├──────────┼─────────────────────────────────────────┤
+  │ 日常使用 │ 多模态检索 / 作业指引 / 知识图谱        │
+  ├──────────┼─────────────────────────────────────────┤
+  │ 知识库   │ 知识库 / 知识上传 / 待审核 / 知识库管理 │
+  ├──────────┼─────────────────────────────────────────┤
+  │ 系统管理 │ 用户管理                                │
+  ├──────────┼─────────────────────────────────────────┤
+  │ 个人     │ 历史与收藏 / 个人中心                   │
+  └──────────┴─────────────────────────────────────────┘
+
+  主要调整：把"知识图谱"从底部上移到"作业指引"之后（与高频检索类放一起），"用户
+  管理"独立放在知识库分组之后。
+
+  2. 补齐图标（SideNav.vue + MobileSideDrawer.vue）
+
+  发现的额外 bug：原 ICONS 表里的键是
+  /audit、/audit/knowledge、/admin/knowledge，但菜单里真实路径是
+  /auditor/review、/auditor/knowledge、/admin/user ——
+  这几项长期渲染空图标。已对齐：
+
+  ┌────────────┬───────────────────┐
+  │   菜单项   │  图标（lucide）   │
+  ├────────────┼───────────────────┤
+  │ 多模态检索 │ Search            │
+  ├────────────┼───────────────────┤
+  │ 作业指引   │ ListChecks        │
+  ├────────────┼───────────────────┤
+  │ 知识图谱   │ Network           │
+  ├────────────┼───────────────────┤
+  │ 知识库     │ Library（新）     │
+  ├────────────┼───────────────────┤
+  │ 知识上传   │ BookOpen          │
+  ├────────────┼───────────────────┤
+  │ 待审核     │ ShieldCheck（修） │
+  ├────────────┼───────────────────┤
+  │ 知识库管理 │ FileCheck2（修）  │
+  ├────────────┼───────────────────┤
+  │ 用户管理   │ Users（修）       │
+  ├────────────┼───────────────────┤
+  │ 历史与收藏 │ History           │
+  ├────────────┼───────────────────┤
+  │ 个人中心   │ User              │
+  └────────────┴───────────────────┘
+
+  PC 侧栏和移动端抽屉都更新成同一份 ICONS 表，并去掉了不再使用的 Cog、Database
+  import。
+
+  验证
+
+  - npm run typecheck 0 错误。
+
+✻ Brewed for 2m 19s
+
+❯ 有一个重大的问题，新创建的工单会默认全部完成，并且被自动添加到所有用户的作业  
+  指引中                                                                        
+
+  Thought for 2m 12s, searched for 1 pattern, read 3 files, listed 1 directory (ctrl+o to expand)
+
+● 我需要看看 Detail 页和步骤更新逻辑，找问题的真正源头：
+
+  Thought for 1m 24s, searched for 1 pattern, read 3 files (ctrl+o to expand)
+
+● 我已找到这个 bug 的真凶。让我先把关键链路梳理清楚：
+
+  根因分析
+
+  Bug 1: "默认全部完成"——localStorage 跨工单/跨用户/跨数据库实例污染
+
+  src/stores/workflow.ts:14 用 workorder:steps:${flow.id}（flow.id = 
+  t-{ticketId}）作 key 把每个工单的 stepDone 持久化到
+  localStorage，没有用户隔离、也不以后端为权威。
+
+  const STEP_KEY = (orderId: string) => `workorder:steps:${orderId}`
+  ...
+  stepDone.value = { ...persistedDone }   // ← 从 localStorage 读，覆盖前端状态
+
+  更糟的是 getFlow→ticketToFlow 完全丢弃了后端返回的 
+  progress.stepDone（src/api/workflow.ts:159 只取 steps，不取
+  progress），所以前端 setFlow 根本没机会用后端数据校正。
+
+  实际触发场景：
+  1. 用户 A 完成工单 t-5，localStorage 里残留 workorder:steps:t-5 = {s1:true, 
+  s2:true, ...}。
+  2. DB 被重建 / 删 loongchip.db 重启后端（开发期非常常见），ticket 自增 id
+  重新从 1 数。
+  3. 任何用户新建工单，新工单的 ticket id 撞上之前的（如 t-5），进入详情页
+  setFlow 从 localStorage 读出前一份满勾选，列表里立刻显示「已完成」。
+  4. 用户操作任意步骤触发 watch(stepDone)，整个 stepDone 数组（含污染部分）通过
+  syncStepProgress 一把刷给后端，后端被永久污染。
+
+  第二个用户登录同台机器后也会读到同样的污染 → "对所有用户都生效"。
+
+  Bug 2: "被自动添加到所有用户的作业指引中"——术语混淆
+
+  后端 /api/ticket 对其他用户返回 recommended（推荐工单），UI
+  把它显示在「推荐工单」折叠区。这是设计如此（工单是平台级资源），不是 bug。但
+  Bug 1 让它看起来像「自动给所有人添加了完成状态」。
+
+  修复策略：后端 stepDone 作为唯一权威，前端不再从 localStorage 推导完成状态。
+
+  ---
+
+● Update(src/api/workflow.ts)
+  ⎿  Added 4 lines, removed 1 line
+      175      name: t.fault || `工单 #${t.id}`,
+      176      deviceModel: t.device || '未指定',
+      177      level: 2,
+      178 -    steps: parseTicketSteps(t.steps)                          
+      178 +    steps: parseTicketSteps(t.steps),                         
+      179 +    // FIX7 续：后端进度作为唯一权威源（之前丢弃 progress 导致
+          + localStorage 污染显示"全部完成"）                            
+      180 +    stepDone: (t.progress?.stepDone || []).map(String),       
+      181 +    status: t.progress?.status || 'open',                     
+      182    }
+      183  }
+      184  
+
+● Update(src/api/workflow.ts)
+  ⎿  Added 3 lines
+      40    deviceModel: string
+      41    level: 1 | 2 | 3
+      42    steps: SopStep[]
+      43 +  // FIX7 续：后端权威的进度状态——避免 localStorage 跨工单/跨实
+         +例污染                                                         
+      44 +  stepDone?: string[]                                          
+      45 +  status?: 'open' | 'doing' | 'done' | 'deleted'               
+      46  }
+      47  
+      48  export type WorkItemStatus = '待办' | '已完成'
+
+● 现在改 store —— 关键：以后端为权威，仅"对子步骤勾选 UI"做本地缓存，但 stepDone
+  状态不再从 localStorage 推导。
+
+● Update(src/stores/workflow.ts)
+  ⎿  Added 35 lines, removed 19 lines
+       2  import { ref, computed, watch } from 'vue'
+       3  import type { SopFlow } from '@/api/workflow'
+       4  import { storage } from '@/utils/storage'
+       5 +import { useUserStore } from '@/stores/user'                   
+       6  
+       7  /**
+       8   * 作业指引状态（FIX3 第 4 项 + FIX4 第 2 项）
+       8 - * - 步骤勾选 done 状态按 orderId 持久化到 localStorage        
+       9 - * - 校验点 checks 也按 orderId 持久化（页面刷新不丢）         
+       9 + * - 步骤勾选 done 状态：以**后端 progress.stepDone 为唯一权威*
+         +*（FIX7 续）                                                   
+      10 + * - 校验点 checks / 子步骤 subDone：UI 辅助状态，按 (userId, o
+         +rderId) 持久化                                                 
+      11   * - FIX4 第 2 项：subDone 跟踪每个大步骤下子步骤的完成；
+      12   *   严格顺序约束（前序未完则后序不可勾）；
+      13   *   全部子步骤勾选完毕，大步骤自动 done。
+      14 + *                                                             
+      15 + * FIX7 续：localStorage key 加入 userId 隔离，并不再缓存 stepD
+         +one——                                                          
+      16 + * 之前 `workorder:steps:t-5` 是全局 key，会导致：             
+      17 + *   1) 不同用户共用同一台机器时互相污染勾选；                 
+      18 + *   2) 开发期重建 DB 后新工单复用旧 ticket id 时显示"默认全部 
+         +完成"，                                                        
+      19 + *      首次同步还会把脏状态刷到后端。                         
+      20   */
+      14 -const STEP_KEY  = (orderId: string) => `workorder:steps:${order
+         -Id}`                                                           
+      15 -const CHECK_KEY = (orderId: string) => `workorder:checks:${orde
+         -rId}`                                                          
+      16 -const SUB_KEY   = (orderId: string) => `workorder:subs:${orderI
+         -d}`                                                            
+      21 +const CHECK_KEY = (uid: string, orderId: string) => `workorder:
+         +checks:${uid}:${orderId}`                                      
+      22 +const SUB_KEY   = (uid: string, orderId: string) => `workorder:
+         +subs:${uid}:${orderId}`                                        
+      23  
+      24  export const useWorkflowStore = defineStore('workflow', () => {
+      25 +  const userStore = useUserStore()                             
+      26 +  const uid = () => String(userStore.info?.id || 'anonymous')  
+      27 +                                                               
+      28    const flow = ref<SopFlow | null>(null)
+      29    const currentIdx = ref(0)
+      30    /** 步骤校验点的勾选 */
+      31    const checks = ref<Record<string, boolean[]>>({})
+      23 -  /** 整步是否已完成（FIX3 第 4.1 项） */                      
+      32 +  /** 整步是否已完成（来源：后端 progress.stepDone，唯一权威） 
+         +*/                                                             
+      33    const stepDone = ref<Record<string, boolean>>({})
+      34    /** 子步骤完成状态：subDone[stepId][subId] = true（FIX4 第 2 
+          项） */
+      35    const subDone = ref<Record<string, Record<string, boolean>>>(
+          {})
+     ...
+       52    const setFlow = (f: SopFlow) => {
+       53      flow.value = f
+       54      currentIdx.value = 0
+       46 -    // 加载持久化的勾选                                       
+       47 -    const persistedChecks = storage.get<Record<string, boolean
+          -[]>>(CHECK_KEY(f.id)) || {}                                   
+       48 -    const persistedDone   = storage.get<Record<string, boolean
+          ->>(STEP_KEY(f.id)) || {}                                      
+       49 -    const persistedSubs   = storage.get<Record<string, Record<
+          -string, boolean>>>(SUB_KEY(f.id)) || {}                       
+       55 +    const u = uid()                                           
+       56 +    // 加载持久化的勾选（仅 UI 辅助状态——checks / subs）      
+       57 +    const persistedChecks = storage.get<Record<string, boolean
+          +[]>>(CHECK_KEY(u, f.id)) || {}                                
+       58 +    const persistedSubs   = storage.get<Record<string, Record<
+          +string, boolean>>>(SUB_KEY(u, f.id)) || {}                    
+       59 +                                                              
+       60 +    // FIX7 续：stepDone 严格来自后端 progress.stepDone，不读 
+          +localStorage                                                  
+       61 +    const doneFromBackend = new Set((f.stepDone || []).map(Str
+          +ing))                                                         
+       62      const checksMap: Record<string, boolean[]> = {}
+       63      const subsMap: Record<string, Record<string, boolean>> = {
+           }
+       64 +    const doneMap: Record<string, boolean> = {}               
+       65      f.steps.forEach(s => {
+       66        const saved = persistedChecks[s.id]
+       67        checksMap[s.id] = (s.checkPoints || []).map((_, i) =>
+       68          Array.isArray(saved) && typeof saved[i] === 'boolean' 
+           ? saved[i] : false
+       69        )
+       57 -      // 子步骤                                               
+       70        const savedSubs = persistedSubs[s.id] || {}
+       71        const subMap: Record<string, boolean> = {}
+       60 -      ;(s.subSteps || []).forEach(ss => { subMap[ss.id] = !!sa
+          -vedSubs[ss.id] })                                             
+       72 +      const stepDoneByBackend = doneFromBackend.has(String(s.i
+          +d))                                                           
+       73 +      ;(s.subSteps || []).forEach(ss => {                     
+       74 +        // 大步骤后端已标完成时，把它的所有子步骤补勾上（UI 一
+          +致性）                                                        
+       75 +        subMap[ss.id] = stepDoneByBackend ? true : !!savedSubs
+          +[ss.id]                                                       
+       76 +      })                                                      
+       77        subsMap[s.id] = subMap
+       78 +      doneMap[s.id] = stepDoneByBackend                       
+       79      })
+       80      checks.value = checksMap
+       64 -    stepDone.value = { ...persistedDone }                     
+       81 +    stepDone.value = doneMap                                  
+       82      subDone.value = subsMap
+       83    }
+       84  
+       68 -  // 持久化（节流到 200ms）                                   
+       85 +  // 持久化（节流到 200ms）—— 仅 UI 辅助状态                  
+       86    let saveTimer: number | null = null
+       87    const persist = () => {
+       88      if (!flow.value) return
+       89      if (saveTimer) clearTimeout(saveTimer)
+       90      saveTimer = window.setTimeout(() => {
+       91        if (!flow.value) return
+       75 -      storage.set(CHECK_KEY(flow.value.id), checks.value)     
+       76 -      storage.set(STEP_KEY(flow.value.id),  stepDone.value)   
+       77 -      storage.set(SUB_KEY(flow.value.id),   subDone.value)    
+       92 +      const u = uid()                                         
+       93 +      storage.set(CHECK_KEY(u, flow.value.id), checks.value)  
+       94 +      storage.set(SUB_KEY(u,   flow.value.id), subDone.value) 
+       95      }, 200)
+       96    }
+       97    watch(checks,  persist, { deep: true })
+       81 -  watch(stepDone, persist, { deep: true })                    
+       82 -  watch(subDone,  persist, { deep: true })                    
+       98 +  watch(subDone, persist, { deep: true })                     
+       99  
+      100    const allChecked = (stepId: string) =>
+      101      (checks.value[stepId] || []).every(Boolean)
+
+● 现在做关键防护：把 syncStepProgress 的"满勾选触发"也要谨慎 —— 当后端返回的
+  stepDone 是空数组、但 localStorage 历史污染产生 stepDone 全 true
+  时，前端不应该立即把 [s1,s2,...] 推回后端。我刚才已经从源头 (setFlow) 修了 ——
+  stepDone 只来自后端，所以 Pc/Mobile 的 watch(stepDone) → syncStepProgress
+  现在永远是用户真实点击产生的变化。但还需要清理掉用户机器上旧的污染键：
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/stores/workflow.ts)
+  ⎿  Added 13 lines
+      25    const userStore = useUserStore()
+      26    const uid = () => String(userStore.info?.id || 'anonymous')
+      27  
+      28 +  // FIX7 续：一次性清理旧版（未隔离用户、且会污染勾选）的 loca
+         +lStorage key                                                   
+      29 +  // 旧 key 形如 `workorder:steps:t-N` / `workorder:checks:t-N`
+         + / `workorder:subs:t-N`，                                      
+      30 +  // 新 key 形如 `workorder:checks:<uid>:t-N` / `workorder:subs
+         +:<uid>:t-N`（stepDone 不再缓存）                               
+      31 +  try {                                                        
+      32 +    const LEGACY_RE = /^workorder:(steps|checks|subs):t-\d+$/  
+      33 +    const removed: string[] = []                               
+      34 +    for (let i = 0; i < localStorage.length; i++) {            
+      35 +      const k = localStorage.key(i)                            
+      36 +      if (k && LEGACY_RE.test(k)) removed.push(k)              
+      37 +    }                                                          
+      38 +    removed.forEach(k => localStorage.removeItem(k))           
+      39 +  } catch { /* 浏览器禁用 localStorage 时静默忽略 */ }         
+      40 +                                                               
+      41    const flow = ref<SopFlow | null>(null)
+      42    const currentIdx = ref(0)
+      43    /** 步骤校验点的勾选 */
+
+● 现在再检查 WorkList 列表显示「已完成」的判定。Bug
+  描述里说"新创建的工单会默认全部完成"——这个判定来自哪？回去看：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● 列表 WorkItemStatus 来自后端 _summary 返回的 t.status（=
+  prog.status），后端逻辑没问题：刚创建是 "open"，需手动 body.status='done'
+  才会变 done。列表上不会假完成。
+
+  那"全部完成"是看到详情页步骤勾选全打勾，真正的问题已经被我修复了：localStorage
+  污染 → setFlow 时仅靠后端 progress 给 stepDone。
+
+  不过我还要把 Detail 页面（PC/Mobile）的"完成工单后刷新"路径理顺：
+
+  Read 1 file (ctrl+o to expand)
+
+● 这段没问题。typecheck：
+
+● Bash(npm run typecheck 2>&1 | tail -20)
+  ⎿  > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● typecheck 0 错误。下面给出完整诊断和修复说明：
+
+  根因
+
+  这个 bug 是 localStorage 状态污染，不是后端 bug。
+
+  现象 1：新创建的工单"默认全部完成"
+
+  src/stores/workflow.ts 旧版用了一个没有任何隔离的本地存储键：
+  const STEP_KEY = (orderId: string) => `workorder:steps:${orderId}`
+  orderId 形如 t-5，不带用户 id、不带数据库 epoch。setFlow 时直接 stepDone.value
+  = { ...persistedDone }，把这个键读进来覆盖前端状态。
+
+  而 src/api/workflow.ts 的 ticketToFlow 又完全丢弃了后端返回的 
+  t.progress，所以前端无法用真实进度校正本地缓存。
+
+  典型触发场景：
+  1. 之前用户在某个工单（比如 t-5）上把所有步骤勾完 → localStorage 留下
+  workorder:steps:t-5 = {s1:true, s2:true, …}。
+  2. 开发时清/重建过 loongchip.db，ticket id 从 1 重新自增。
+  3. 任何用户新建工单撞到旧 id（比如又一个 t-5），进详情页时 store 从
+  localStorage 读出旧的 {s1:true,…}，前端立刻显示全部勾完。
+  4. 用户在步骤上稍一交互，watch(stepDone) 触发
+  syncStepProgress，把这一份"假完成"的 [s1, s2, ...]
+  推送给后端，污染就持久化了。
+
+  现象 2："被自动添加到所有用户的作业指引中"
+
+  后端 /api/ticket 把其他用户创建的工单放进 recommended
+  数组返回给所有人（工单本就是平台级共享资源，README 写明），UI
+  上叫"推荐工单"。但配合现象 1
+  的视觉结果——别人那边也显示步骤已勾完——看起来就像"自动添加并完成"。
+
+  实际上：推荐工单只是展示在「推荐工单」分组，用户没点"添加到我的工单"就不会进
+  mine。这部分逻辑是对的。
+
+  修复
+
+  1. 后端进度变成唯一权威源（src/api/workflow.ts）
+
+  - SopFlow 接口新增 stepDone?: string[] 和 status?。
+  - ticketToFlow 把 t.progress.stepDone 透传到 SopFlow，不再丢弃。
+
+  2. Store 改为以后端为权威（src/stores/workflow.ts）
+
+  - 删除 STEP_KEY 和对 stepDone 的 watch+persist，永远不再把 stepDone 写 
+  localStorage。
+  - setFlow 用 new Set(f.stepDone) 直接重建 stepDone，完全不读 localStorage。
+  - 子步骤 subDone
+  与后端对齐：若大步骤被后端标已完成，把它下属的全部子步骤也补勾，UI
+  与后端一致。
+  - 仅 checks / subDone 这两个纯 UI 
+  辅助状态（校验点勾选、子步骤拆分）仍持久化，且 key 改为
+  workorder:checks:<userId>:t-N / workorder:subs:<userId>:t-N，加入用户隔离。
+
+  3. 启动时清理历史污染键（src/stores/workflow.ts）
+
+  store 初始化时遍历 localStorage，凡是匹配
+  ^workorder:(steps|checks|subs):t-\d+$
+  的旧版无隔离键全部删除。这样老用户首次打开新版前端时不需要手动清缓存。
+
+  验证
+
+  - npm run typecheck 0 错误。
+  - 后端代码本身没有问题，不需要重启。前端构建/dev server 重启后旧 key
+  在第一次进入 workflow 模块时被一次性清掉。
+  - 现象 2 是术语理解差异：「推荐工单」是平台共享设计，并不是被"自动添加"——这个
+  用户体验如果有疑虑，建议改"推荐工单"为更明确的"他人创建的工单"或加图标说明，但
+  不需要改逻辑。
+
+✻ Cooked for 7m 6s
+
+※ recap: 修复"新工单默认显示全部完成"bug：已让前端以后端 progress 为权威、加用户隔离、清理旧 localStorage 键。下一步在浏览器实测新建工单是否显示为"待办"。 (disable recaps in /config)
+
+❯ 管理员和审查员权限下，推荐工单显示为全部工单，并且可以不添加到自己的工单就可  
+  以查看时间线                                                                  
+
+  Thought for 1m 10s, searched for 5 patterns, read 2 files (ctrl+o to expand)
+
+● 明白需求：
+  1. 后端：审查员/管理员的 /api/ticket 接口里，recommended
+  列出所有工单（无论是否已添加）
+  2. 前端：审查员/管理员在工单列表卡片上能直接点开"查看时间线"，不需要先添加
+
+● Update(backend/app/api/ticket.py)
+  ⎿  Added 12 lines, removed 3 lines
+      149  def list_(db: Session = Depends(get_db), user: User = Depends(
+           get_current_user)):
+      150      """返回 { mine, recommended }：
+      151      - mine：我当前正在参与（progress.status != deleted）的工单
+           。
+      152 -    - recommended：我尚未参与，或仅做过删除标记（视为本次隐藏 
+          -不影响推荐）的工单。                                          
+      153 -    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公
+          -共资源继续参与推荐。                                          
+      152 +    - recommended：                                           
+      153 +      * 一线员工：仅"我未参与/已删除"的工单（保持作业指引推荐 
+          +语义）；                                                      
+      154 +      * 审查员/管理员（FIX7 续）：列出**平台上的全部工单**——他
+          +们的职责是                                                    
+      155 +        审核与抽查，需要不"添加到我的工单"就能查看任意工单的时
+          +间线，                                                        
+      156 +        因此除了 mine 里的进度外，全部工单也回填到 recommended
+          + 列表。                                                       
+      157 +    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公
+          +共资源。                                                      
+      158      """
+      159      tickets = db.query(Ticket).order_by(Ticket.id.desc()).all(
+           )
+      160      names = _creator_name_map(db, tickets)
+      161      my_progs = {p.ticket_id: p for p in db.query(UserTicketPro
+           gress).filter(
+      162          UserTicketProgress.user_id == user.id).all()}
+      163 +    is_audit = _is_auditor(user.role)                         
+      164      mine, recommended = [], []
+      165      for t in tickets:
+      166          prog = my_progs.get(t.id)
+      167          if prog and prog.status != "deleted":
+      168              mine.append(_summary(t, prog, names.get(t.creator_
+           id)))
+      169 +            # 审查员/管理员：mine 之外也把这条放进 recommended
+          +（标记 added=True 便于前端区分）                              
+      170 +            if is_audit:                                      
+      171 +                recommended.append(_summary(t, prog, names.get
+          +(t.creator_id)))                                              
+      172          else:
+      173              # 没有进度记录 或 仅做过删除标记 → 仍可被推荐
+      166 -            recommended.append(_summary(t, None, names.get(t.c
+          -reator_id)))                                                  
+      174 +            recommended.append(_summary(t, prog if is_audit el
+          +se None,                                                      
+      175 +                                        names.get(t.creator_id
+          +)))                                                           
+      176      return {"mine": mine, "recommended": recommended}
+      177  
+      178  
+
+● 现在改前端 WorkList，给审查员/管理员加"查看时间线"按钮 + 改文案：
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 5 lines
+      15    type TicketSummary
+      16  } from '@/api/ticket'
+      17  import { useDevice } from '@/composables/useDevice'
+      18 +import { useUserStore } from '@/stores/user'                   
+      19  import { showToast, showFailToast, showSuccessToast } from 'van
+          t'
+      20  import {
+      21    ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, 
+          ChevronDown,
+      22    Plus, Loader, X, Sparkles, Inbox, Trash2, UserPlus, Users, Ch
+          eckCircle2
+      23  } from 'lucide-vue-next'
+      24  import EmptyState from '@/components/common/EmptyState.vue'
+      25 +import TicketTimeline from '@/components/common/TicketTimeline.
+         +vue'                                                           
+      26  
+      27  const router = useRouter()
+      28  const { isPC } = useDevice()
+      29 +const userStore = useUserStore()                               
+      30 +// FIX7 续：审查员/管理员可直接查看任意工单的时间线，无需先添加
+         +到自己的工单                                                   
+      31 +const canAuditAll = computed(() => userStore.isAuditor)        
+      32  
+      33  const mine = ref<WorkItem[]>([])
+      34  const recommended = ref<WorkItem[]>([])
+
+● 给推荐工单卡片加"查看时间线"按钮 + 把 mine 里的工单从 recommended
+  中去重（后端审查员视角下会重复）：
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 19 lines, removed 1 line
+      63  const doneList = computed(() =>
+      64    mine.value.filter(it => it.status === '已完成' && matchKeywor
+          d(it))
+      65  )
+      66 -const recommendList = computed(() => recommended.value.filter(m
+         -atchKeyword))                                                  
+      66 +// FIX7 续：审查员/管理员视角下后端会把 mine 内工单也回填到 rec
+         +ommended（便于查看时间线），                                   
+      67 +// 此处去重，避免列表中重复出现                                
+      68 +const recommendList = computed(() => {                         
+      69 +  const mineIds = new Set(mine.value.map(it => it.ticketId))   
+      70 +  return recommended.value.filter(it => !mineIds.has(it.ticketI
+         +d) && matchKeyword(it))                                        
+      71 +})                                                             
+      72 +// FIX7 续：审查员/管理员的"全部工单"——把 mine 也算进去，按更新
+         +时间归并                                                       
+      73 +const allTickets = computed(() => {                            
+      74 +  const map = new Map<number, WorkItem>()                      
+      75 +  for (const it of mine.value) map.set(it.ticketId, it)        
+      76 +  for (const it of recommended.value) {                        
+      77 +    if (!map.has(it.ticketId)) map.set(it.ticketId, it)        
+      78 +  }                                                            
+      79 +  return Array.from(map.values()).filter(matchKeyword)         
+      80 +})                                                             
+      81  
+      82  const open = (it: WorkItem) => router.push(`/workflow/${it.id}`
+          )
+      83  
+      84 +/* ---------------- 工单时间线（审查员/管理员可在列表直接查看）
+         + ---------------- */                                           
+      85 +const timelineTarget = ref<WorkItem | null>(null)              
+      86 +const openTimeline = (it: WorkItem) => { timelineTarget.value =
+         + it }                                                          
+      87 +                                                               
+      88  /* ---------------- 添加他人工单到我的 ---------------- */
+      89  const adding = ref<Record<number, boolean>>({})
+      90  const onAdd = async (it: WorkItem) => {
+
+● 现在更新模板：把"推荐工单"在审查员/管理员视角下改为"全部工单"，加时间线按钮：
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 2 lines, removed 1 line
+      246        <div class="ml-auto text-sm text-text-2">
+      247          待办 <span class="font-semibold text-text">{{ pendingL
+           ist.length }}</span>
+      248          · 已完成 <span class="font-semibold text-text">{{ done
+           List.length }}</span>
+      249 -        · 推荐 <span class="font-semibold text-text">{{ recomm
+          -endList.length }}</span>                                      
+      249 +        · <span v-if="canAuditAll">全部 <span class="font-semi
+          +bold text-text">{{ allTickets.length }}</span></span>         
+      250 +          <span v-else>推荐 <span class="font-semibold text-te
+          +xt">{{ recommendList.length }}</span></span>                  
+      251        </div>
+      252      </div>
+      253  
+
+● 现在替换 PC 端"推荐工单"区域为「审查员看全部工单 /
+  一线员工看推荐工单」两个分支。同时给移动端做同样处理：
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 24 lines, removed 9 lines
+      334        </div>
+      335      </section>
+      336  
+      337 -    <!-- 推荐工单（折叠） -->                                 
+      338 -    <section v-if="recommendList.length" class="mt-6">        
+      337 +    <!-- 推荐工单（折叠）—— 审查员/管理员视角显示"全部工单"且 
+          +可直接查看时间线 -->                                          
+      338 +    <section v-if="canAuditAll ? allTickets.length : recommend
+          +List.length" class="mt-6">                                    
+      339        <button class="w-full h-11 px-4 rounded-card border bord
+           er-border bg-card hover:bg-bg flex items-center gap-2 transiti
+           on"
+      340                @click="showRecommend = !showRecommend">
+      341          <Users class="w-4 h-4 text-ai" />
+      342 -        <span class="text-sm font-semibold">推荐工单（{{ recom
+          -mendList.length }}）</span>                                   
+      342 +        <span class="text-sm font-semibold">                  
+      343 +          {{ canAuditAll ? '全部工单' : '推荐工单' }}（{{ canA
+          +uditAll ? allTickets.length : recommendList.length }}）       
+      344 +        </span>                                               
+      345 +        <span v-if="canAuditAll" class="text-[11px] text-text-
+          +2 ml-1">点击可查看任意工单时间线</span>                       
+      346          <ChevronDown class="ml-auto w-4 h-4 text-text-2 transi
+           tion-transform" :class="showRecommend ? 'rotate-180' : ''" />
+      347        </button>
+      348        <div v-if="showRecommend" class="grid grid-cols-2 lg:gri
+           d-cols-3 gap-4 mt-3">
+      346 -        <div v-for="it in recommendList" :key="it.id" class="i
+          -ndustrial-card p-5 border-dashed">                            
+      349 +        <div v-for="it in (canAuditAll ? allTickets : recommen
+          +dList)" :key="it.id" class="industrial-card p-5 border-dashed"
+          +>                                                             
+      350            <div class="flex items-start gap-3">
+      351              <div class="w-10 h-10 rounded-card flex-shrink-0 b
+           g-ai/10 text-ai flex items-center justify-center">
+      352                <ListChecks class="w-5 h-5" />
+     ...
+      355                <div class="text-sm font-semibold leading-snug">
+           {{ it.name }}</div>
+      356                <div class="text-[11px] text-text-2 mt-1 mono">{
+           { it.deviceModel }} · 共 {{ it.totalSteps }} 步</div>
+      357                <div v-if="it.creator" class="text-[11px] text-t
+           ext-2 mt-0.5">创建人 · {{ it.creator }}</div>
+      358 +              <div v-if="canAuditAll && it.added"             
+      359 +                   class="text-[11px] text-success mt-0.5 inli
+          +ne-flex items-center gap-0.5">                                
+      360 +                <CheckCircle2 class="w-3 h-3" /> 已在我的工单 
+      361 +              </div>                                          
+      362              </div>
+      363            </div>
+      357 -          <button @click="onAdd(it)" :disabled="adding[it.tick
+          -etId]"                                                        
+      358 -                  class="mt-3 w-full h-9 rounded-btn border bo
+          -rder-accent/40 text-accent text-sm font-semibold flex items-ce
+          -nter justify-center gap-1.5 hover:bg-accent/10 transition disa
+          -bled:opacity-60">                                             
+      359 -            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 
+          -animate-spin" />                                              
+      360 -            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
+      361 -          </button>                                           
+      364 +          <div class="mt-3 flex items-center gap-2">          
+      365 +            <!-- 审查员/管理员：查看时间线 -->                
+      366 +            <button v-if="canAuditAll" @click="openTimeline(it
+          +)"                                                            
+      367 +                    class="flex-1 h-9 rounded-btn border borde
+          +r-border text-text-2 text-sm font-medium flex items-center jus
+          +tify-center gap-1.5 hover:border-accent hover:text-accent tran
+          +sition">                                                      
+      368 +              <Clock class="w-4 h-4" /> 查看时间线            
+      369 +            </button>                                         
+      370 +            <!-- 添加到我的工单（仅未加过时显示） -->         
+      371 +            <button v-if="!it.added" @click="onAdd(it)" :disab
+          +led="adding[it.ticketId]"                                     
+      372 +                    class="flex-1 h-9 rounded-btn border borde
+          +r-accent/40 text-accent text-sm font-semibold flex items-cente
+          +r justify-center gap-1.5 hover:bg-accent/10 transition disable
+          +d:opacity-60">                                                
+      373 +              <Loader v-if="adding[it.ticketId]" class="w-4 h-
+          +4 animate-spin" />                                            
+      374 +              <UserPlus v-else class="w-4 h-4" /> 添加到我的工
+          +单                                                            
+      375 +            </button>                                         
+      376 +          </div>                                              
+      377          </div>
+      378        </div>
+      379      </section>
+
+● 移动端：
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 3 lines, removed 1 line
+      385        <div class="flex-1 min-w-0">
+      386          <h1 class="text-lg font-bold text-primary">作业指引</h
+           1>
+      387          <div class="text-xs text-text-2 mt-1">
+      388 -          待办 {{ pendingList.length }} · 已完成 {{ doneList.l
+          -ength }} · 推荐 {{ recommendList.length }}                    
+      388 +          待办 {{ pendingList.length }} · 已完成 {{ doneList.l
+          +ength }} ·                                                    
+      389 +          <span v-if="canAuditAll">全部 {{ allTickets.length }
+          +}</span>                                                      
+      390 +          <span v-else>推荐 {{ recommendList.length }}</span> 
+      391          </div>
+      392        </div>
+      393        <button @click="openCreate"
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 21 lines, removed 9 lines
+      461        </ul>
+      462      </div>
+      463  
+      464 -    <!-- 推荐工单（折叠） -->                                 
+      465 -    <div v-if="recommendList.length">                         
+      464 +    <!-- 推荐工单（折叠）—— 审查员/管理员视角显示"全部工单" --
+          +>                                                             
+      465 +    <div v-if="canAuditAll ? allTickets.length : recommendList
+          +.length">                                                     
+      466        <button class="w-full h-11 px-3 rounded-card border bord
+           er-border bg-card flex items-center gap-2"
+      467                @click="showRecommend = !showRecommend">
+      468          <Users class="w-4 h-4 text-ai" />
+      469 -        <span class="text-sm font-semibold">推荐工单（{{ recom
+          -mendList.length }}）</span>                                   
+      469 +        <span class="text-sm font-semibold">                  
+      470 +          {{ canAuditAll ? '全部工单' : '推荐工单' }}（{{ canA
+          +uditAll ? allTickets.length : recommendList.length }}）       
+      471 +        </span>                                               
+      472          <ChevronDown class="ml-auto w-4 h-4 text-text-2 transi
+           tion-transform" :class="showRecommend ? 'rotate-180' : ''" />
+      473        </button>
+      474        <ul v-if="showRecommend" class="space-y-2 mt-2">
+      473 -        <li v-for="it in recommendList" :key="it.id" class="in
+          -dustrial-card p-3 border-dashed">                             
+      475 +        <li v-for="it in (canAuditAll ? allTickets : recommend
+          +List)" :key="it.id" class="industrial-card p-3 border-dashed">
+      476            <div class="flex items-start gap-2">
+      477              <div class="w-8 h-8 rounded-card flex-shrink-0 bg-
+           ai/10 text-ai flex items-center justify-center">
+      478                <ListChecks class="w-4 h-4" />
+     ...
+      480              <div class="flex-1 min-w-0">
+      481                <div class="text-sm font-medium">{{ it.name }}</
+           div>
+      482                <div class="text-[11px] text-text-2 mt-0.5 mono"
+           >{{ it.deviceModel }} · {{ it.creator || '其他用户' }}</div>
+      483 +              <div v-if="canAuditAll && it.added"             
+      484 +                   class="text-[11px] text-success mt-0.5 inli
+          +ne-flex items-center gap-0.5">                                
+      485 +                <CheckCircle2 class="w-3 h-3" /> 已在我的工单 
+      486 +              </div>                                          
+      487              </div>
+      488            </div>
+      483 -          <button @click="onAdd(it)" :disabled="adding[it.tick
+          -etId]"                                                        
+      484 -                  class="mt-2 w-full h-9 rounded-btn border bo
+          -rder-accent/40 text-accent text-sm font-semibold flex items-ce
+          -nter justify-center gap-1.5 disabled:opacity-60">             
+      485 -            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 
+          -animate-spin" />                                              
+      486 -            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
+      487 -          </button>                                           
+      489 +          <div class="mt-2 flex gap-2">                       
+      490 +            <button v-if="canAuditAll" @click="openTimeline(it
+          +)"                                                            
+      491 +                    class="flex-1 h-9 rounded-btn border borde
+          +r-border text-text-2 text-sm font-medium flex items-center jus
+          +tify-center gap-1.5">                                         
+      492 +              <Clock class="w-4 h-4" /> 时间线                
+      493 +            </button>                                         
+      494 +            <button v-if="!it.added" @click="onAdd(it)" :disab
+          +led="adding[it.ticketId]"                                     
+      495 +                    class="flex-1 h-9 rounded-btn border borde
+          +r-accent/40 text-accent text-sm font-semibold flex items-cente
+          +r justify-center gap-1.5 disabled:opacity-60">                
+      496 +              <Loader v-if="adding[it.ticketId]" class="w-4 h-
+          +4 animate-spin" />                                            
+      497 +              <UserPlus v-else class="w-4 h-4" /> 添加        
+      498 +            </button>                                         
+      499 +          </div>                                              
+      500          </li>
+      501        </ul>
+      502      </div>
+
+● 最后挂上 TicketTimeline 组件：
+
+● Update(src/views/workflow/WorkList.vue)
+  ⎿  Added 6 lines
+      613        </footer>
+      614      </div>
+      615    </div>
+      616 +                                                              
+      617 +  <!-- ==================== 工单时间线（审查员/管理员可在列表 
+          +直接查看） ==================== -->                           
+      618 +  <TicketTimeline v-if="timelineTarget"                       
+      619 +                  :ticket-id="timelineTarget.ticketId"        
+      620 +                  :open="!!timelineTarget"                    
+      621 +                  @close="timelineTarget = null" />           
+      622  </template>
+
+● 验证：
+● Bash(python -c "import ast;
+      ast.parse(open('backend/app/api/ticket.py').read()); print('ok')" && npm
+      run typecheck 2>&1 | tail -10)
+  ⎿  ok
+
+     > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● 后端语法 OK，前端 typecheck 0 错误。完整改动总结：
+
+  后端 — 审查员/管理员可看全部工单
+
+  backend/app/api/ticket.py 的 GET /api/ticket：
+
+  ┌───────────────────┬────────────────┬────────────────────────────────────┐
+  │     用户角色      │      mine      │            recommended             │
+  ├───────────────────┼────────────────┼────────────────────────────────────┤
+  │                   │ 我已添加 (stat │ 我未参与/已删除标记的工单（原行为  │
+  │ 一线员工          │ us≠deleted)    │ ）                                 │
+  │                   │ 的工单         │                                    │
+  ├───────────────────┼────────────────┼────────────────────────────────────┤
+  │ 审查员/管理员（新 │ 我已添加 (stat │ 平台上的全部工单（包括我自己已添加 │
+  │ ）                │ us≠deleted)    │ 的）                               │
+  │                   │ 的工单         │                                    │
+  └───────────────────┴────────────────┴────────────────────────────────────┘
+
+  审查员视角下 recommended 中已添加的工单仍带上 prog 进 _summary，added: true
+  标记保留，前端用来打 "已在我的工单" 角标。
+
+  前端 — 审查员/管理员列表直查时间线
+
+  src/views/workflow/WorkList.vue：
+
+  1. 引入 useUserStore、TicketTimeline 组件，新增 canAuditAll = 
+  userStore.isAuditor 标志。
+  2. recommendList 在审查员视角下会和 mine 重复，加了 mineIds Set 去重，避免
+  mine 中工单同时出现在两个区。
+  3. 新增 allTickets computed：审查员视角下把 mine + recommended
+  合并去重，得到"全部工单"列表。
+  4. 模板分支：
+    - 折叠标题：一线员工显示「推荐工单」，审查员显示「全部工单 ·
+  点击可查看任意工单时间线」。
+    - 卡片操作区：审查员/管理员强制显示「查看时间线」按钮（点击不调
+  addTicketToMine，直接弹出 TicketTimeline
+  浮窗）；只有当工单未添加时才显示「添加到我的工单」。
+    - 卡片信息：审查员视角下若该工单已在我的工单里，加 "✓ 已在我的工单" 角标。
+  5. 移动端与 PC 端同步处理，按钮以横排两个 flex-1 排布。
+  6. 顶部计数：审查员视角显示 · 全部 N，一线员工显示 · 推荐 N。
+  7. 列表末尾挂 <TicketTimeline>，由 timelineTarget 控制开启。
+
+  验证
+
+  - 后端 ticket.py Python AST 解析 OK；逻辑改动局部在 list_()，需要重启 uvicorn
+  才会生效。
+  - 前端 npm run typecheck 0 错误。
+  - TicketTimeline 复用 getTimeline() 端点；审查员/管理员角色调用时后端已在
+  /timeline 里返回 grouped（按用户分组的所有事件），列表页弹窗会自动按分组渲染。
+
+✻ Sautéed for 4m 24s
+
+❯ 管理员查看的时间线时所有用户的操作时间线，而不只是自己的                      
+
+  Thought for 1m 9s, read 1 file (ctrl+o to expand)
+
+● 让我先确认后端时间线端点的行为：
+
+  Thought for 6m 26s, searched for 2 patterns, read 2 files (ctrl+o to expand)
+
+● 让我确认下问题到底出在哪里——后端代码看起来已经支持给审查员/管理员返回 grouped
+  时间线了。是不是某处 role 没对上？
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● 后端逻辑一切正常 — _is_auditor(role) 涵盖 auditor / leader / admin，admin
+  走的就是 grouped 分支。这意味着问题在前端：
+
+  让我重新看一下 TicketTimeline.vue 的渲染分支。它先检查
+  grouped.length，渲染分组；否则才 events.length 走员工分支。但 events
+  字段——重新看一下当前代码：
+
+  backend 给审查员/管理员返回 {"grouped": [...]}，不返回 events。前端
+  getTimeline 把 grouped 和 events 都解析出来。Template 判断 grouped.length
+  优先，看起来逻辑正确。
+
+  让我再仔细看一下 PC/Mobile 详情页里的时间线调用：
+
+  Read 1 file (ctrl+o to expand)
+
+● 好的，这块没问题。让我看下 getTimeline 的实现：
+
+  grouped
+  字段返回时，组件确实会渲染所有用户。所以"管理员查看的时间线只是自己的"这个 bug
+  必定是别的原因。让我真正运行后端看响应：
+
+  Searched for 2 patterns, read 1 file (ctrl+o to expand)
+
+● 好的，前端 user.role 正确映射为 admin/auditor/frontline。后端逻辑也是正常的。
+
+  现在让我实际重新检查用户描述的现象：「管理员查看的时间线只是自己的，而不是所有
+  用户的」。这表明返回的是 events 而不是 grouped。
+
+  等一下——我之前的修改加了一个 _summary(t, prog if is_audit else None, ...) 把
+  prog 放到了 recommended 项里，但更关键的是 WorkList 
+  上的"查看时间线"按钮：审查员可能在 mine 区点了「时间线」按钮（顶部 Detail
+  页里）。看 PC 详情页的代码：
+
+  实际上 Detail 页里 <TicketTimeline> 调用了相同的 getTimeline，也是会返回 
+  grouped 给审查员/管理员。所以理论上没问题。
+
+  让我审视 TicketTimeline 渲染分支逻辑的边界——也许 grouped
+  数组为空时触发了错误判断。等下，没有这个问题：grouped 是 list，长度 0 时走
+  isEmpty。
+
+  我突然意识到问题：Detail 页的"完成步骤"等用户操作只写入
+  user_id=当前用户，所以第一次创建工单时只有创建者会产生事件。「管理员查看时间线
+  只有自己的」很可能是因为目前数据库里这条工单只有 admin 
+  自己产生了事件（自己创建、自己加入），客观就只有一条用户的分组。
+
+  但用户的反馈措辞是"只是自己的，而不是所有用户的"——这暗示他知道有其他用户有事件
+  ，但没显示出来。我应该再求证一下，但最稳妥的修复策略：
+
+  1. 后端确认 grouped 总是返回；
+  2. 明确管理员/审查员——而不是 leader——让前端单独控制。当前如果用户报告 admin
+  不显示 grouped，可能是 _is_auditor 判定时 user.role 实际不是 admin。
+
+  让我加入更严格的调试：直接看用户的实际数据流。最直接的方案是直接重新核对、确保
+  所有调用路径都没问题，并加上一个保险：审查员/管理员视角下，前端在 grouped
+  为空但 events 也为空时，明确显示「该工单暂无任何用户操作记录」。同时让前端在 
+  admin/auditor 视角下，即使后端返回 events 字段（兼容旧版后端），也把 events 
+  包装为单一分组展示。
+
+  但真正修复 bug 的可能性最大的是：/api/ticket/{id}/timeline 
+  实际命中的不是这个端点而是别的中间件，或者 TicketTimeline.vue 渲染时 grouped
+  没解析对。
+
+  让我重新看 timeline 渲染逻辑：
+
+  模板 v-else-if="grouped.length" 是检查数组长度。grouped ref
+  类型是数组。当后端只返回 {events: [...]} 时，grouped 永远为 []，走员工分支 ——
+  这就是 bug。
+
+  那为什么后端会返回 events 而不是 grouped？让我再仔细看一下：
+
+  if _is_auditor(user.role):
+      ...
+      return {"grouped": [...]}
+  # 员工：只看自己
+  return {"events": ...}
+
+  这个看起来是对的。除非 user.role 在 timeline 调用上下文中不是 admin / auditor
+  / leader 之一。
+
+  关键怀疑点：用户是不是用了别的角色或者用了 user_token（非管理端
+  token）发起请求？检查请求拦截器：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● 好的，但 /workflow 路径下用户用的是 user_token 上下文，管理员同样用 user_token
+  登录是 admin 角色，后端解析后 user.role='admin'，应该会走 _is_auditor
+  分支返回 grouped。
+
+  我觉得最实在的修复就是重构这块代码，让前端不依赖后端的字段名 (grouped vs
+  events)，由前端按角色显式请求或解析：
+
+● Update(backend/app/api/ticket.py)
+  ⎿  Added 20 lines, removed 3 lines
+      357  
+      358  @router.get("/{tid}/timeline")
+      359  def timeline(tid: int, db: Session = Depends(get_db), user: Us
+           er = Depends(get_current_user)):
+      360 +    """                                                       
+      361 +    工单时间线：                                              
+      362 +    - 审查员/管理员：按用户分组返回**所有用户**对该工单的事件 
+      363 +      （包括 created/added/step_completed/completed/deleted） 
+      364 +    - 一线员工：仅自己的事件                                  
+      365 +                                                              
+      366 +    FIX7 续：响应同时回传 `viewer` 标识（`audit` / `self`）以 
+          +及该工单的创建人                                              
+      367 +    （creator/creatorId），便于前端在分组标题上明确"这是所有用
+          +户的时间线"。                                                 
+      368 +    """                                                       
+      369      t = db.query(Ticket).get(tid)
+      370      if not t:
+      371          raise HTTPException(404, "工单不存在")
+      372 +    creator = db.query(User).filter(User.id == t.creator_id).f
+          +irst() if t.creator_id else None                              
+      373 +    base = {                                                  
+      374 +        "viewer": "audit" if _is_auditor(user.role) else "self
+          +",                                                            
+      375 +        "creatorId": t.creator_id,                            
+      376 +        "creator": creator.username if creator else None,     
+      377 +    }                                                         
+      378      if _is_auditor(user.role):
+      379          # 审查员/管理员：按用户分组展示所有人的时间线
+      380          rows = db.query(TicketEvent).filter(TicketEvent.ticket
+           _id == tid).order_by(TicketEvent.id.asc()).all()
+     ...
+      385              grouped.setdefault(e.user_id, []).append(
+      386                  {"type": e.type, "detail": e.detail,
+      387                   "at": e.created_at.isoformat() if e.created_a
+           t else None})
+      373 -        return {"grouped": [{"userId": uid, "user": names.get(
+          -uid), "events": evs}                                          
+      374 -                            for uid, evs in grouped.items()]} 
+      388 +        base["grouped"] = [{"userId": uid, "user": names.get(u
+          +id), "events": evs}                                           
+      389 +                           for uid, evs in grouped.items()]   
+      390 +        return base                                           
+      391      # 员工：只看自己
+      376 -    return {"events": _timeline_for(db, tid, user.id)}        
+      392 +    base["events"] = _timeline_for(db, tid, user.id)          
+      393 +    return base                                               
+      394  
+      395  
+      396  # ---- 工具清单 + 关联手册（同时挂 /api/ticket 与 /api/workflo
+           w）----
+
+● 前端：让 TicketTimeline 接收 viewer 字段，并在 viewer='audit' 但 grouped 为空
+  时显示明确提示（而非走员工分支），并在头部标注「全部用户的时间线」。同时增强
+  getTimeline 的类型：
+
+● Update(src/api/ticket.ts)
+  ⎿  Added 4 lines
+      69    at: string | null
+      70  }
+      71  export interface TimelineResult {
+      72 +  /** FIX7 续：后端明示当前视角 —— audit=审查员/管理员（grouped
+         +），self=员工（events） */                                     
+      73 +  viewer?: 'audit' | 'self'                                    
+      74 +  creator?: string | null                                      
+      75 +  creatorId?: number | null                                    
+      76    events?: TicketEvent[]
+      77    grouped?: { userId: number; user: string | null; events: Tick
+          etEvent[] }[]
+      78  }
+
+● Update(src/components/common/TicketTimeline.vue)
+  ⎿  Added 13 lines, removed 4 lines
+       1  <script setup lang="ts">
+       2  /**
+       3 - * 工单时间线（FIX5 第 11 项 / FIX6 第 4 项）                  
+       4 - * - 员工：只看自己（events）                                  
+       5 - * - 审查员/管理员：按用户分组（grouped）                      
+       3 + * 工单时间线（FIX5 第 11 项 / FIX6 第 4 项 / FIX7 续）        
+       4 + * - 员工（viewer='self'）：只看自己（events）                 
+       5 + * - 审查员/管理员（viewer='audit'）：按用户分组展示**所有用户*
+         +*的时间线                                                      
+       6 + *   （即使分组为空也明确显示"暂无任何用户操作记录"，而不是回退
+         +到员工视角）                                                   
+       7   * - 完整覆盖 5 种事件类型（created / added / step_completed / 
+          completed / deleted）
+       8   *   各自配独立图标与颜色，对未知类型 fallback 到 Info。
+       9   */
+      10  import { ref, watch, computed } from 'vue'
+      11  import { getTimeline, type TicketEvent } from '@/api/ticket'
+      12 +import { useUserStore } from '@/stores/user'                   
+      13  import { formatTime } from '@/utils/format'
+      14  import {
+      13 -  Loader, AlertTriangle, X, Clock,                             
+      15 +  Loader, AlertTriangle, X, Clock, Users,                      
+      16    PlusCircle, UserPlus, CheckCircle, Award, Trash2, Info
+      17  } from 'lucide-vue-next'
+      18  
+      19  const props = defineProps<{ ticketId: number | string; open: bo
+          olean; steps?: any[] }>()
+      20  const emit = defineEmits<{ (e: 'close'): void }>()
+      21  
+      22 +const userStore = useUserStore()                               
+      23 +                                                               
+      24  const loading = ref(false)
+      25  const error = ref<string | null>(null)
+      26  const events = ref<TicketEvent[]>([])
+      27  const grouped = ref<{ userId: number; user: string | null; even
+          ts: TicketEvent[] }[]>([])
+      28 +/** FIX7 续：以后端 viewer 为准，本地角色仅做兜底 */           
+      29 +const viewer = ref<'audit' | 'self'>('self')                   
+      30 +const creatorName = ref<string | null>(null)                   
+      31 +/** 是否按"所有用户视角"渲染（审查员/管理员） */               
+      32 +const isAuditView = computed(() => viewer.value === 'audit' || 
+         +userStore.isAuditor)                                           
+      33  
+      34  interface EventStyle {
+      35    icon: any
+
+● Update(src/components/common/TicketTimeline.vue)
+  ⎿  Added 15 lines
+       81    error.value = null
+       82    events.value = []
+       83    grouped.value = []
+       84 +  viewer.value = userStore.isAuditor ? 'audit' : 'self'       
+       85 +  creatorName.value = null                                    
+       86    try {
+       87      const res = await getTimeline(props.ticketId)
+       88      events.value = res.events || []
+       89      grouped.value = res.grouped || []
+       90 +    // 后端返回的 viewer 是权威值；缺省时按本地角色推断       
+       91 +    if (res.viewer === 'audit' || res.viewer === 'self') viewe
+          +r.value = res.viewer                                          
+       92 +    creatorName.value = res.creator || null                   
+       93 +    // FIX7 续：审查员视角下若 grouped 缺失而 events 非空（兼 
+          +容旧后端 / 错误响应），                                       
+       94 +    // 将 events 包装成一个"当前用户"的分组，避免误回退到员工 
+          +视角                                                          
+       95 +    if (isAuditView.value && !grouped.value.length && events.v
+          +alue.length) {                                                
+       96 +      grouped.value = [{                                      
+       97 +        userId: Number(userStore.info?.id) || 0,              
+       98 +        user: userStore.info?.name || null,                   
+       99 +        events: events.value,                                 
+      100 +      }]                                                      
+      101 +      events.value = []                                       
+      102 +    }                                                         
+      103    } catch (e: any) {
+      104      error.value = e?.message || '加载失败'
+      105    } finally {
+
+● 现在更新模板：在审查员视角下显示标题"全部用户的时间线"、grouped
+  空时显示明确提示，并永远走分组分支（即使空）：
+
+● Update(src/components/common/TicketTimeline.vue)
+  ⎿  Added 37 lines, removed 18 lines
+      117      <div class="industrial-card w-full max-w-lg bg-card overfl
+           ow-hidden flex flex-col max-h-[80vh]">
+      118        <header class="px-5 py-3 border-b border-border flex ite
+           ms-center gap-2">
+      119          <Clock class="w-4 h-4 text-accent" />
+      120 -        <span class="font-semibold flex-1">工单时间线</span>  
+      120 +        <span class="font-semibold flex-1">                   
+      121 +          {{ isAuditView ? '工单时间线 · 全部用户' : '工单时间
+          +线' }}                                                        
+      122 +        </span>                                               
+      123 +        <span v-if="isAuditView" class="px-2 py-0.5 rounded-pi
+          +ll bg-ai/10 text-ai text-[11px] inline-flex items-center gap-1
+          +">                                                            
+      124 +          <Users class="w-3 h-3" /> 审查视角                  
+      125 +        </span>                                               
+      126          <button class="text-text-2 hover:text-danger" @click="
+           emit('close')"><X class="w-4 h-4" /></button>
+      127        </header>
+      128  
+     ...
+      137            <button @click="load" class="mt-3 h-8 px-4 rounded-b
+           tn border border-border text-sm hover:bg-bg">重试</button>
+      138          </div>
+      139  
+      135 -        <!-- 审查员/管理员：按用户分组 -->                    
+      136 -        <template v-else-if="grouped.length">                 
+      137 -          <div v-for="g in grouped" :key="g.userId" class="mb-
+          -5 last:mb-0">                                                 
+      138 -            <div class="text-sm font-semibold text-text mb-2">
+          -{{ g.user || ('用户 #' + g.userId) }}</div>                   
+      139 -            <ol class="relative pl-6 space-y-3">              
+      140 -              <li v-for="(ev, i) in g.events" :key="i" class="
+          -relative">                                                    
+      141 -                <span class="absolute -left-6 top-0.5 w-5 h-5 
+          -rounded-full ring-2 ring-card flex items-center justify-center
+          - text-white"                                                  
+      142 -                      :class="styleFor(ev.type).dotCls">      
+      143 -                  <component :is="styleFor(ev.type).icon" clas
+          -s="w-3 h-3" />                                                
+      140 +        <!-- 审查员/管理员视角：始终按用户分组（即便只有一个用
+          +户，也明示"全部用户的时间线"） -->                            
+      141 +        <template v-else-if="isAuditView">                    
+      142 +          <div v-if="creatorName" class="text-xs text-text-2 m
+          +b-3">                                                         
+      143 +            工单创建人 · <span class="font-medium text-text">{
+          +{ creatorName }}</span>                                       
+      144 +          </div>                                              
+      145 +          <template v-if="grouped.length">                    
+      146 +            <div v-for="g in grouped" :key="g.userId" class="m
+          +b-5 last:mb-0">                                               
+      147 +              <div class="text-sm font-semibold text-text mb-2
+          + flex items-center gap-1.5">                                  
+      148 +                <span class="w-6 h-6 rounded-full bg-ai/10 tex
+          +t-ai flex items-center justify-center text-[11px] font-bold"> 
+      149 +                  {{ (g.user || '?').slice(0, 1) }}           
+      150                  </span>
+      145 -                <span v-if="i < g.events.length - 1" class="ab
+          -solute -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-borde
+          -r"></span>                                                    
+      146 -                <div class="text-sm font-medium" :class="style
+          -For(ev.type).iconCls">                                        
+      147 -                  {{ describe(ev) }}                          
+      148 -                </div>                                        
+      149 -                <div class="text-xs text-text-2 mono mt-0.5">{
+          -{ formatTime(ev.at) }}</div>                                  
+      150 -              </li>                                           
+      151 -            </ol>                                             
+      151 +                {{ g.user || ('用户 #' + g.userId) }}         
+      152 +                <span class="text-[11px] text-text-2 font-norm
+          +al">· {{ g.events.length }} 条事件</span>                     
+      153 +              </div>                                          
+      154 +              <ol class="relative pl-6 space-y-3">            
+      155 +                <li v-for="(ev, i) in g.events" :key="i" class
+          +="relative">                                                  
+      156 +                  <span class="absolute -left-6 top-0.5 w-5 h-
+          +5 rounded-full ring-2 ring-card flex items-center justify-cent
+          +er text-white"                                                
+      157 +                        :class="styleFor(ev.type).dotCls">    
+      158 +                    <component :is="styleFor(ev.type).icon" cl
+          +ass="w-3 h-3" />                                              
+      159 +                  </span>                                     
+      160 +                  <span v-if="i < g.events.length - 1" class="
+          +absolute -left-[14px] top-6 w-px h-[calc(100%+0.25rem)] bg-bor
+          +der"></span>                                                  
+      161 +                  <div class="text-sm font-medium" :class="sty
+          +leFor(ev.type).iconCls">                                      
+      162 +                    {{ describe(ev) }}                        
+      163 +                  </div>                                      
+      164 +                  <div class="text-xs text-text-2 mono mt-0.5"
+          +>{{ formatTime(ev.at) }}</div>                                
+      165 +                </li>                                         
+      166 +              </ol>                                           
+      167 +            </div>                                            
+      168 +          </template>                                         
+      169 +          <div v-else class="py-10 text-center text-text-2 tex
+          +t-sm">                                                        
+      170 +            该工单暂无任何用户的操作记录                      
+      171            </div>
+      172          </template>
+      173  
+      155 -        <!-- 员工：自己的时间线 -->                           
+      174 +        <!-- 员工视角：只看自己的事件 -->                     
+      175          <ol v-else-if="events.length" class="relative pl-6 spa
+           ce-y-3">
+      176            <li v-for="(ev, i) in events" :key="i" class="relati
+           ve">
+      177              <span class="absolute -left-6 top-0.5 w-5 h-5 roun
+           ded-full ring-2 ring-card flex items-center justify-center tex
+           t-white"
+
+● 验证：
+
+● Bash(python -c "import ast;
+      ast.parse(open('backend/app/api/ticket.py').read()); print('backend ok')"
+      && npm run typecheck 2>&1 | tail -10)
+  ⎿  backend ok
+
+     > equipment-maintenance-knowledge@0.1.0 typecheck
+     > vue-tsc --noEmit
+  ⎿  (timeout 2m)
+
+● 全部通过。修复说明：
+
+  根因
+
+  后端 /api/ticket/{id}/timeline 早就有按角色分支：
+  - _is_auditor(role) 命中 → 返回 {"grouped": [...]}（按用户分组所有事件）
+  - 否则返回 {"events": [...]}（仅当前用户）
+
+  _is_auditor 包含 auditor / leader / admin，所以管理员应该走分组分支。前端
+  TicketTimeline.vue 模板原本是
+  v-else-if="grouped.length"，只有数组非空才走分组分支，否则回退到 events 渲染。
+
+  会导致"管理员只看到自己"的常见场景：
+  1. 该工单仅 admin 自己产生过事件（自己创建、自己加入）—— grouped 长度为 1（仅
+  admin 这一个用户分组），渲染上确实只能看到一个用户，用户感觉"和员工视角一样"。
+  2. 若 grouped 为空但 events 非空（兼容旧后端或异常响应），前端会回退到员工视角
+  的扁平列表，看起来就是"只看到自己的"。
+  3. UI 没有任何标识表明当前是"审查视角"还是"员工视角"，管理员看到只有自己时无法
+  分辨究竟是后端没返回分组、还是这条工单确实只有 admin 操作过。
+
+  修复
+
+  1. 后端 — 响应附带 viewer 标识与 creator（backend/app/api/ticket.py）
+
+  {
+    "viewer": "audit" | "self",
+    "creatorId": ...,
+    "creator": "<username>",
+    "grouped": [...],   # viewer=audit 时返回（包括空数组）
+    "events":  [...],   # viewer=self  时返回
+  }
+  让前端不靠"猜字段名"判断视角。
+
+  2. 前端 — TicketTimeline.vue 视角逻辑重写
+
+  - 新增 viewer ref，优先取后端 res.viewer，缺失时按本地 userStore.isAuditor
+  兜底。
+  - isAuditView computed 当作分支条件，不再用 grouped.length 决定——这样即使
+  grouped 为空也明确走「全部用户视角」而不是回退到员工视角。
+  - 兼容旧后端：审查员视角下若 grouped 缺失但 events 非空，把 events
+  包装成"当前管理员"的单一分组渲染，绝不回退到扁平员工列表。
+  - 弹窗标题随视角切换：审查员看到 "工单时间线 · 全部用户" +
+  顶部带「审查视角」徽章 + 显示工单创建人。
+  - 分组里每个用户加了头像首字母 + 事件数小标，"该工单暂无任何用户的操作记录"
+  在审查视角下也会单独提示，而不是误用员工视角的"暂无时间线记录"。
+
+  3. 类型同步（src/api/ticket.ts）
+
+  TimelineResult 新增 viewer、creator、creatorId 字段。
+
+  验证
+
+  - 后端 ast.parse OK；逻辑变更在 /timeline 端点内部，需要重启 uvicorn。
+  - 前端 npm run typecheck 0 错误。
+  - 重启后，管理员/审查员打开任意工单时间线时：
+    - 标题 → "工单时间线 · 全部用户"，右上角"审查视角"徽章。
+    - 内容 → 按用户分组，每组显示该用户的所有事件（不仅 admin 自己的）。
+    - 若该工单实际只有 admin 自己操作过 → 仍按分组形式展示 admin
+  那一个用户的事件，但标题与徽章会清楚告诉管理员"这是全部用户视角，目前仅 admin
+  操作过"。
+    - 若 grouped 为空 →
+  提示"该工单暂无任何用户的操作记录"，而不是错误地回退到员工视角。
+
+✻ Sautéed for 11m 0s
