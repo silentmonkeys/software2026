@@ -171,8 +171,42 @@ curl http://localhost:8080/api/health
 
 ### 4.4 暴露到内网 / 公网
 
-默认监听 `0.0.0.0:8080`，同网段直接 `http://<服务器IP>:8080` 即可访问。
-对外发布请在前面放一层反向代理（Nginx / Traefik / Caddy）做 HTTPS + 域名。
+容器默认以 `0.0.0.0:8080` 绑定到宿主机所有网卡 —— **同网段设备 `http://<服务器IP>:8080` 即可直接访问**，前端 nginx 容器会代理 `/api` 到后端容器，外部只需要打开这一个端口。
+
+```bash
+# 1) 查看本机内网 IP
+ip -4 addr | grep inet            # Linux
+ipconfig                           # Windows
+
+# 2) 服务器防火墙放行 8080
+sudo firewall-cmd --add-port=8080/tcp --permanent && sudo firewall-cmd --reload   # firewalld
+sudo ufw allow 8080                                                                # ufw
+# Windows：在「高级安全 Windows Defender 防火墙 → 入站规则」新增放行 TCP 8080
+
+# 3) 同网段任意设备打开
+#    http://<服务器IP>:8080
+```
+
+如需修改对外端口、绑定网卡或暴露后端调试端口，复制根目录 `.env.example` 为 `.env`：
+
+```bash
+cp .env.example .env
+# HOST_PORT=8080          # 改成 80、9000、… 任意空闲端口
+# BIND_ADDR=0.0.0.0       # 改为 127.0.0.1 只本机访问；:: 走 IPv6
+docker compose up -d      # 改完直接重启即可，无需 --build
+```
+
+**常见排错**
+
+| 现象 | 原因 / 解决 |
+| --- | --- |
+| 本机 `localhost:8080` 通，局域网设备打不开 | 99% 是防火墙没放行 → 用上面第 2 步放行端口 |
+| `docker ps` 显示 `127.0.0.1:8080->80/tcp` | 之前的 compose 缓存把端口绑到回环了 → `docker compose down && docker compose up -d` 让新 `BIND_ADDR` 生效 |
+| WSL2 上 Windows 局域网不通 | WSL2 默认 NAT，外部进不到 WSL 子网。两种解法：① 在 Windows PowerShell 管理员里跑 `netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=8080 connectaddress=$(wsl hostname -I)` 做端口转发；② 切到 WSL2 `mirrored` 网络模式（Win11 22H2+，`.wslconfig` 里加 `networkingMode=mirrored`） |
+| Docker Desktop (Mac/Win) 上同网段不通 | 不是 docker 的锅，是宿主机防火墙；Mac 在「系统设置 → 网络 → 防火墙」放行 Docker，Windows 同上 |
+| 客户端打开了页面但 `/api/health` 401/CORS | 后端 CORS 已配 `*`，正常不会 CORS；401 是没登录 → 用 admin/123456 登录 |
+
+对外发布（公网）请在前面放一层反向代理（Nginx / Traefik / Caddy）做 HTTPS + 域名 + 限流。**不要直接把 8080 暴露到公网**，因为：默认 admin 密码、JWT 密钥都是部署方设置的，没经过 TLS 风险很高。
 
 ---
 

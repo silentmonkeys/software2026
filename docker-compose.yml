@@ -1,9 +1,17 @@
 # ===== 设备检修知识检索与作业系统 — Docker 编排 =====
 # 用法：
 #   1) cp backend/.env.example backend/.env  并填入 DASHSCOPE_API_KEY
-#   2) docker compose up -d --build
-#   3) 浏览器访问 http://localhost:8080
+#   2) （可选）cp .env.example .env          调整对外端口 / 绑定地址
+#   3) docker compose up -d --build
+#   4) 同网段访问 http://<服务器IP>:${HOST_PORT:-8080}
 # 默认管理员：admin / 123456
+#
+# 局域网访问要点：
+#   - 默认 0.0.0.0 绑定，已对同网段开放；前端 nginx 内部代理 /api 到 backend，
+#     所以客户端只需要能访问到 ${HOST_PORT}（默认 8080）这一个端口。
+#   - 服务器防火墙需放行 ${HOST_PORT}（CentOS：firewall-cmd --add-port=8080/tcp；
+#     Ubuntu：ufw allow 8080）。
+#   - WSL2/Docker Desktop 上局域网不可达时，参考 DOCKER.md 第 4.4 节。
 # =====================================================
 
 services:
@@ -29,11 +37,12 @@ services:
       - backend_chroma:/app/chroma_db
       # 上传文件
       - backend_uploads:/app/uploads
+    # 容器内 8000 端口对前端 nginx 容器可见即可；不对外暴露。
+    # 若需要在局域网直接调试后端 API（如 Postman 测接口），取消下面 ports 注释。
     expose:
       - "8000"
-    # 如需外部直接访问后端 API（调试用），取消下面注释
     # ports:
-    #   - "8000:8000"
+    #   - "${BIND_ADDR:-0.0.0.0}:${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
       interval: 30s
@@ -51,9 +60,10 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # 显式绑定到所有网卡（${BIND_ADDR:-0.0.0.0}）以便局域网访问；
+    # 想限制为本机调试，把 BIND_ADDR 改为 127.0.0.1 或 ::1。
     ports:
-      # 宿主机 8080 → 容器 80
-      - "8080:80"
+      - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8080}:80"
 
 volumes:
   backend_data:
