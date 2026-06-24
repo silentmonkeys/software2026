@@ -107,7 +107,15 @@ const load = async () => {
   }
 }
 
-watch(() => props.open, (v) => { if (v) load() })
+// FIX7 续：用 immediate 监听确保「v-if 挂载即 open=true」的父用法也能触发 load
+// （WorkList.vue 通过 v-if="timelineTarget" 挂载组件，open 启始就是 true，
+// 若没有 immediate 监听不会触发，会导致管理员从列表点开未加入工单时时间线为空）
+// 同时监听 ticketId，便于父组件切换查看不同工单时刷新。
+watch(
+  () => [props.open, props.ticketId] as const,
+  ([v]) => { if (v) load() },
+  { immediate: true }
+)
 
 const isEmpty = computed(() => !loading.value && !error.value && !grouped.value.length && !events.value.length)
 </script>
