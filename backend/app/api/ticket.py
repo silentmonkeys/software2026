@@ -149,21 +149,30 @@ def create(body: TicketIn, db: Session = Depends(get_db), user: User = Depends(g
 def list_(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """返回 { mine, recommended }：
     - mine：我当前正在参与（progress.status != deleted）的工单。
-    - recommended：我尚未参与，或仅做过删除标记（视为本次隐藏不影响推荐）的工单。
-    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公共资源继续参与推荐。
+    - recommended：
+      * 一线员工：仅"我未参与/已删除"的工单（保持作业指引推荐语义）；
+      * 审查员/管理员（FIX7 续）：列出**平台上的全部工单**——他们的职责是
+        审核与抽查，需要不"添加到我的工单"就能查看任意工单的时间线，
+        因此除了 mine 里的进度外，全部工单也回填到 recommended 列表。
+    FIX6 第 3 项：用户软删除仅当前用户视图隐藏，工单仍为平台公共资源。
     """
     tickets = db.query(Ticket).order_by(Ticket.id.desc()).all()
     names = _creator_name_map(db, tickets)
     my_progs = {p.ticket_id: p for p in db.query(UserTicketProgress).filter(
         UserTicketProgress.user_id == user.id).all()}
+    is_audit = _is_auditor(user.role)
     mine, recommended = [], []
     for t in tickets:
         prog = my_progs.get(t.id)
         if prog and prog.status != "deleted":
             mine.append(_summary(t, prog, names.get(t.creator_id)))
+            # 审查员/管理员：mine 之外也把这条放进 recommended（标记 added=True 便于前端区分）
+            if is_audit:
+                recommended.append(_summary(t, prog, names.get(t.creator_id)))
         else:
             # 没有进度记录 或 仅做过删除标记 → 仍可被推荐
-            recommended.append(_summary(t, None, names.get(t.creator_id)))
+            recommended.append(_summary(t, prog if is_audit else None,
+                                        names.get(t.creator_id)))
     return {"mine": mine, "recommended": recommended}
 
 
@@ -348,9 +357,24 @@ def _timeline_for(db: Session, tid: int, user_id: int) -> List[dict]:
 
 @router.get("/{tid}/timeline")
 def timeline(tid: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    工单时间线：
+    - 审查员/管理员：按用户分组返回**所有用户**对该工单的事件
+      （包括 created/added/step_completed/completed/deleted）
+    - 一线员工：仅自己的事件
+
+    FIX7 续：响应同时回传 `viewer` 标识（`audit` / `self`）以及该工单的创建人
+    （creator/creatorId），便于前端在分组标题上明确"这是所有用户的时间线"。
+    """
     t = db.query(Ticket).get(tid)
     if not t:
         raise HTTPException(404, "工单不存在")
+    creator = db.query(User).filter(User.id == t.creator_id).first() if t.creator_id else None
+    base = {
+        "viewer": "audit" if _is_auditor(user.role) else "self",
+        "creatorId": t.creator_id,
+        "creator": creator.username if creator else None,
+    }
     if _is_auditor(user.role):
         # 审查员/管理员：按用户分组展示所有人的时间线
         rows = db.query(TicketEvent).filter(TicketEvent.ticket_id == tid).order_by(TicketEvent.id.asc()).all()
@@ -361,10 +385,12 @@ def timeline(tid: int, db: Session = Depends(get_db), user: User = Depends(get_c
             grouped.setdefault(e.user_id, []).append(
                 {"type": e.type, "detail": e.detail,
                  "at": e.created_at.isoformat() if e.created_at else None})
-        return {"grouped": [{"userId": uid, "user": names.get(uid), "events": evs}
-                            for uid, evs in grouped.items()]}
+        base["grouped"] = [{"userId": uid, "user": names.get(uid), "events": evs}
+                           for uid, evs in grouped.items()]
+        return base
     # 员工：只看自己
-    return {"events": _timeline_for(db, tid, user.id)}
+    base["events"] = _timeline_for(db, tid, user.id)
+    return base
 
 
 # ---- 工具清单 + 关联手册（同时挂 /api/ticket 与 /api/workflow）----

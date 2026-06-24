@@ -71,19 +71,24 @@ const CATEGORIES = (Object.keys(TYPE_META) as KGType[]).map(k => ({
 const filteredNodes = computed(() => {
   if (!graph.value) return []
   const ENTITY_SET: KGType[] = ['device', 'part', 'fault', 'method']
-  const DOC_SET: KGType[] = ['case', 'manual']
   return graph.value.nodes.filter(n => {
-    // 实体组：'all' 时放行所有 4 类实体 + 不过滤文档；指定类型时只放行匹配的实体节点
-    const entityOk = (() => {
-      if (n.type === 'case' || n.type === 'manual') return true  // 文档类节点由第二组判定
-      if (filterEntity.value === 'all') return ENTITY_SET.includes(n.type)
-      return n.type === filterEntity.value
-    })()
-    // 文档组：'all' 时放行 case+manual；指定时只放对应类型
+    // 实体类型过滤（节点的 type 永远是 device/part/fault/method 四种实体之一）
+    const entityOk = ENTITY_SET.includes(n.type) && (
+      filterEntity.value === 'all' || n.type === filterEntity.value
+    )
+    // FIX7 续：文档归属过滤——后端节点 type 没有 case/manual，
+    // 节点的"案例/手册"归属来自 source_docs[].doc_type：
+    //   experience → 案例（员工经验分享）
+    //   pdf/docx/txt/md/其它 → 手册
+    // 仅依据"来源文档里是否包含目标类型"判定，至少有一个匹配即放行
     const docOk = (() => {
-      if (n.type !== 'case' && n.type !== 'manual') return true  // 实体节点由第一组判定
-      if (filterDocType.value === 'all') return DOC_SET.includes(n.type)
-      return n.type === filterDocType.value
+      if (filterDocType.value === 'all') return true
+      const srcs = n.source_docs || []
+      if (!srcs.length) return false
+      return srcs.some(sd => {
+        const isCase = (sd.doc_type || '').toLowerCase() === 'experience'
+        return filterDocType.value === 'case' ? isCase : !isCase
+      })
     })()
     return entityOk && docOk && (!q.value || n.label.includes(q.value))
   })
@@ -169,6 +174,14 @@ const setup = () => {
   const reused = echarts.getInstanceByDom(chartRef.value)
   inst = reused || echarts.init(chartRef.value)
   inst.off('click')
+  // FIX7 第 2 项：监听首次 rendered 事件，强制 resize 一次消除节点/线初始错位
+  let resized = false
+  inst.off('rendered')
+  inst.on('rendered', () => {
+    if (resized) return
+    resized = true
+    inst?.resize()
+  })
   inst.on('click', (p: any) => {
     if (p.dataType === 'node') {
       const n = p.data.raw as KGNode
@@ -244,6 +257,11 @@ onMounted(async () => {
   await loadDocOptions()
   await reload()
   window.addEventListener('resize', () => inst?.resize())
+  // FIX7 第 2 项：监听容器尺寸变化，确保父容器过渡动画结束后图谱能正确渲染
+  if (chartRef.value && typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => inst?.resize())
+    ro.observe(chartRef.value)
+  }
 })
 
 watch([filterEntity, filterDocType, q], () => renderChart())

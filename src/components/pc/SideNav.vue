@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User, ChevronRight, Database, FileCheck2 } from 'lucide-vue-next'
+import {
+  Search, ListChecks, BookOpen, ShieldCheck, Network, History, User,
+  ChevronRight, FileCheck2, Library, Users
+} from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
 import { getVisibleMenuItems } from '@/utils/permission'
 
@@ -9,17 +12,19 @@ const route = useRoute()
 const router = useRouter()
 const user = useUserStore()
 
+// 图标按 MENU_ITEMS 当前真实路径配置；旧映射（/audit、/audit/knowledge、/admin/knowledge）
+// 已不在菜单里，移除以免误以为生效
 const ICONS: Record<string, any> = {
-  '/search':           Search,
-  '/workflow':         ListChecks,
-  '/knowledge/upload': BookOpen,
-  '/audit/knowledge':  FileCheck2,
-  '/audit':            ShieldCheck,
-  '/admin/knowledge':  Database,
-  '/kg':               Network,
-  '/history':          History,
-  '/profile':          User,
-  '/admin':            Cog
+  '/search':            Search,        // 多模态检索
+  '/workflow':          ListChecks,    // 作业指引
+  '/kg':                Network,       // 知识图谱
+  '/knowledge/browse':  Library,       // 知识库
+  '/knowledge/upload':  BookOpen,      // 知识上传
+  '/auditor/review':    ShieldCheck,   // 待审核
+  '/auditor/knowledge': FileCheck2,    // 知识库管理
+  '/admin/user':        Users,         // 用户管理
+  '/history':           History,       // 历史与收藏
+  '/profile':           User,          // 个人中心
 }
 
 const items = computed(() =>
@@ -49,16 +54,5 @@ const isActive = (p: string) => route.path === p || route.path.startsWith(p + '/
         <ChevronRight v-if="isActive(it.path)" class="w-3.5 h-3.5" />
       </button>
     </nav>
-
-    <!-- 底部 AI 引擎状态卡 -->
-    <div class="p-3 border-t border-border">
-      <div class="bg-gradient-to-br from-primary to-primary-2 text-on-dark p-3 rounded-card text-xs">
-        <div class="flex items-center gap-1 font-semibold mb-1">
-          <span class="w-1.5 h-1.5 rounded-full bg-ai inline-block animate-pulse"></span>
-          AI 引擎 在线
-        </div>
-        <div class="opacity-70 mono">multimodal-v2.4 · 2.1ms</div>
-      </div>
-    </div>
   </aside>
 </template>

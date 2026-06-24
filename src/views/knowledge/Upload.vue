@@ -105,9 +105,14 @@ const submitExperience = async () => {
       const item = uploads.value[startIdx + i]
       if (item) { item.status = 'done'; item.docId = a.id }
     })
-    const msg = pendingFiles.value.length
-      ? `已提交（含 ${pendingFiles.value.length} 个附件），进入待审核`
-      : '已提交，进入待审核'
+    // FIX7 第 3 项：根据角色显示不同的成功提示（审查员/管理员直接入库，员工进入待审）
+    const isDirect = user.isAuditor
+    const attTxt = pendingFiles.value.length
+      ? `（含 ${pendingFiles.value.length} 个附件）`
+      : ''
+    const msg = isDirect
+      ? `知识已直接入库${attTxt}`
+      : `经验已提交${attTxt}，等待审查员审核`
     showToast({ type: 'success', message: msg })
     title.value = ''
     body.value = ''
@@ -180,7 +185,7 @@ const goReview = () => router.push('/auditor/review')
     <!-- 移动端顶栏 -->
     <header v-if="!isPC" class="flex-shrink-0 h-12 bg-card border-b border-border flex items-center px-2">
       <button @click="router.back()" class="w-10 h-10 flex items-center justify-center"><ChevronLeft class="w-5 h-5" /></button>
-      <span class="flex-1 text-center font-semibold">经验分享</span>
+      <span class="flex-1 text-center font-semibold">{{ user.isAuditor ? '知识上传' : '经验分享' }}</span>
       <button v-if="user.isAuditor" @click="goReview" class="w-10 h-10 flex items-center justify-center text-accent" title="审查">
         <ShieldCheck class="w-5 h-5" />
       </button>
@@ -190,12 +195,14 @@ const goReview = () => router.push('/auditor/review')
     <!-- PC 标题栏 -->
     <header v-if="isPC" class="flex items-end justify-between gap-4">
       <div>
-        <div class="text-xs text-text-2">知识库 / 经验分享</div>
+        <div class="text-xs text-text-2">知识库 / {{ user.isAuditor ? '知识上传' : '经验分享' }}</div>
         <h1 class="text-2xl font-bold text-primary mt-1 flex items-center gap-2">
-          <Lightbulb class="w-6 h-6 text-accent" /> 员工经验分享
+          <Lightbulb class="w-6 h-6 text-accent" /> {{ user.isAuditor ? '知识上传' : '员工经验分享' }}
         </h1>
         <div class="text-sm text-text-2 mt-1">
-          把现场检修经验沉淀为知识，提交后进入「待审核」，审核通过后加入检索与图谱
+          {{ user.isAuditor
+            ? '作为审核员/管理员，您提交的知识会直接进入知识库，无需等待审核'
+            : '把现场检修经验沉淀为知识，提交后进入「待审核」，审核通过后加入检索与图谱' }}
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -239,7 +246,8 @@ const goReview = () => router.push('/auditor/review')
       <!-- 经验分享表单（主入口） -->
       <section class="industrial-card p-5 space-y-3">
         <div class="text-sm font-semibold flex items-center gap-2">
-          <Lightbulb class="w-4 h-4 text-accent" /> 分享一条检修经验
+          <Lightbulb class="w-4 h-4 text-accent" />
+          {{ user.isAuditor ? '录入一条知识' : '分享一条检修经验' }}
         </div>
         <div>
           <div class="text-sm text-text-2 mb-1">标题 <span class="text-danger">*</span></div>
@@ -254,7 +262,9 @@ const goReview = () => router.push('/auditor/review')
                     :disabled="submitting"
                     class="w-full px-3 py-2 rounded-btn border border-border bg-bg outline-none focus:border-accent focus:bg-card text-sm leading-relaxed"></textarea>
           <div class="text-[11px] text-text-2 mt-1">
-            提交后状态为「待审」。如需添加附件，请在提交文字后再添加，附件会自动关联为本条经验的补充材料。
+            {{ user.isAuditor
+              ? '您提交的内容会直接进入知识库，无需等待审核。'
+              : '提交后状态为「待审」。如需添加附件，请在提交文字后再添加，附件会自动关联为本条经验的补充材料。' }}
           </div>
         </div>
         <div class="flex justify-end">
@@ -262,7 +272,7 @@ const goReview = () => router.push('/auditor/review')
                   :disabled="submitting" @click="submitExperience">
             <Loader v-if="submitting" class="w-4 h-4 animate-spin" />
             <Send v-else class="w-4 h-4" />
-            {{ submitting ? '提交中…' : '提交分享' }}
+            {{ submitting ? '提交中…' : (user.isAuditor ? '提交并入库' : '提交分享') }}
           </button>
         </div>
       </section>

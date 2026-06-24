@@ -15,15 +15,20 @@ import {
   type TicketSummary
 } from '@/api/ticket'
 import { useDevice } from '@/composables/useDevice'
+import { useUserStore } from '@/stores/user'
 import { showToast, showFailToast, showSuccessToast } from 'vant'
 import {
   ListChecks, Search, AlertTriangle, Clock, Cpu, ChevronRight, ChevronDown,
   Plus, Loader, X, Sparkles, Inbox, Trash2, UserPlus, Users, CheckCircle2
 } from 'lucide-vue-next'
 import EmptyState from '@/components/common/EmptyState.vue'
+import TicketTimeline from '@/components/common/TicketTimeline.vue'
 
 const router = useRouter()
 const { isPC } = useDevice()
+const userStore = useUserStore()
+// FIX7 续：审查员/管理员可直接查看任意工单的时间线，无需先添加到自己的工单
+const canAuditAll = computed(() => userStore.isAuditor)
 
 const mine = ref<WorkItem[]>([])
 const recommended = ref<WorkItem[]>([])
@@ -58,9 +63,27 @@ const pendingList = computed(() =>
 const doneList = computed(() =>
   mine.value.filter(it => it.status === '已完成' && matchKeyword(it))
 )
-const recommendList = computed(() => recommended.value.filter(matchKeyword))
+// FIX7 续：审查员/管理员视角下后端会把 mine 内工单也回填到 recommended（便于查看时间线），
+// 此处去重，避免列表中重复出现
+const recommendList = computed(() => {
+  const mineIds = new Set(mine.value.map(it => it.ticketId))
+  return recommended.value.filter(it => !mineIds.has(it.ticketId) && matchKeyword(it))
+})
+// FIX7 续：审查员/管理员的"全部工单"——把 mine 也算进去，按更新时间归并
+const allTickets = computed(() => {
+  const map = new Map<number, WorkItem>()
+  for (const it of mine.value) map.set(it.ticketId, it)
+  for (const it of recommended.value) {
+    if (!map.has(it.ticketId)) map.set(it.ticketId, it)
+  }
+  return Array.from(map.values()).filter(matchKeyword)
+})
 
 const open = (it: WorkItem) => router.push(`/workflow/${it.id}`)
+
+/* ---------------- 工单时间线（审查员/管理员可在列表直接查看） ---------------- */
+const timelineTarget = ref<WorkItem | null>(null)
+const openTimeline = (it: WorkItem) => { timelineTarget.value = it }
 
 /* ---------------- 添加他人工单到我的 ---------------- */
 const adding = ref<Record<number, boolean>>({})
@@ -223,7 +246,8 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
       <div class="ml-auto text-sm text-text-2">
         待办 <span class="font-semibold text-text">{{ pendingList.length }}</span>
         · 已完成 <span class="font-semibold text-text">{{ doneList.length }}</span>
-        · 推荐 <span class="font-semibold text-text">{{ recommendList.length }}</span>
+        · <span v-if="canAuditAll">全部 <span class="font-semibold text-text">{{ allTickets.length }}</span></span>
+          <span v-else>推荐 <span class="font-semibold text-text">{{ recommendList.length }}</span></span>
       </div>
     </div>
 
@@ -310,16 +334,19 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
       </div>
     </section>
 
-    <!-- 推荐工单（折叠） -->
-    <section v-if="recommendList.length" class="mt-6">
+    <!-- 推荐工单（折叠）—— 审查员/管理员视角显示"全部工单"且可直接查看时间线 -->
+    <section v-if="canAuditAll ? allTickets.length : recommendList.length" class="mt-6">
       <button class="w-full h-11 px-4 rounded-card border border-border bg-card hover:bg-bg flex items-center gap-2 transition"
               @click="showRecommend = !showRecommend">
         <Users class="w-4 h-4 text-ai" />
-        <span class="text-sm font-semibold">推荐工单（{{ recommendList.length }}）</span>
+        <span class="text-sm font-semibold">
+          {{ canAuditAll ? '全部工单' : '推荐工单' }}（{{ canAuditAll ? allTickets.length : recommendList.length }}）
+        </span>
+        <span v-if="canAuditAll" class="text-[11px] text-text-2 ml-1">点击可查看任意工单时间线</span>
         <ChevronDown class="ml-auto w-4 h-4 text-text-2 transition-transform" :class="showRecommend ? 'rotate-180' : ''" />
       </button>
       <div v-if="showRecommend" class="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
-        <div v-for="it in recommendList" :key="it.id" class="industrial-card p-5 border-dashed">
+        <div v-for="it in (canAuditAll ? allTickets : recommendList)" :key="it.id" class="industrial-card p-5 border-dashed">
           <div class="flex items-start gap-3">
             <div class="w-10 h-10 rounded-card flex-shrink-0 bg-ai/10 text-ai flex items-center justify-center">
               <ListChecks class="w-5 h-5" />
@@ -328,13 +355,25 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
               <div class="text-sm font-semibold leading-snug">{{ it.name }}</div>
               <div class="text-[11px] text-text-2 mt-1 mono">{{ it.deviceModel }} · 共 {{ it.totalSteps }} 步</div>
               <div v-if="it.creator" class="text-[11px] text-text-2 mt-0.5">创建人 · {{ it.creator }}</div>
+              <div v-if="canAuditAll && it.added"
+                   class="text-[11px] text-success mt-0.5 inline-flex items-center gap-0.5">
+                <CheckCircle2 class="w-3 h-3" /> 已在我的工单
+              </div>
             </div>
           </div>
-          <button @click="onAdd(it)" :disabled="adding[it.ticketId]"
-                  class="mt-3 w-full h-9 rounded-btn border border-accent/40 text-accent text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-accent/10 transition disabled:opacity-60">
-            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 animate-spin" />
-            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
-          </button>
+          <div class="mt-3 flex items-center gap-2">
+            <!-- 审查员/管理员：查看时间线 -->
+            <button v-if="canAuditAll" @click="openTimeline(it)"
+                    class="flex-1 h-9 rounded-btn border border-border text-text-2 text-sm font-medium flex items-center justify-center gap-1.5 hover:border-accent hover:text-accent transition">
+              <Clock class="w-4 h-4" /> 查看时间线
+            </button>
+            <!-- 添加到我的工单（仅未加过时显示） -->
+            <button v-if="!it.added" @click="onAdd(it)" :disabled="adding[it.ticketId]"
+                    class="flex-1 h-9 rounded-btn border border-accent/40 text-accent text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-accent/10 transition disabled:opacity-60">
+              <Loader v-if="adding[it.ticketId]" class="w-4 h-4 animate-spin" />
+              <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -346,7 +385,9 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
       <div class="flex-1 min-w-0">
         <h1 class="text-lg font-bold text-primary">作业指引</h1>
         <div class="text-xs text-text-2 mt-1">
-          待办 {{ pendingList.length }} · 已完成 {{ doneList.length }} · 推荐 {{ recommendList.length }}
+          待办 {{ pendingList.length }} · 已完成 {{ doneList.length }} ·
+          <span v-if="canAuditAll">全部 {{ allTickets.length }}</span>
+          <span v-else>推荐 {{ recommendList.length }}</span>
         </div>
       </div>
       <button @click="openCreate"
@@ -420,16 +461,18 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
       </ul>
     </div>
 
-    <!-- 推荐工单（折叠） -->
-    <div v-if="recommendList.length">
+    <!-- 推荐工单（折叠）—— 审查员/管理员视角显示"全部工单" -->
+    <div v-if="canAuditAll ? allTickets.length : recommendList.length">
       <button class="w-full h-11 px-3 rounded-card border border-border bg-card flex items-center gap-2"
               @click="showRecommend = !showRecommend">
         <Users class="w-4 h-4 text-ai" />
-        <span class="text-sm font-semibold">推荐工单（{{ recommendList.length }}）</span>
+        <span class="text-sm font-semibold">
+          {{ canAuditAll ? '全部工单' : '推荐工单' }}（{{ canAuditAll ? allTickets.length : recommendList.length }}）
+        </span>
         <ChevronDown class="ml-auto w-4 h-4 text-text-2 transition-transform" :class="showRecommend ? 'rotate-180' : ''" />
       </button>
       <ul v-if="showRecommend" class="space-y-2 mt-2">
-        <li v-for="it in recommendList" :key="it.id" class="industrial-card p-3 border-dashed">
+        <li v-for="it in (canAuditAll ? allTickets : recommendList)" :key="it.id" class="industrial-card p-3 border-dashed">
           <div class="flex items-start gap-2">
             <div class="w-8 h-8 rounded-card flex-shrink-0 bg-ai/10 text-ai flex items-center justify-center">
               <ListChecks class="w-4 h-4" />
@@ -437,13 +480,23 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium">{{ it.name }}</div>
               <div class="text-[11px] text-text-2 mt-0.5 mono">{{ it.deviceModel }} · {{ it.creator || '其他用户' }}</div>
+              <div v-if="canAuditAll && it.added"
+                   class="text-[11px] text-success mt-0.5 inline-flex items-center gap-0.5">
+                <CheckCircle2 class="w-3 h-3" /> 已在我的工单
+              </div>
             </div>
           </div>
-          <button @click="onAdd(it)" :disabled="adding[it.ticketId]"
-                  class="mt-2 w-full h-9 rounded-btn border border-accent/40 text-accent text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60">
-            <Loader v-if="adding[it.ticketId]" class="w-4 h-4 animate-spin" />
-            <UserPlus v-else class="w-4 h-4" /> 添加到我的工单
-          </button>
+          <div class="mt-2 flex gap-2">
+            <button v-if="canAuditAll" @click="openTimeline(it)"
+                    class="flex-1 h-9 rounded-btn border border-border text-text-2 text-sm font-medium flex items-center justify-center gap-1.5">
+              <Clock class="w-4 h-4" /> 时间线
+            </button>
+            <button v-if="!it.added" @click="onAdd(it)" :disabled="adding[it.ticketId]"
+                    class="flex-1 h-9 rounded-btn border border-accent/40 text-accent text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60">
+              <Loader v-if="adding[it.ticketId]" class="w-4 h-4 animate-spin" />
+              <UserPlus v-else class="w-4 h-4" /> 添加
+            </button>
+          </div>
         </li>
       </ul>
     </div>
@@ -560,4 +613,10 @@ const pct = (it: WorkItem) => it.totalSteps ? Math.round((it.doneSteps / it.tota
       </footer>
     </div>
   </div>
+
+  <!-- ==================== 工单时间线（审查员/管理员可在列表直接查看） ==================== -->
+  <TicketTimeline v-if="timelineTarget"
+                  :ticket-id="timelineTarget.ticketId"
+                  :open="!!timelineTarget"
+                  @close="timelineTarget = null" />
 </template>

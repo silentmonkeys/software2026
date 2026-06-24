@@ -45,11 +45,11 @@ export interface SearchResult {
   recommendedTickets: RecommendedTicket[]
 }
 
-/** 后端 /api/chat/query 返回结构 */
+/** 后端 /api/chat/query 返回结构（FIX7 第 1 项：sources 含 doc_id / index） */
 interface BackendChatResp {
   answer: string
   image_observation: string
-  sources: { id?: string; doc_id?: string | number; title: string; snippet: string; page?: number; score?: number }[]
+  sources: { id?: string; doc_id?: string | number; index?: number; title: string; snippet: string; page?: number; score?: number }[]
   recommended_tickets?: RecommendedTicket[]
 }
 

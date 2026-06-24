@@ -5,8 +5,9 @@ import { useUserStore } from '@/stores/user'
 import { useTheme } from '@/composables/useTheme'
 import { ROLE_LABEL, getVisibleMenuItems } from '@/utils/permission'
 import {
-  Search, ListChecks, BookOpen, ShieldCheck, Network, Cog, History, User,
-  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Sparkles, Database, FileCheck2
+  Search, ListChecks, BookOpen, ShieldCheck, Network, History, User,
+  Moon, Sun, LogOut, Type, Minus, Plus, RotateCcw, HardHat, Sparkles,
+  FileCheck2, Library, Users
 } from 'lucide-vue-next'
 
 defineProps<{ open: boolean }>()
@@ -22,17 +23,19 @@ const {
   fontSizeLabel
 } = useTheme()
 
+// 图标按 MENU_ITEMS 当前真实路径配置；旧映射（/audit、/audit/knowledge、/admin/knowledge）
+// 已不在菜单里，移除以免误以为生效
 const ICONS: Record<string, any> = {
-  '/search':           Search,
-  '/workflow':         ListChecks,
-  '/knowledge/upload': BookOpen,
-  '/audit/knowledge':  FileCheck2,
-  '/audit':            ShieldCheck,
-  '/admin/knowledge':  Database,
-  '/kg':               Network,
-  '/history':          History,
-  '/profile':          User,
-  '/admin':            Cog
+  '/search':            Search,        // 多模态检索
+  '/workflow':          ListChecks,    // 作业指引
+  '/kg':                Network,       // 知识图谱
+  '/knowledge/browse':  Library,       // 知识库
+  '/knowledge/upload':  BookOpen,      // 知识上传
+  '/auditor/review':    ShieldCheck,   // 待审核
+  '/auditor/knowledge': FileCheck2,    // 知识库管理
+  '/admin/user':        Users,         // 用户管理
+  '/history':           History,       // 历史与收藏
+  '/profile':           User,          // 个人中心
 }
 
 const items = computed(() =>

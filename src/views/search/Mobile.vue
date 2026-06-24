@@ -124,8 +124,6 @@ const onSend = async () => {
   }
 }
 
-const onVoice = (t: string) => { text.value = t; onSend() }
-
 const clearHistory = async () => {
   try {
     await showConfirmDialog({ title: '清空当前对话?', message: '清空后将开始新会话，已保存的历史不受影响。' })
@@ -135,6 +133,9 @@ const clearHistory = async () => {
 }
 
 const toggleStar = () => { if (sessionId.value) chat.toggleStar(sessionId.value) }
+
+// FIX7 续：跳转原文时剥掉 snippet 前后的省略号，便于 Preview 页文本搜索定位
+const stripDots = (s: string) => (s || '').replace(/^…+|…+$/g, '').trim()
 
 watch(() => route.query.session, (v) => {
   if (typeof v === 'string' && chat.getSession(v)) sessionId.value = v
@@ -172,16 +173,23 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-full flex flex-col bg-bg">
-    <!-- 初始空态（FIX3 第 6 项：去掉示例提示） -->
-    <div v-if="!hasMessages" class="flex-1 overflow-auto px-4 flex flex-col items-center justify-center">
-      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-white flex items-center justify-center mb-3">
-        <Sparkles class="w-8 h-8" />
+    <!--
+      用一个稳定的 flex-1 容器包住"空态 / 会话"两种状态，避免 hasMessages 切换时
+      Vue diff 把 MobileInputBar 当作位置变化的兄弟节点而触发 unmount/remount
+      （后果是隐藏 <input type=file> 在某些移动 WebView 里 .click() 失效，
+       打开一次对话后无法再次添加附件）。
+    -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- 初始空态（FIX3 第 6 项：去掉示例提示） -->
+      <div v-if="!hasMessages" class="flex-1 overflow-auto px-4 flex flex-col items-center justify-center">
+        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-white flex items-center justify-center mb-3">
+          <Sparkles class="w-8 h-8" />
+        </div>
+        <h1 class="text-xl font-bold text-primary">设备检修智能检索</h1>
+        <div class="mt-1 text-xs text-text-2 text-center max-w-xs">描述故障或拍照上传，AI 即刻给出检修建议</div>
       </div>
-      <h1 class="text-xl font-bold text-primary">设备检修智能检索</h1>
-      <div class="mt-1 text-xs text-text-2 text-center max-w-xs">描述故障或拍照上传，AI 即刻给出检修建议</div>
-    </div>
 
-    <template v-else>
+      <template v-else>
       <header class="flex-shrink-0 px-4 py-2.5 border-b border-border bg-card flex items-center gap-2 safe-top">
         <Sparkles class="w-4 h-4 text-accent" />
         <span class="text-sm font-semibold flex-1 truncate">{{ session?.title || '智能检索' }}</span>
@@ -269,7 +277,19 @@ onBeforeUnmount(() => {
                           <span class="mono text-text-2">[{{ hi + 1 }}]</span>
                           <div class="flex-1 min-w-0">
                             <div class="font-medium text-text">{{ h.title }}</div>
-                            <div v-if="h.snippet" class="mt-0.5 text-text-2 leading-relaxed line-clamp-2">{{ h.snippet }}</div>
+                            <div v-if="h.snippet" class="mt-0.5 ref-snippet leading-relaxed line-clamp-2">{{ h.snippet }}</div>
+                            <router-link v-if="h.docId"
+                                         :to="{
+                                           path: `/kb/preview/${h.docId}`,
+                                           query: {
+                                             chunk: h.id,
+                                             hl: stripDots(h.snippet),
+                                             page: h.page || undefined
+                                           }
+                                         }"
+                                         class="ref-link mt-1 inline-block text-[11px]">
+                              查看原文 →
+                            </router-link>
                           </div>
                         </div>
                       </li>
@@ -282,9 +302,10 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </template>
+    </div>
 
     <MobileInputBar v-model="text" v-model:images="images"
-                    @send="onSend" @voice="onVoice" @pick="onPickFiles" />
+                    @send="onSend" @pick="onPickFiles" />
   </div>
 </template>
 
@@ -294,5 +315,17 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* FIX7 第 1 项：引用面板样式 */
+.ref-snippet {
+  font-size: 11px;
+  color: #666;
+}
+.ref-link {
+  color: #00B7C2;
+  text-decoration: underline;
+}
+.ref-link:active {
+  color: #009aa3;
 }
 </style>

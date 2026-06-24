@@ -69,6 +69,10 @@ export interface TicketEvent {
   at: string | null
 }
 export interface TimelineResult {
+  /** FIX7 续：后端明示当前视角 —— audit=审查员/管理员（grouped），self=员工（events） */
+  viewer?: 'audit' | 'self'
+  creator?: string | null
+  creatorId?: number | null
   events?: TicketEvent[]
   grouped?: { userId: number; user: string | null; events: TicketEvent[] }[]
 }

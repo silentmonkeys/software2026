@@ -20,17 +20,28 @@ export interface MenuItem {
   highlight?: boolean
 }
 
-/** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项 */
+/** 全局菜单清单,移动端与 PC 端通过该清单 + 当前角色派生可见项
+ *  排序按功能类别（不显示分类标签）：
+ *    1) 日常使用：检索 / 作业指引 / 知识图谱
+ *    2) 知识库：浏览 / 上传 / 待审核 / 知识库管理
+ *    3) 系统管理：用户管理
+ *    4) 个人：历史与收藏 / 个人中心
+ */
 export const MENU_ITEMS: MenuItem[] = [
-  { path: '/search',            label: '多模态检索', highlight: true },
+  // —— 日常使用 ——
+  { path: '/search',            label: '知识检索', highlight: true },
   { path: '/workflow',          label: '作业指引' },
+  { path: '/kg',                label: '知识图谱' },
+  // —— 知识库 ——
   // FIX6 第 1 项：显式声明知识库浏览对一线员工、审查员、管理员均可见
   { path: '/knowledge/browse',  label: '知识库',     roles: ['frontline', 'auditor', 'admin'] },
-  { path: '/knowledge/upload',  label: '经验分享',   roles: ['frontline'] },
+  // FIX7 第 3 项：经验分享 / 知识上传对前端/审查员/管理员均开放，后端按角色决定是否入审核队列
+  { path: '/knowledge/upload',  label: '知识上传',   roles: ['frontline', 'auditor', 'admin'] },
   { path: '/auditor/review',    label: '待审核',     roles: ['auditor', 'admin'] },
   { path: '/auditor/knowledge', label: '知识库管理', roles: ['auditor', 'admin'] },
+  // —— 系统管理 ——
   { path: '/admin/user',        label: '用户管理',   roles: ['admin'] },
-  { path: '/kg',                label: '知识图谱' },
+  // —— 个人 ——
   { path: '/history',           label: '历史与收藏' },
   { path: '/profile',           label: '个人中心' },
 ]
