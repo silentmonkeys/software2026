@@ -53,17 +53,19 @@ const DOC_FILTERS: Array<{ k: 'all' | DocType; l: string }> = [
 const filtered = computed(() => {
   if (!graph.value) return []
   const ENTITY_SET: KGType[] = ['device', 'part', 'fault', 'method']
-  const DOC_SET: KGType[] = ['case', 'manual']
   return graph.value.nodes.filter(n => {
-    const entityOk = (() => {
-      if (n.type === 'case' || n.type === 'manual') return true
-      if (filterEntity.value === 'all') return ENTITY_SET.includes(n.type)
-      return n.type === filterEntity.value
-    })()
+    const entityOk = ENTITY_SET.includes(n.type) && (
+      filterEntity.value === 'all' || n.type === filterEntity.value
+    )
+    // FIX7 续：文档归属过滤——节点 type 没有 case/manual，归属来自 source_docs[].doc_type
     const docOk = (() => {
-      if (n.type !== 'case' && n.type !== 'manual') return true
-      if (filterDocType.value === 'all') return DOC_SET.includes(n.type)
-      return n.type === filterDocType.value
+      if (filterDocType.value === 'all') return true
+      const srcs = n.source_docs || []
+      if (!srcs.length) return false
+      return srcs.some(sd => {
+        const isCase = (sd.doc_type || '').toLowerCase() === 'experience'
+        return filterDocType.value === 'case' ? isCase : !isCase
+      })
     })()
     return entityOk && docOk && (!q.value || n.label.includes(q.value))
   })

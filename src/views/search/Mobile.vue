@@ -136,6 +136,9 @@ const clearHistory = async () => {
 
 const toggleStar = () => { if (sessionId.value) chat.toggleStar(sessionId.value) }
 
+// FIX7 续：跳转原文时剥掉 snippet 前后的省略号，便于 Preview 页文本搜索定位
+const stripDots = (s: string) => (s || '').replace(/^…+|…+$/g, '').trim()
+
 watch(() => route.query.session, (v) => {
   if (typeof v === 'string' && chat.getSession(v)) sessionId.value = v
 }, { immediate: true })
@@ -269,7 +272,19 @@ onBeforeUnmount(() => {
                           <span class="mono text-text-2">[{{ hi + 1 }}]</span>
                           <div class="flex-1 min-w-0">
                             <div class="font-medium text-text">{{ h.title }}</div>
-                            <div v-if="h.snippet" class="mt-0.5 text-text-2 leading-relaxed line-clamp-2">{{ h.snippet }}</div>
+                            <div v-if="h.snippet" class="mt-0.5 ref-snippet leading-relaxed line-clamp-2">{{ h.snippet }}</div>
+                            <router-link v-if="h.docId"
+                                         :to="{
+                                           path: `/kb/preview/${h.docId}`,
+                                           query: {
+                                             chunk: h.id,
+                                             hl: stripDots(h.snippet),
+                                             page: h.page || undefined
+                                           }
+                                         }"
+                                         class="ref-link mt-1 inline-block text-[11px]">
+                              查看原文 →
+                            </router-link>
                           </div>
                         </div>
                       </li>
@@ -294,5 +309,17 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* FIX7 第 1 项：引用面板样式 */
+.ref-snippet {
+  font-size: 11px;
+  color: #666;
+}
+.ref-link {
+  color: #00B7C2;
+  text-decoration: underline;
+}
+.ref-link:active {
+  color: #009aa3;
 }
 </style>

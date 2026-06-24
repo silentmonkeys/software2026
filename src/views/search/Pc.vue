@@ -169,6 +169,9 @@ const clearHistory = async () => {
 
 const toggleStar = () => { if (sessionId.value) chat.toggleStar(sessionId.value) }
 
+// FIX7 续：跳转原文时把后端 snippet 的前后省略号剥掉，便于 Preview 页全文搜索定位
+const stripDots = (s: string) => (s || '').replace(/^…+|…+$/g, '').trim()
+
 // 监听 query.session 用于"打开历史"
 watch(() => route.query.session, (v) => {
   if (typeof v === 'string' && chat.getSession(v)) {
@@ -369,7 +372,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
 
-                    <!-- 来源引用（与本条消息强绑定） -->
+                    <!-- 来源引用（FIX7 第 1 项：与本条消息强绑定 + 跳转原文） -->
                     <div v-if="m.sources && m.sources.length" class="mt-4 pt-3 border-t border-border">
                       <button @click="expandedSources[m.id] = !expandedSources[m.id]"
                               class="text-xs text-text-2 hover:text-accent flex items-center gap-1">
@@ -385,8 +388,22 @@ onBeforeUnmount(() => {
                             <span class="mono text-text-2">[{{ hi + 1 }}]</span>
                             <div class="flex-1 min-w-0">
                               <div class="font-medium text-text">{{ h.title }}</div>
-                              <div v-if="h.snippet" class="mt-0.5 text-text-2 leading-relaxed line-clamp-3">{{ h.snippet }}</div>
-                              <div v-if="h.page" class="mt-0.5 text-text-2 mono text-[10px]">页码 {{ h.page }}</div>
+                              <div v-if="h.snippet" class="mt-0.5 ref-snippet leading-relaxed line-clamp-3">{{ h.snippet }}</div>
+                              <div class="mt-1 flex items-center gap-3 flex-wrap">
+                                <span v-if="h.page" class="mono text-text-2 text-[10px]">页码 {{ h.page }}</span>
+                                <router-link v-if="h.docId"
+                                             :to="{
+                                               path: `/kb/preview/${h.docId}`,
+                                               query: {
+                                                 chunk: h.id,
+                                                 hl: stripDots(h.snippet),
+                                                 page: h.page || undefined
+                                               }
+                                             }"
+                                             class="ref-link text-[11px]">
+                                  查看原文 →
+                                </router-link>
+                              </div>
                             </div>
                             <span v-if="typeof h.similarity === 'number'" class="mono text-text-2 flex-shrink-0">{{ Math.round(h.similarity * 100) }}%</span>
                           </div>
@@ -448,6 +465,18 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* FIX7 第 1 项：引用面板样式 */
+.ref-snippet {
+  font-size: 12px;
+  color: #666;
+}
+.ref-link {
+  color: #00B7C2;
+  text-decoration: underline;
+}
+.ref-link:hover {
+  color: #009aa3;
 }
 </style>
 

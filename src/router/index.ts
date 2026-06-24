@@ -22,8 +22,8 @@ const routes: RouteRecordRaw[] = [
   // 知识库浏览（FIX6 第 1 项：三种角色均可只读浏览）
   { path: '/knowledge/browse', component: () => import('@/views/knowledge/Browse.vue'),
     meta: { layout: 'app', title: '知识库', roles: ['frontline', 'auditor', 'admin'] } },
-  // 员工经验分享上传
-  { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '经验分享', roles: ['frontline'] } },
+  // 员工经验分享上传（FIX7 第 3 项：前端/审查员/管理员均可进入，提交后按角色决定是否走审核）
+  { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '知识上传', roles: ['frontline', 'auditor', 'admin'] } },
   { path: '/kb/preview/:docId', component: () => import('@/views/knowledge/Preview.vue'),
     meta: { layout: 'app', title: '文档预览', roles: ['frontline', 'auditor', 'admin'] } },
 

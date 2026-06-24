@@ -4,13 +4,19 @@
  * - 文本类（txt/md/experience）：getDoc 取正文 + markdown 渲染
  * - PDF 等二进制：fetchDocBlobUrl 取带 token 的 Blob URL，注入 <iframe> 预览
  * - 导出 PDF / Markdown（exportDoc）
+ *
+ * FIX7 续：从 AI 回答的引用面板跳过来时，支持 ?chunk=&hl=&page= 三种锚点：
+ *   - 文本类：渲染完 markdown 后在 .md-body 内按 hl 找文本节点，加 <mark> 并滚动；
+ *     找不到完整 hl 时按长度逐级折半重试，最大限度命中片段开头
+ *   - PDF：iframe src 拼 #page=&search= 让浏览器 PDF viewer 跳页 + 查找
+ *   - DOCX：iframe 浏览器原生不支持锚点搜索，给一行 toast 提示
  */
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getDoc, exportDoc, fetchDocBlobUrl, type KbDocDetail, STATUS_LABEL } from '@/api/kb'
 import { renderMarkdown } from '@/utils/markdown'
 import { showToast, showFailToast } from 'vant'
-import { ChevronLeft, FileText, Loader, AlertTriangle, Download, FileDown } from 'lucide-vue-next'
+import { ChevronLeft, FileText, Loader, AlertTriangle, Download, FileDown, Crosshair } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,6 +28,15 @@ const error = ref('')
 const exporting = ref<'pdf' | 'md' | ''>('')
 const blobUrl = ref<string>('')      // FIX6 第 2 项：PDF Blob URL
 const blobErr = ref('')
+
+// FIX7 续：跳转锚点
+const highlight = computed(() => (route.query.hl as string) || '')
+const targetPage = computed(() => {
+  const p = Number(route.query.page)
+  return Number.isFinite(p) && p > 0 ? p : 0
+})
+const mdBodyRef = ref<HTMLDivElement>()
+const locateHint = ref('')   // 顶部小条：「已定位到引用片段」/「未在文本中找到引用片段」
 
 const STATUS_CLS: Record<string, string> = {
   pending:    'bg-warning/10 text-warning border-warning/30',
@@ -37,12 +52,93 @@ const isBinary = computed(() => {
   return t === 'pdf' || t === 'docx'
 })
 
+/**
+ * FIX7 续：PDF iframe src 拼锚点。
+ * Chrome / Edge 内置 viewer 识别 #page=N&search=... 跳页 + 自动查找命中。
+ */
+const iframeSrc = computed(() => {
+  if (!blobUrl.value) return ''
+  const t = (doc.value?.type || '').toLowerCase()
+  if (t !== 'pdf') return blobUrl.value
+  const parts: string[] = []
+  if (targetPage.value) parts.push(`page=${targetPage.value}`)
+  if (highlight.value) parts.push(`search=${encodeURIComponent(highlight.value.slice(0, 80))}`)
+  return parts.length ? `${blobUrl.value}#${parts.join('&')}` : blobUrl.value
+})
+
 const loadBlob = async () => {
   if (!doc.value) return
   try {
     blobUrl.value = await fetchDocBlobUrl(doc.value.id)
   } catch {
     blobErr.value = '原始文件加载失败，请稍后重试或联系管理员'
+  }
+}
+
+/**
+ * FIX7 续：在 markdown 渲染结果里查找并高亮文本节点。
+ * 用 TreeWalker 扫描文本节点，找到包含目标子串的首个节点；
+ * 命中后用 Range 拆分出来包一个 <mark>，再 scrollIntoView。
+ * 找不到完整串就把 needle 折半（保留前缀）再试，最少 8 字。
+ */
+const locateInMarkdown = () => {
+  if (!mdBodyRef.value || !highlight.value) return
+  const root = mdBodyRef.value
+  let needle = highlight.value.trim()
+  // 优先用前 60 字（snippet 的相关段开头一般就是命中处）；命中失败时逐级折半
+  const tryLens = [60, 40, 24, 12, 8].filter(n => n <= needle.length).concat(needle.length)
+  const seen = new Set<number>()
+  for (const len of tryLens) {
+    if (seen.has(len)) continue
+    seen.add(len)
+    const probe = needle.slice(0, len)
+    if (probe.length < 4) continue
+    const hit = findAndMark(root, probe)
+    if (hit) {
+      locateHint.value = '已定位到引用片段'
+      hit.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+  }
+  locateHint.value = '未在文本中找到引用片段，已显示文档开头'
+  showToast({ message: locateHint.value, position: 'top' })
+}
+
+const findAndMark = (root: HTMLElement, probe: string): HTMLElement | null => {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) =>
+      (n.textContent || '').includes(probe)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+  })
+  const node = walker.nextNode() as Text | null
+  if (!node || !node.textContent) return null
+  const idx = node.textContent.indexOf(probe)
+  if (idx < 0) return null
+  // 把命中片段从 Text 节点切出来，包进 <mark>
+  const range = document.createRange()
+  range.setStart(node, idx)
+  range.setEnd(node, idx + probe.length)
+  const mark = document.createElement('mark')
+  mark.className = 'kb-hl-mark'
+  try {
+    range.surroundContents(mark)
+  } catch {
+    return null  // 跨节点时 surroundContents 会抛
+  }
+  return mark
+}
+
+const onIframeLoad = () => {
+  if (!highlight.value) return
+  const t = (doc.value?.type || '').toLowerCase()
+  if (t === 'docx') {
+    // docx iframe 没有标准搜索协议；告知用户使用浏览器查找
+    locateHint.value = `请在浏览器内用 Ctrl/Cmd+F 搜索：${highlight.value.slice(0, 30)}`
+  } else if (t === 'pdf') {
+    locateHint.value = targetPage.value
+      ? `已跳至第 ${targetPage.value} 页 · 在 PDF 内查找：${highlight.value.slice(0, 30)}`
+      : `已在 PDF 内查找：${highlight.value.slice(0, 30)}`
   }
 }
 
@@ -56,6 +152,26 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // 文本类：等 DOM 渲染完成后再定位
+  if (doc.value && !isBinary.value && highlight.value) {
+    await nextTick()
+    locateInMarkdown()
+  }
+})
+
+// 同页内换 query 也要重新定位（同 docId 不同 hl 时 Vue Router 不会重建组件）
+watch(() => route.query.hl, async (v) => {
+  if (!v || !doc.value || isBinary.value) return
+  // 清掉旧高亮
+  mdBodyRef.value?.querySelectorAll('mark.kb-hl-mark').forEach(el => {
+    const parent = el.parentNode
+    if (!parent) return
+    while (el.firstChild) parent.insertBefore(el.firstChild, el)
+    parent.removeChild(el)
+    parent.normalize()
+  })
+  await nextTick()
+  locateInMarkdown()
 })
 
 onBeforeUnmount(() => {
@@ -101,6 +217,12 @@ const doExport = async (format: 'pdf' | 'md') => {
       </template>
     </header>
 
+    <!-- FIX7 续：定位提示条（从引用面板跳过来时） -->
+    <div v-if="locateHint" class="flex-shrink-0 px-4 py-2 bg-accent/10 border-b border-accent/30 text-xs text-accent flex items-center gap-2">
+      <Crosshair class="w-3.5 h-3.5 flex-shrink-0" />
+      <span class="truncate">{{ locateHint }}</span>
+    </div>
+
     <div class="flex-1 overflow-auto p-6 max-w-3xl mx-auto w-full space-y-4">
       <div v-if="loading" class="industrial-card p-12 text-center text-text-2">
         <Loader class="w-6 h-6 mx-auto animate-spin text-accent" />
@@ -134,10 +256,10 @@ const doExport = async (format: 'pdf' | 'md') => {
             <Loader class="w-6 h-6 mx-auto animate-spin text-accent" />
             <div class="mt-2 text-sm">正在加载原始文件…</div>
           </div>
-          <iframe v-else :src="blobUrl" class="w-full h-full border-0" />
+          <iframe v-else :src="iframeSrc" class="w-full h-full border-0" @load="onIframeLoad" />
         </div>
         <div v-else class="industrial-card p-5">
-          <div class="md-body" v-html="renderMarkdown(doc.content || '（暂无正文内容）')"></div>
+          <div ref="mdBodyRef" class="md-body" v-html="renderMarkdown(doc.content || '（暂无正文内容）')"></div>
         </div>
       </template>
       <div v-else class="industrial-card p-10 text-center text-text-2">
@@ -147,3 +269,19 @@ const doExport = async (format: 'pdf' | 'md') => {
     </div>
   </div>
 </template>
+
+<style>
+/* FIX7 续：引用定位高亮 —— 浅黄底 + 闪动一次提示用户视线 */
+.md-body mark.kb-hl-mark {
+  background: #FFF3B0;
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+  animation: kb-hl-pulse 1.6s ease-out 1;
+}
+@keyframes kb-hl-pulse {
+  0%   { background: #FFE066; box-shadow: 0 0 0 4px rgba(255, 224, 102, 0.6); }
+  60%  { background: #FFF3B0; box-shadow: 0 0 0 0 rgba(255, 224, 102, 0); }
+  100% { background: #FFF3B0; }
+}
+</style>
