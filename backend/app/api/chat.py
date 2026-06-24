@@ -52,13 +52,17 @@ async def query(
     user: User = Depends(get_current_user),
 ):
     img_desc = ""
-    if image is not None:
+    if image is not None and image.filename:
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-        ext = image.filename.split(".")[-1]
+        ext = image.filename.rsplit(".", 1)[-1] if "." in image.filename else "jpg"
         local = os.path.join(settings.UPLOAD_DIR, f"q_{uuid.uuid4().hex}.{ext}")
+        data = await image.read()
         with open(local, "wb") as f:
-            shutil.copyfileobj(image.file, f)
-        img_desc = vl_describe(f"file://{os.path.abspath(local)}")
+            f.write(data)
+        try:
+            img_desc = vl_describe(f"file://{os.path.abspath(local)}")
+        except Exception as e:
+            img_desc = f"（图片分析失败：{e}）"
 
     answer, hits = rag_answer(question, img_desc)
     log = QALog(question=question, answer=answer, sources=[h["metadata"] for h in hits], user_id=user.id)
