@@ -10,14 +10,14 @@ const routes: RouteRecordRaw[] = [
 
   // 检索
   { path: '/search',    component: () => import('@/views/search/index.vue'),    meta: { layout: 'app', title: '多模态检索' } },
-  { path: '/search/:id',component: () => import('@/views/search/Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
+  { path: '/search/:id',component: () => import('@/views/search/Detail.vue'),   meta: { layout: 'app', title: '检索详情', noKeep: true } },
 
   // 历史详情
-  { path: '/history/:id', component: () => import('@/views/history/Detail.vue'), meta: { layout: 'app', title: '历史详情' } },
+  { path: '/history/:id', component: () => import('@/views/history/Detail.vue'), meta: { layout: 'app', title: '历史详情', noKeep: true } },
 
   // 工单 / 作业指引
   { path: '/workflow',  component: () => import('@/views/workflow/index.vue'),  meta: { layout: 'app', title: '作业指引' } },
-  { path: '/workflow/:id', component: () => import('@/views/workflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情' } },
+  { path: '/workflow/:id', component: () => import('@/views/workflow/Detail.vue'), meta: { layout: 'app', title: '作业指引详情', noKeep: true } },
 
   // 知识库浏览（FIX6 第 1 项：三种角色均可只读浏览）
   { path: '/knowledge/browse', component: () => import('@/views/knowledge/Browse.vue'),
@@ -25,7 +25,7 @@ const routes: RouteRecordRaw[] = [
   // 员工经验分享上传
   { path: '/knowledge/upload', component: () => import('@/views/knowledge/Upload.vue'), meta: { layout: 'app', title: '经验分享', roles: ['frontline'] } },
   { path: '/kb/preview/:docId', component: () => import('@/views/knowledge/Preview.vue'),
-    meta: { layout: 'app', title: '文档预览', roles: ['frontline', 'auditor', 'admin'] } },
+    meta: { layout: 'app', title: '文档预览', roles: ['frontline', 'auditor', 'admin'], noKeep: true } },
 
   // 审查员：待审核列表
   { path: '/auditor/review', component: () => import('@/views/audit/KnowledgeReview.vue'),

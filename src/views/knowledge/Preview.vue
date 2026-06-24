@@ -46,6 +46,16 @@ const loadBlob = async () => {
   }
 }
 
+/**
+ * 跳转章节：query.page 指定 PDF 页码，会自动追加到 blob URL 的 hash 上，
+ * 浏览器内置 PDF 阅读器会跳到对应页（#page=N）
+ */
+const pageHash = computed(() => {
+  const p = Number(route.query.page || 0)
+  return p > 0 ? `#page=${p}` : ''
+})
+const iframeSrc = computed(() => blobUrl.value ? blobUrl.value + pageHash.value : '')
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -134,7 +144,7 @@ const doExport = async (format: 'pdf' | 'md') => {
             <Loader class="w-6 h-6 mx-auto animate-spin text-accent" />
             <div class="mt-2 text-sm">正在加载原始文件…</div>
           </div>
-          <iframe v-else :src="blobUrl" class="w-full h-full border-0" />
+          <iframe v-else :src="iframeSrc" class="w-full h-full border-0" />
         </div>
         <div v-else class="industrial-card p-5">
           <div class="md-body" v-html="renderMarkdown(doc.content || '（暂无正文内容）')"></div>

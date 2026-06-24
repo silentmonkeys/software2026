@@ -8,16 +8,18 @@
  * - 整条会话落 chatHistory store，按 userId 隔离（FIX3 第 2.1/3.3 项）
  */
 import { ref, nextTick, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { Sparkles, Paperclip, Send, X, Image as ImageIcon, BookOpen, Bot, User as UserIcon, ChevronDown, ChevronUp, Loader, Trash2, Star, ListChecks, UserPlus, Check, ExternalLink } from 'lucide-vue-next'
 import * as searchApi from '@/api/search'
 import { addTicketToMine } from '@/api/ticket'
 import { useSearchStore } from '@/stores/search'
 import { useChatHistoryStore, nanoid, type SourceItem } from '@/stores/chatHistory'
 import { renderMarkdown } from '@/utils/markdown'
+import { filesToBase64 } from '@/utils/file'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
+const router = useRouter()
 const store = useSearchStore()
 const chat = useChatHistoryStore()
 
@@ -89,7 +91,7 @@ const onSend = async () => {
     id: userMsgId,
     role: 'user',
     content: text,
-    images: imageList.value.map(i => i.url),
+    images: await filesToBase64(imageList.value.map(i => i.file)),
     createdAt: Date.now()
   })
 
@@ -380,11 +382,20 @@ onBeforeUnmount(() => {
                       </button>
                       <ol v-if="expandedSources[m.id]" class="mt-2 space-y-1.5">
                         <li v-for="(h, hi) in m.sources" :key="h.id"
-                            class="text-xs px-3 py-2 rounded-btn bg-bg border border-border">
+                            class="text-xs px-3 py-2 rounded-btn bg-bg border border-border hover:border-accent/40 transition group">
                           <div class="flex items-start gap-2">
                             <span class="mono text-text-2">[{{ hi + 1 }}]</span>
                             <div class="flex-1 min-w-0">
-                              <div class="font-medium text-text">{{ h.title }}</div>
+                              <div class="font-medium text-text flex items-center gap-1.5">
+                                <span class="truncate">{{ h.title }}</span>
+                                <!-- 跳转到对应文档 / 章节，参考豆包的引用跳转交互 -->
+                                <button v-if="h.docId"
+                                        @click="router.push(`/kb/preview/${h.docId}${h.page ? '?page=' + h.page : ''}`)"
+                                        class="opacity-0 group-hover:opacity-100 transition h-5 px-1.5 rounded text-[10px] flex items-center gap-0.5 text-accent hover:bg-accent/10 flex-shrink-0"
+                                        :title="'跳转到原文' + (h.page ? '第 ' + h.page + ' 页' : '')">
+                                  <ExternalLink class="w-3 h-3" />跳转章节
+                                </button>
+                              </div>
                               <div v-if="h.snippet" class="mt-0.5 text-text-2 leading-relaxed line-clamp-3">{{ h.snippet }}</div>
                               <div v-if="h.page" class="mt-0.5 text-text-2 mono text-[10px]">页码 {{ h.page }}</div>
                             </div>

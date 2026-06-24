@@ -7,7 +7,7 @@
  * - FIX6 第 6 项：审查员/管理员对节点 label/desc 做修正、删除节点或边
  * - FIX6 第 8 项：节点弹窗展示 source_docs 关联文档；侧栏支持按文档筛选
  */
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, onActivated, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getGraph, getChunk, updateNode, deleteNode, updateEdge, deleteEdge,
@@ -100,52 +100,62 @@ const renderChart = () => {
   const cats = (Object.keys(TYPE_META) as KGType[])
   const isLarge = filteredNodes.value.length > 200
 
-  const count = filteredNodes.value.length || 1
-  const radius = Math.max(180, Math.min(420, count * 6))
-  const nodes = filteredNodes.value.map((n, i) => {
-    const angle = (i / count) * Math.PI * 2
-    const jitter = ((i * 9301 + 49297) % 233280) / 233280 - 0.5
-    const r = radius * (0.85 + jitter * 0.2)
+  // 简洁优先：节点小一点，标签一直显示，hover 不弹任何东西
+  const nodes = filteredNodes.value.map((n) => {
+    const baseSize = 18 + Math.min(n.weight * 1.0, 12)
+    const truncLabel = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
     return {
       id: n.id,
       name: n.label,
       value: n.weight,
-      x: Math.cos(angle) * r,
-      y: Math.sin(angle) * r,
-      symbolSize: 28 + Math.min(n.weight, 30),
+      symbolSize: baseSize,
       symbol: TYPE_META[n.type].symbol,
       category: cats.indexOf(n.type),
-      itemStyle: { color: TYPE_META[n.type].color, opacity: 1 },
-      label: { show: !isLarge, position: 'right', color: '#1F2937', fontSize: 12 },
+      itemStyle: {
+        color: TYPE_META[n.type].color,
+        opacity: 1,
+        borderColor: '#fff',
+        borderWidth: 1.5
+      },
+      label: {
+        show: !isLarge,
+        formatter: truncLabel,
+        position: 'bottom',
+        color: '#374151',
+        fontSize: 11,
+        distance: 4
+      },
       raw: n
     }
   })
   const links = visibleEdges.value.map(e => ({
-    source: e.source, target: e.target, value: e.rel,
-    label: { show: false, formatter: e.rel, fontSize: 10, color: '#6B7280' },
-    lineStyle: { color: '#C2C9D6', curveness: 0.1 },
+    source: e.source,
+    target: e.target,
+    value: e.rel,
+    label: { show: false },
+    lineStyle: {
+      color: '#E5E7EB',
+      curveness: 0,
+      opacity: 0.6,
+      width: 1
+    },
+    tooltip: { show: false },
+    // 边不做高亮动画，避免随便扫过都"闪一下"
+    emphasis: { disabled: true },
     raw: e
   }))
   inst.setOption({
-    animation: true,
-    animationDuration: 700,
-    animationEasing: 'elasticOut',
-    animationDurationUpdate: 350,
-    animationEasingUpdate: 'cubicOut',
-    tooltip: {
-      formatter: (p: any) => {
-        if (p.dataType === 'edge') return `<div style="font-weight:600">${p.data.value}</div>`
-        const n: KGNode = p.data.raw
-        const lines = [
-          `<div style="font-weight:600;margin-bottom:4px">${n.label}</div>`,
-          `<div style="color:#6B7280;font-size:12px">类型: ${TYPE_META[n.type].name}</div>`,
-          `<div style="color:#6B7280;font-size:12px">关联: ${n.weight} 条</div>`
-        ]
-        if (n.desc) lines.push(`<div style="margin-top:4px;font-size:12px">${n.desc}</div>`)
-        return lines.join('')
-      }
-    },
-    legend: [{ data: CATEGORIES.map(c => c.name), bottom: 12, icon: 'circle' }],
+    // 关键：关闭所有动画。force 也一次性稳定，避免节点抖动+边闪烁
+    animation: false,
+    // 全局 tooltip 直接关掉。详情走右侧面板，鼠标过去什么都不弹
+    tooltip: { show: false },
+    legend: [{
+      data: CATEGORIES.map(c => c.name),
+      bottom: 12,
+      icon: 'circle',
+      itemGap: 16,
+      textStyle: { fontSize: 12 }
+    }],
     series: [{
       type: 'graph',
       layout: 'force',
@@ -155,11 +165,28 @@ const renderChart = () => {
       roam: true,
       draggable: true,
       large: isLarge,
-      focusNodeAdjacency: true,
-      force: { repulsion: 220, edgeLength: 110, gravity: 0.08, layoutAnimation: false, initLayout: 'circular' },
-      emphasis: { focus: 'adjacency', lineStyle: { width: 3, color: '#F26B1F' }, label: { show: true, fontWeight: 700 } },
-      lineStyle: { width: 1.2, opacity: 0.7 },
-      animationDelay: (idx: number, params: any) => params?.dataType === 'edge' ? 200 + idx * 6 : idx * 8
+      // 关闭"鼠标移到节点上整张图调暗其他"的动效，这就是闪烁的元凶
+      focusNodeAdjacency: false,
+      force: {
+        repulsion: 500,
+        edgeLength: [100, 160],
+        gravity: 0.08,
+        friction: 0.6,
+        layoutAnimation: false,   // ← 直接一次性算好位置，不再持续抖
+        initLayout: 'circular'
+      },
+      // emphasis 只在"点击选中"后生效，hover 不触发
+      selectedMode: 'single',
+      select: {
+        itemStyle: { borderColor: '#F26B1F', borderWidth: 3 },
+        label: { fontWeight: 700, color: '#0B2545' }
+      },
+      // 关键：把 emphasis 改成"无视觉变化"，避免 hover 全图闪
+      emphasis: {
+        disabled: true
+      },
+      labelLayout: { hideOverlap: true },
+      lineStyle: { width: 1, opacity: 0.6, curveness: 0 }
     }]
   }, { notMerge: true })
 }
@@ -244,6 +271,11 @@ onMounted(async () => {
   await loadDocOptions()
   await reload()
   window.addEventListener('resize', () => inst?.resize())
+})
+
+// keep-alive 激活时（从其它路由切回）重新 resize，避免容器尺寸变化导致图谱错位
+onActivated(() => {
+  nextTick(() => inst?.resize())
 })
 
 watch([filterEntity, filterDocType, q], () => renderChart())

@@ -17,6 +17,11 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
+      },
+      // PDF/DOCX 文档解析后提取的图片存放在后端 uploads 目录，需代理到后端
+      '/uploads': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
       }
     }
   }

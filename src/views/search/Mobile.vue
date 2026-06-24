@@ -13,6 +13,7 @@ import { addTicketToMine } from '@/api/ticket'
 import { useSearchStore } from '@/stores/search'
 import { useChatHistoryStore, nanoid, type SourceItem } from '@/stores/chatHistory'
 import { renderMarkdown } from '@/utils/markdown'
+import { filesToBase64 } from '@/utils/file'
 import MobileInputBar from '@/components/mobile/MobileInputBar.vue'
 
 const route = useRoute()
@@ -74,7 +75,7 @@ const onSend = async () => {
   const userMsgId = nanoid()
   chat.appendMessage(sid, {
     id: userMsgId, role: 'user',
-    content: t, images: [...images.value], createdAt: Date.now()
+    content: t, images: await filesToBase64(imageFiles.value), createdAt: Date.now()
   })
 
   const aiId = nanoid()

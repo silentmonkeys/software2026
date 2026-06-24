@@ -17,10 +17,27 @@ const layout = computed(() => route.meta?.layout || 'blank')
   </template>
   <template v-else>
     <PCLayout v-if="isPC">
-      <router-view />
+      <!--
+        KeepAlive：缓存主业务列表页，切走再切回时输入/滚动/ECharts 实例都还在，
+        彻底解决"输完字切到别的菜单再回来，文字没了"的问题。
+        路由 meta.noKeep=true 的页面（详情类）通过 key=fullPath 强制重建。
+      -->
+      <router-view v-slot="{ Component, route: r }">
+        <keep-alive :max="10">
+          <component
+            :is="Component"
+            :key="r.meta?.noKeep ? r.fullPath : r.path.split('/').slice(0, 3).join('/')" />
+        </keep-alive>
+      </router-view>
     </PCLayout>
     <MobileLayout v-else>
-      <router-view />
+      <router-view v-slot="{ Component, route: r }">
+        <keep-alive :max="10">
+          <component
+            :is="Component"
+            :key="r.meta?.noKeep ? r.fullPath : r.path.split('/').slice(0, 3).join('/')" />
+        </keep-alive>
+      </router-view>
     </MobileLayout>
   </template>
 </template>
