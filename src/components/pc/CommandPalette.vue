@@ -10,7 +10,7 @@ const router = useRouter()
 const q = ref('')
 
 const items = [
-  { keyword: '多模态检索', path: '/search',            hint: '拍照 / 文字 / 设备型号检索' },
+  { keyword: '知识检索', path: '/search',            hint: '拍照 / 文字 / 设备型号检索' },
   { keyword: '作业指引',   path: '/workflow',          hint: '标准化检修流程 SOP' },
   { keyword: '知识上传',   path: '/knowledge/upload',  hint: '提交一线检修案例' },
   { keyword: '知识审查',   path: '/audit/knowledge',   hint: '审核员 / 管理员审批文档' },

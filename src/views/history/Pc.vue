@@ -127,7 +127,7 @@ const onClearAll = async () => {
       <MessageCircle class="w-10 h-10 mx-auto opacity-40" />
       <div class="mt-3 text-sm">{{ tab === 'starred' ? '暂无收藏' : '暂无对话历史' }}</div>
       <div class="mt-1 text-xs">前往
-        <button class="text-accent hover:underline" @click="router.push('/search')">多模态检索</button>
+        <button class="text-accent hover:underline" @click="router.push('/search')">知识检索</button>
         发起一次提问试试
       </div>
     </div>

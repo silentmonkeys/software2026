@@ -29,7 +29,7 @@ export interface MenuItem {
  */
 export const MENU_ITEMS: MenuItem[] = [
   // —— 日常使用 ——
-  { path: '/search',            label: '多模态检索', highlight: true },
+  { path: '/search',            label: '知识检索', highlight: true },
   { path: '/workflow',          label: '作业指引' },
   { path: '/kg',                label: '知识图谱' },
   // —— 知识库 ——

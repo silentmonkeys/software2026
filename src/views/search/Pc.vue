@@ -222,6 +222,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-full flex flex-col bg-bg">
+    <!--
+      共用的隐藏文件输入：放在 v-if/v-else 两个分支之外，避免会话开启后
+      空态分支被销毁、fileInput.value 变成 undefined，导致底部输入条的
+      Paperclip 按钮点击无效（用户反馈"打开对话后无法再上传新图片"）。
+    -->
+    <input ref="fileInput" type="file" accept="image/*" multiple class="hidden"
+           @change="e => onPickFiles((e.target as HTMLInputElement).files)" />
+
     <!-- ─────────────── 初始空态：居中大输入（FIX3 第 6 项：去掉示例提示） ─────────────── -->
     <div v-if="!hasMessages" class="flex-1 flex items-center justify-center px-6 overflow-auto">
       <div class="w-full max-w-[720px] py-12">
@@ -260,8 +268,6 @@ onBeforeUnmount(() => {
                     class="h-9 w-9 rounded-full hover:bg-bg flex items-center justify-center text-text-2 hover:text-accent" title="上传图片">
               <Paperclip class="w-4 h-4" />
             </button>
-            <input ref="fileInput" type="file" accept="image/*" multiple class="hidden"
-                   @change="e => onPickFiles((e.target as HTMLInputElement).files)" />
             <button @click="onSend" :disabled="sending || (!input.trim() && !imageList.length)"
                     class="h-9 px-4 rounded-btn bg-accent hover:bg-accent-2 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ai-shine">
               <Send class="w-4 h-4" />

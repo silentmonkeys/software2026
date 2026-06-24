@@ -124,8 +124,6 @@ const onSend = async () => {
   }
 }
 
-const onVoice = (t: string) => { text.value = t; onSend() }
-
 const clearHistory = async () => {
   try {
     await showConfirmDialog({ title: '清空当前对话?', message: '清空后将开始新会话，已保存的历史不受影响。' })
@@ -175,16 +173,23 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-full flex flex-col bg-bg">
-    <!-- 初始空态（FIX3 第 6 项：去掉示例提示） -->
-    <div v-if="!hasMessages" class="flex-1 overflow-auto px-4 flex flex-col items-center justify-center">
-      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-white flex items-center justify-center mb-3">
-        <Sparkles class="w-8 h-8" />
+    <!--
+      用一个稳定的 flex-1 容器包住"空态 / 会话"两种状态，避免 hasMessages 切换时
+      Vue diff 把 MobileInputBar 当作位置变化的兄弟节点而触发 unmount/remount
+      （后果是隐藏 <input type=file> 在某些移动 WebView 里 .click() 失效，
+       打开一次对话后无法再次添加附件）。
+    -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- 初始空态（FIX3 第 6 项：去掉示例提示） -->
+      <div v-if="!hasMessages" class="flex-1 overflow-auto px-4 flex flex-col items-center justify-center">
+        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-white flex items-center justify-center mb-3">
+          <Sparkles class="w-8 h-8" />
+        </div>
+        <h1 class="text-xl font-bold text-primary">设备检修智能检索</h1>
+        <div class="mt-1 text-xs text-text-2 text-center max-w-xs">描述故障或拍照上传，AI 即刻给出检修建议</div>
       </div>
-      <h1 class="text-xl font-bold text-primary">设备检修智能检索</h1>
-      <div class="mt-1 text-xs text-text-2 text-center max-w-xs">描述故障或拍照上传，AI 即刻给出检修建议</div>
-    </div>
 
-    <template v-else>
+      <template v-else>
       <header class="flex-shrink-0 px-4 py-2.5 border-b border-border bg-card flex items-center gap-2 safe-top">
         <Sparkles class="w-4 h-4 text-accent" />
         <span class="text-sm font-semibold flex-1 truncate">{{ session?.title || '智能检索' }}</span>
@@ -297,9 +302,10 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </template>
+    </div>
 
     <MobileInputBar v-model="text" v-model:images="images"
-                    @send="onSend" @voice="onVoice" @pick="onPickFiles" />
+                    @send="onSend" @pick="onPickFiles" />
   </div>
 </template>
 

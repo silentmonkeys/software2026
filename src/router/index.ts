@@ -9,7 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/',          redirect: '/search' },
 
   // 检索
-  { path: '/search',    component: () => import('@/views/search/index.vue'),    meta: { layout: 'app', title: '多模态检索' } },
+  { path: '/search',    component: () => import('@/views/search/index.vue'),    meta: { layout: 'app', title: '知识检索' } },
   { path: '/search/:id',component: () => import('@/views/search/Detail.vue'),   meta: { layout: 'app', title: '检索详情' } },
 
   // 历史详情
