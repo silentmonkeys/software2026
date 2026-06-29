@@ -183,8 +183,6 @@ watch(() => route.query.session, (v) => {
 // FIX6-resume M2：跨路由保留检索表单草稿 + 活动会话
 onMounted(() => {
   // 1) 优先 query.q（外部跳入）→ 自动发送一次
-  // 2) 否则恢复活动会话（切走再回来仍能看到正在进行的对话）
-  // 3) 仅在没 query.q 也没活动会话时恢复输入草稿（不自动发送！）
   if (input.value) {
     onSend()
   } else if (store.activeSessionId && chat.getSession(store.activeSessionId)) {
@@ -198,17 +196,11 @@ onMounted(() => {
       })
     }
     scrollToBottom()
-  } else {
-    const d = store.draft
-    if (d.question) input.value = d.question
-    if (store.draftImages.length) {
-      imageList.value = store.draftImages.map((f, i) => ({
-        url: store.draft.imageUrls[i] || URL.createObjectURL(f),
-        name: f.name,
-        file: f
-      }))
-    }
   }
+
+  // 2) 始终恢复输入草稿（无论是否有活动会话）
+  const d = store.draft
+  if (!input.value && d.question) input.value = d.question
 })
 onBeforeUnmount(() => {
   if (input.value || imageList.value.length) {
