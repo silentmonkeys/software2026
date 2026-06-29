@@ -11,12 +11,13 @@ from app.core.db import get_db
 from app.core.config import settings
 from app.core.security import get_current_user, require_auditor, _is_auditor
 from app.models import Document, User
-from app.services.parser import read_any
+from app.services.parser import read_any, parse_any
 from app.services.rag import ingest_document, remove_document
 
 router = APIRouter(prefix="/api/kb", tags=["knowledge"])
 
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+os.makedirs(settings.EXTRACTED_IMAGE_DIR, exist_ok=True)
 
 # 允许上传的扩展名（FIX5 第 18 项：拒绝可执行文件）
 ALLOWED_EXT = (".pdf", ".docx", ".txt", ".md")
@@ -59,7 +60,8 @@ async def upload(file: UploadFile = File(...),
     path = os.path.join(settings.UPLOAD_DIR, fname)
     with open(path, "wb") as f:
         f.write(data)
-    text = read_any(path)
+    parsed = parse_any(path)
+    text = parsed.text
     # 校验 parent_id：必须为同一用户的同类条目
     parent: Optional[Document] = None
     if parent_id is not None:
@@ -157,7 +159,8 @@ async def upload_text_with_files(
             path = os.path.join(settings.UPLOAD_DIR, fname)
             with open(path, "wb") as fh:
                 fh.write(data)
-            text = read_any(path)
+            parsed = parse_any(path)
+            text = parsed.text
             child = Document(
                 title=fname, file_path=path, type=fname.split(".")[-1].lower(),
                 category="manual", content=text[:20000] if text else "",
@@ -285,6 +288,18 @@ def delete_doc(doc_id: int, db: Session = Depends(get_db), _user: User = Depends
 
 
 # FIX6 第 2 项：PDF 等原始文件下载/预览端点，inline 返回二进制以便前端 <iframe> 预览
+@router.get("/image/{image_name}")
+def get_extracted_image(image_name: str, _user: User = Depends(get_current_user)):
+    """返回从 PDF/DOCX 中抽取出的图片，用于聊天答案展示图片证据。"""
+    safe_name = os.path.basename(image_name)
+    for root, _dirs, files in os.walk(settings.EXTRACTED_IMAGE_DIR):
+        if safe_name in files:
+            path = os.path.join(root, safe_name)
+            media_type = mimetypes.guess_type(path)[0] or "image/png"
+            return FileResponse(path, media_type=media_type)
+    raise HTTPException(404, "图片不存在或尚未从文档中抽取")
+
+
 @router.get("/{doc_id}/download")
 def download_doc(doc_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     d = db.query(Document).get(doc_id)

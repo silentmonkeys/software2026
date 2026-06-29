@@ -102,7 +102,8 @@ const onSend = async () => {
         title: h.title,
         snippet: h.snippet || '',
         similarity: h.similarity,
-        page: (h.meta as any)?.page
+        page: (h.meta as any)?.page,
+        images: (h.meta as any)?.images || []
       }))
       chat.updateMessage(sid, aiId, {
         content: res.summary || '（后端未返回内容）',
@@ -278,6 +279,11 @@ onBeforeUnmount(() => {
                           <div class="flex-1 min-w-0">
                             <div class="font-medium text-text">{{ h.title }}</div>
                             <div v-if="h.snippet" class="mt-0.5 ref-snippet leading-relaxed line-clamp-2">{{ h.snippet }}</div>
+                            <div v-if="h.images && h.images.length" class="mt-2 flex gap-2 flex-wrap">
+                              <a v-for="img in h.images" :key="img.url" :href="img.url" target="_blank" class="block">
+                                <img :src="img.url" :alt="img.name || h.title" class="w-24 h-16 object-cover rounded border border-border bg-white" />
+                              </a>
+                            </div>
                             <router-link v-if="h.docId"
                                          :to="{
                                            path: `/kb/preview/${h.docId}`,

@@ -63,6 +63,16 @@ def split_text(text: str, size: int = 900, overlap: int = 180) -> List[str]:
     return chunks
 
 
+def _extract_image_paths(text: str) -> list[str]:
+    paths: list[str] = []
+    for line in (text or "").splitlines():
+        if line.startswith("[图片文件]"):
+            p = line.replace("[图片文件]", "", 1).strip()
+            if p:
+                paths.append(p)
+    return paths
+
+
 def ingest_document(doc_id: int, title: str, full_text: str):
     chunks = split_text(full_text)
     if not chunks:
@@ -70,7 +80,13 @@ def ingest_document(doc_id: int, title: str, full_text: str):
     vecs = embed(chunks)
     ids = [f"d{doc_id}_c{i}" for i in range(len(chunks))]
     total = len(chunks)
-    metas = [{"doc_id": doc_id, "title": title, "idx": i, "total": total} for i in range(total)]
+    metas = []
+    for i, chunk in enumerate(chunks):
+        image_paths = _extract_image_paths(chunk)
+        meta = {"doc_id": doc_id, "title": title, "idx": i, "total": total}
+        if image_paths:
+            meta["image_paths"] = "|".join(image_paths)
+        metas.append(meta)
     _col.add(ids=ids, documents=chunks, embeddings=vecs, metadatas=metas)
     return len(chunks)
 
@@ -88,17 +104,18 @@ def remove_document(doc_id: int) -> None:
 MAX_SEARCH_DISTANCE = 0.5
 
 
-def _fetch_neighbor(doc_id: int, idx: int) -> str:
+def _fetch_neighbor(doc_id: int, idx: int) -> tuple[str, dict]:
     """读取命中 chunk 的相邻切片，给模型补足上下文。"""
     if idx < 0:
-        return ""
+        return "", {}
     cid = f"d{doc_id}_c{idx}"
     try:
         res = _col.get(ids=[cid])
         docs = res.get("documents") or []
-        return docs[0] if docs else ""
+        metas = res.get("metadatas") or []
+        return (docs[0] if docs else ""), (metas[0] if metas else {})
     except Exception:
-        return ""
+        return "", {}
 
 
 def search(query: str, k: int = 5, include_neighbors: bool = True) -> List[dict]:
@@ -120,19 +137,29 @@ def search(query: str, k: int = 5, include_neighbors: bool = True) -> List[dict]
             continue
         content = res["documents"][0][i]
         meta = res["metadatas"][0][i] or {}
+        image_paths = _extract_image_paths(content)
+        if meta.get("image_paths"):
+            image_paths.extend(str(meta.get("image_paths")).split("|"))
         if include_neighbors:
             doc_id = meta.get("doc_id")
             idx = meta.get("idx")
             if isinstance(doc_id, int) and isinstance(idx, int):
-                before = _fetch_neighbor(doc_id, idx - 1)
-                after = _fetch_neighbor(doc_id, idx + 1)
+                before, before_meta = _fetch_neighbor(doc_id, idx - 1)
+                after, after_meta = _fetch_neighbor(doc_id, idx + 1)
                 parts = [p for p in [before, content, after] if p]
                 content = "\n\n".join(parts)
+                image_paths.extend(_extract_image_paths(before))
+                image_paths.extend(_extract_image_paths(after))
+                for m in (before_meta, after_meta):
+                    if m.get("image_paths"):
+                        image_paths.extend(str(m.get("image_paths")).split("|"))
+        image_paths = list(dict.fromkeys([p for p in image_paths if p]))
         out.append({
             "id": res["ids"][0][i],
             "content": content,
             "metadata": meta,
             "distance": dist,
+            "image_paths": image_paths,
         })
     return out
 

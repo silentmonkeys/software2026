@@ -38,6 +38,21 @@ def _extract_keywords(text: str) -> list[str]:
     return keywords[:8]
 
 
+def _image_url(path: str) -> str:
+    if not path:
+        return ""
+    name = os.path.basename(path)
+    return f"/api/kb/image/{name}"
+
+
+def _image_items(paths: list[str]) -> list[dict]:
+    out = []
+    for p in paths or []:
+        if p and os.path.exists(p):
+            out.append({"path": p, "url": _image_url(p), "name": os.path.basename(p)})
+    return out
+
+
 def _build_snippet(content: str, keywords: list[str], window: int = 80, max_len: int = 220) -> str:
     """围绕命中的关键词截取上下文窗口；找不到关键词时退回到首段。"""
     if not content:
@@ -142,6 +157,7 @@ async def query(
                 "doc_id": h["metadata"].get("doc_id"),
                 "title": h["metadata"].get("title"),
                 "snippet": _build_snippet(h["content"] or "", keywords),
+                "images": _image_items(h.get("image_paths") or []),
             }
             for i, h in enumerate(hits, start=1)
         ],

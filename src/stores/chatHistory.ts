@@ -11,6 +11,12 @@ import { ref, computed, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { storage } from '@/utils/storage'
 
+export interface SourceImageItem {
+  url: string
+  name?: string
+  path?: string
+}
+
 export interface SourceItem {
   id: string
   docId?: string
@@ -18,6 +24,7 @@ export interface SourceItem {
   snippet: string
   page?: number
   similarity?: number
+  images?: SourceImageItem[]
 }
 
 /** 检索结果中推荐的工单（FIX5 第 13 项） */

@@ -13,10 +13,32 @@
 import logging
 import os
 import tempfile
+import hashlib
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_OCR_LIMIT = 12
+_IMAGE_OCR_LIMIT = 40
+
+
+@dataclass
+class ParsedDocument:
+    text: str
+    images: list[dict]
+
+
+def _safe_name(name: str) -> str:
+    base = os.path.basename(name or "document")
+    return "".join(c if c.isalnum() or c in ".-_" else "_" for c in base).strip("._") or "document"
+
+
+def _image_output_dir(source_path: str) -> str:
+    from app.core.config import settings
+    stem = _safe_name(os.path.splitext(os.path.basename(source_path))[0])
+    digest = hashlib.md5(os.path.abspath(source_path).encode("utf-8")).hexdigest()[:8]
+    out_dir = os.path.join(settings.EXTRACTED_IMAGE_DIR, f"{stem}_{digest}")
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir
 
 # 延迟导入：pdf2image 和 pytesseract 在龙芯上可能未安装
 _pdf2image_available = None
@@ -41,13 +63,19 @@ def _check_ocr_deps():
 
 
 def read_pdf(path: str) -> str:
+    return parse_pdf(path).text
+
+
+def parse_pdf(path: str) -> ParsedDocument:
     from pypdf import PdfReader
 
     reader = PdfReader(path)
     raw_parts = []
+    image_items: list[dict] = []
     empty_pages = 0
     total_pages = len(reader.pages)
     embedded_image_count = 0
+    out_dir = _image_output_dir(path)
 
     for i, page in enumerate(reader.pages):
         text = (page.extract_text() or "").strip()
@@ -59,16 +87,39 @@ def read_pdf(path: str) -> str:
         images = getattr(page, "images", []) or []
         if images:
             embedded_image_count += len(images)
-            page_parts.append(f"[第 {i + 1} 页包含 {len(images)} 张内嵌图片/图表，原 PDF 中存在图片信息。]")
+            page_parts.append(f"[第 {i + 1} 页包含 {len(images)} 张内嵌图片/图表，以下为图片识别结果。]")
+            for j, img in enumerate(images, start=1):
+                if len(image_items) >= _IMAGE_OCR_LIMIT:
+                    page_parts.append(f"[第 {i + 1} 页另有图片未自动识别，已达到 {_IMAGE_OCR_LIMIT} 张处理上限。]")
+                    continue
+                try:
+                    ext = os.path.splitext(getattr(img, "name", ""))[1] or ".png"
+                    img_path = os.path.join(out_dir, f"page-{i + 1:03d}-image-{j:02d}{ext}")
+                    with open(img_path, "wb") as f:
+                        f.write(img.data)
+                    desc = _ocr_image_file(img_path)
+                    label = f"第 {i + 1} 页图片 {j}"
+                    if desc:
+                        page_parts.append(f"[{label} 识别结果]\n{desc}\n[图片文件] {img_path}")
+                    else:
+                        page_parts.append(f"[{label}：存在图片，但未能自动识别文字/内容。]\n[图片文件] {img_path}")
+                    image_items.append({
+                        "page": i + 1,
+                        "index": j,
+                        "path": img_path,
+                        "description": desc,
+                    })
+                except Exception as e:
+                    logger.warning("PDF 图片提取失败 (%s, page %d image %d): %s", path, i + 1, j, e)
+                    page_parts.append(f"[第 {i + 1} 页图片 {j}：提取失败。]")
         if page_parts:
             raw_parts.append("\n".join(page_parts))
 
     raw_text = "\n\n".join(raw_parts).strip()
     if embedded_image_count:
         logger.warning(
-            "PDF %s: 检测到 %d 张内嵌图片/图表。pypdf 无法直接理解图片内容，"
-            "已写入图片存在性标记；若需图片文字，请上传扫描版或截图以触发 OCR/VL。",
-            path, embedded_image_count,
+            "PDF %s: 检测到 %d 张内嵌图片/图表，已抽取到 %s 并写入识别结果。",
+            path, embedded_image_count, out_dir,
         )
 
     # 多模态问题修复：检测是否为扫描版 PDF（大部分页面无文字）
@@ -97,7 +148,7 @@ def read_pdf(path: str) -> str:
             raw_text = ocr_text
             logger.info("PDF %s: OCR 成功补充了 %d 字符", path, len(ocr_text))
 
-    return raw_text
+    return ParsedDocument(text=raw_text, images=image_items)
 
 
 def _try_ocr_fallback(path: str) -> bool:
@@ -144,37 +195,43 @@ def _ocr_image_file(image_path: str) -> str:
         return ""
 
 
-def _extract_docx_images(doc, source_path: str) -> list[str]:
+def _extract_docx_images(doc, source_path: str) -> tuple[list[str], list[dict]]:
     """提取 DOCX 内嵌图片，并把 OCR/VL 描述写入文本。"""
     parts: list[str] = []
+    image_items: list[dict] = []
+    out_dir = _image_output_dir(source_path)
     rels = getattr(doc.part, "rels", {})
     image_rels = [rel for rel in rels.values() if "image" in getattr(rel, "target_ref", "")]
     if not image_rels:
-        return parts
+        return parts, image_items
 
     parts.append(f"[文档包含 {len(image_rels)} 张内嵌图片/图表。]")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for idx, rel in enumerate(image_rels[:_IMAGE_OCR_LIMIT], start=1):
-            try:
-                blob = rel.target_part.blob
-                ext = os.path.splitext(getattr(rel.target_part, "partname", ""))[1] or ".png"
-                img_path = os.path.join(tmpdir, f"docx-image-{idx}{ext}")
-                with open(img_path, "wb") as f:
-                    f.write(blob)
-                desc = _ocr_image_file(img_path)
-                if desc:
-                    parts.append(f"[内嵌图片 {idx} 识别结果]\n{desc}")
-                else:
-                    parts.append(f"[内嵌图片 {idx}：存在图片，但未能自动识别文字/内容。]")
-            except Exception as e:
-                logger.warning("DOCX 图片提取失败 (%s, image %d): %s", source_path, idx, e)
-                parts.append(f"[内嵌图片 {idx}：提取失败。]")
+    for idx, rel in enumerate(image_rels[:_IMAGE_OCR_LIMIT], start=1):
+        try:
+            blob = rel.target_part.blob
+            ext = os.path.splitext(getattr(rel.target_part, "partname", ""))[1] or ".png"
+            img_path = os.path.join(out_dir, f"docx-image-{idx:02d}{ext}")
+            with open(img_path, "wb") as f:
+                f.write(blob)
+            desc = _ocr_image_file(img_path)
+            if desc:
+                parts.append(f"[内嵌图片 {idx} 识别结果]\n{desc}\n[图片文件] {img_path}")
+            else:
+                parts.append(f"[内嵌图片 {idx}：存在图片，但未能自动识别文字/内容。]\n[图片文件] {img_path}")
+            image_items.append({"page": None, "index": idx, "path": img_path, "description": desc})
+        except Exception as e:
+            logger.warning("DOCX 图片提取失败 (%s, image %d): %s", source_path, idx, e)
+            parts.append(f"[内嵌图片 {idx}：提取失败。]")
     if len(image_rels) > _IMAGE_OCR_LIMIT:
         parts.append(f"[另有 {len(image_rels) - _IMAGE_OCR_LIMIT} 张图片未自动识别，请查看原文档。]")
-    return parts
+    return parts, image_items
 
 
 def read_docx(path: str) -> str:
+    return parse_docx(path).text
+
+
+def parse_docx(path: str) -> ParsedDocument:
     from docx import Document as Docx
     doc = Docx(path)
     parts: list[str] = []
@@ -193,17 +250,22 @@ def read_docx(path: str) -> str:
         if rows:
             parts.append(f"[表格 {ti}]\n" + "\n".join(rows))
 
-    parts.extend(_extract_docx_images(doc, path))
-    return "\n\n".join(parts)
+    image_parts, image_items = _extract_docx_images(doc, path)
+    parts.extend(image_parts)
+    return ParsedDocument(text="\n\n".join(parts), images=image_items)
+
+
+def parse_any(path: str) -> ParsedDocument:
+    p = path.lower()
+    if p.endswith(".pdf"):
+        return parse_pdf(path)
+    if p.endswith(".docx"):
+        return parse_docx(path)
+    if p.endswith(".txt") or p.endswith(".md"):
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return ParsedDocument(text=f.read(), images=[])
+    raise ValueError(f"Unsupported file: {path}")
 
 
 def read_any(path: str) -> str:
-    p = path.lower()
-    if p.endswith(".pdf"):
-        return read_pdf(path)
-    if p.endswith(".docx"):
-        return read_docx(path)
-    if p.endswith(".txt") or p.endswith(".md"):
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
-    raise ValueError(f"Unsupported file: {path}")
+    return parse_any(path).text

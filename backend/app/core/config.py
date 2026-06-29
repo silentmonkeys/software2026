@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     COLLECTION: str = "maintenance_kb"
 
     UPLOAD_DIR: str = "./uploads"
+    EXTRACTED_IMAGE_DIR: str = "./uploads/extracted_images"
 
     class Config:
         env_file = ".env"

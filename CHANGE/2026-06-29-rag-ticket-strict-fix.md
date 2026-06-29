@@ -65,6 +65,34 @@
   - 创建事件记录本次引用到的 `manual_doc_ids`；
   - 创建接口返回 `manuals`，便于前端展示生成依据。
 
+## 追加修复：PDF/DOCX 图片可检索、可返回、可展示
+
+用户实测《摩托车发动机维修手册.pdf》后发现：手册中有图片且已上传知识库，但提问“输出安装气缸与活塞照片/图片是什么”时仍回答不知道。根因是上一版只记录图片存在性，没有把图片文件抽出保存、没有把图片路径挂到检索结果、前端也没有展示图片证据。
+
+### 修改
+- `backend/app/core/config.py`
+  - 新增 `EXTRACTED_IMAGE_DIR=./uploads/extracted_images`。
+- `backend/app/services/parser.py`
+  - PDF：从 `page.images` 抽取内嵌图片，保存到 `uploads/extracted_images/...`；
+  - PDF/DOCX：图片 OCR/VL 描述与 `[图片文件] 路径` 一起写入入库文本；
+  - DOCX：图片不再只放临时目录，而是保存到可访问的抽取图片目录；
+  - 新增 `parse_any()` 返回 `ParsedDocument(text, images)`。
+- `backend/app/services/rag.py`
+  - 入库时从 chunk 中提取 `[图片文件]`，写入 metadata `image_paths`；
+  - 检索时把命中 chunk 及相邻 chunk 的图片路径返回到 `image_paths`。
+- `backend/app/api/chat.py`
+  - sources 每条引用新增 `images` 字段，包含图片访问 URL。
+- `backend/app/api/kb.py`
+  - 新增 `/api/kb/image/{image_name}`，用于返回抽取图片文件；
+  - 上传附件时改用 `parse_any()`。
+- 前端：
+  - `src/api/search.ts`、`src/stores/chatHistory.ts` 支持 source images；
+  - `src/views/search/Pc.vue`、`src/views/search/Mobile.vue` 在引用折叠面板中展示相关图片缩略图，点击可打开原图。
+
+### 注意
+- 已上传的旧 PDF 必须重新上传或重新审核入库，才能抽取图片并生成 `image_paths`。
+- 如果只重启服务但不重建旧文档向量库，仍然查不到图片。
+
 ## 验证结果
 
 - Python 语法检查通过：
@@ -74,6 +102,7 @@
   - `backend/app/api/ticket.py`
   - `backend/app/api/chat.py`
   - `backend/app/api/kb.py`
+  - `backend/app/core/config.py`
 - 前端类型检查通过：`npm run typecheck -- --noEmit`
 
 ## 后续注意
