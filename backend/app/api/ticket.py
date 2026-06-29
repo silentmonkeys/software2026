@@ -8,6 +8,7 @@ from app.core.db import get_db
 from app.core.security import get_current_user, _is_auditor
 from app.models import Ticket, UserTicketProgress, TicketEvent, User
 from app.services.llm import chat_text
+from app.services.rag import search
 import json, re
 
 router = APIRouter(prefix="/api/ticket", tags=["ticket"])
@@ -38,7 +39,9 @@ class RecommendIn(BaseModel):
 
 # FIX4 第 2 项：返回大步骤+子步骤的结构化 JSON
 SOP_SYSTEM = (
-    "你是设备检修标准作业流程（SOP）专家。"
+    "你是设备检修标准作业流程（SOP）专家。必须严格、只依据用户提供的【相关手册】生成工单。"
+    "不得使用训练记忆或常识编造手册中没有的工具、参数、拆装步骤、验收标准。"
+    "若手册依据不足，必须在对应步骤 description 或 safetyNote 中写明：手册依据不足，需要补充具体章节/参数。"
     "请按【风险预检 → 工具准备 → 检修步骤 → 验收标准】四段输出，"
     "每个大步骤可以含若干必须按顺序完成的子步骤；同时给出该步骤需要的工具清单。"
     "严格输出 **JSON 数组**（不要包含 markdown ``` 代码块包裹），每个元素如下：\n"
@@ -57,8 +60,9 @@ SOP_SYSTEM = (
     "约束：\n"
     "1) JSON 必须是合法的、可被 json.loads 解析；不要在外层加任何说明文字或代码块标记；\n"
     "2) 至少返回 3 个大步骤；每个大步骤至少 2 个子步骤；\n"
-    "3) tools 字段使用名词短语；\n"
-    "4) 一律使用中文。"
+    "3) tools 字段使用名词短语，只能来自手册或由手册明确支持；\n"
+    "4) 每个关键子步骤末尾用（依据：[1]）形式标明来源编号；\n"
+    "5) 一律使用中文。"
 )
 
 
@@ -125,14 +129,53 @@ def _summary(t: Ticket, prog: Optional[UserTicketProgress], creator_name: Option
     }
 
 
+def _build_manual_context(device: str, fault: str, k: int = 5) -> tuple[str, list[dict]]:
+    """工单生成前先检索手册，禁止脱离知识库自由生成。"""
+    query = f"{device} {fault}".strip()
+    if not query:
+        return "", []
+    hits = search(query, k=k)
+    context = "\n\n".join(
+        f"[{i + 1}] {h['metadata'].get('title', '')}: {h['content']}"
+        for i, h in enumerate(hits)
+    )
+    return context, hits
+
+
 @router.post("")
 def create(body: TicketIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    manual_context, manual_hits = _build_manual_context(body.device, body.fault, k=5)
+    if not manual_hits:
+        fallback_steps = [
+            {
+                "id": "step-1",
+                "title": "手册依据不足",
+                "description": "知识库未检索到与该设备/故障匹配的操作手册，不能可靠生成标准化检修方案。",
+                "safetyNote": "请先上传或审核通过对应设备手册、故障代码表、维修步骤和验收参数后再生成工单。",
+                "subSteps": [
+                    {"id": "sub-1-1", "content": "补充对应设备型号、故障现象、维修章节或参数表。"},
+                    {"id": "sub-1-2", "content": "由审查员审核手册入库后重新创建工单。"},
+                ],
+                "tools": [],
+                "acceptance": "手册入库并能被知识库检索到后再生成可执行步骤。",
+            }
+        ]
+        t = Ticket(device=body.device, fault=body.fault, steps=fallback_steps, creator_id=user.id)
+        db.add(t); db.commit(); db.refresh(t)
+        prog = UserTicketProgress(user_id=user.id, ticket_id=t.id, status="open",
+                                  step_done=[], is_creator=True)
+        db.add(prog)
+        _add_event(db, t.id, user.id, "created", {"warning": "manual_context_empty"})
+        db.commit()
+        return {"id": t.id, "steps": t.steps, "manuals": []}
+
     prompt = (
-        f"设备：{body.device}\n"
-        f"故障描述：{body.fault}\n\n"
-        "请生成标准化检修方案；按上面要求返回 JSON 数组。"
+        f"【相关手册】\n{manual_context}\n\n"
+        f"【设备】\n{body.device}\n"
+        f"【故障描述】\n{body.fault}\n\n"
+        "请只依据【相关手册】生成标准化检修方案；按系统要求返回 JSON 数组。"
     )
-    raw = chat_text(SOP_SYSTEM, prompt)
+    raw = chat_text(SOP_SYSTEM, prompt, temperature=0.1, top_p=0.7)
     parsed = _parse_steps(raw)
     steps = parsed if parsed is not None else {"raw": raw}
     t = Ticket(device=body.device, fault=body.fault, steps=steps, creator_id=user.id)
@@ -140,9 +183,11 @@ def create(body: TicketIn, db: Session = Depends(get_db), user: User = Depends(g
     prog = UserTicketProgress(user_id=user.id, ticket_id=t.id, status="open",
                               step_done=[], is_creator=True)
     db.add(prog)
-    _add_event(db, t.id, user.id, "created")
+    _add_event(db, t.id, user.id, "created", {
+        "manual_doc_ids": [h.get("metadata", {}).get("doc_id") for h in manual_hits]
+    })
     db.commit()
-    return {"id": t.id, "steps": t.steps}
+    return {"id": t.id, "steps": t.steps, "manuals": _list_manuals_for(t)}
 
 
 @router.get("")

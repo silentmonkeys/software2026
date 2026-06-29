@@ -9,7 +9,11 @@ from app.core.config import settings
 dashscope.api_key = settings.DASHSCOPE_API_KEY
 
 
-def chat_text(system: str, user: str) -> str:
+def chat_text(system: str, user: str, temperature: float = 0.2, top_p: float = 0.8) -> str:
+    """调用文本大模型。
+
+    RAG / SOP 都是事实型生成任务，默认使用低温参数，避免模型自由发挥。
+    """
     rsp = Generation.call(
         model=settings.LLM_TEXT_MODEL,
         messages=[
@@ -17,6 +21,8 @@ def chat_text(system: str, user: str) -> str:
             {"role": "user", "content": user},
         ],
         result_format="message",
+        temperature=temperature,
+        top_p=top_p,
     )
     return rsp.output.choices[0].message.content
 

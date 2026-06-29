@@ -1,0 +1,82 @@
+# 2026-06-29 RAG / 文档解析 / 工单生成严格修复记录
+
+来源：`2026.6.29问题分析.txt` 中列出的 4 个问题。本文记录本次按问题分析逐项修改的范围、原因与验证结果。
+
+## 问题 1：回答没有准确引用文本，且存在幻觉
+
+### 根因
+- `rag.py` 的系统 Prompt 禁止正文插入 `[数字]` 引用编号；
+- 未硬性约束“只能使用给定知识”；
+- 检索为空时仍继续调用 LLM；
+- `llm.py` 未设置 `temperature/top_p`。
+
+### 修改
+- `backend/app/services/llm.py`
+  - `chat_text()` 新增 `temperature=0.2`、`top_p=0.8` 默认参数；
+  - RAG / SOP 调用显式使用 `temperature=0.1, top_p=0.7`。
+- `backend/app/services/rag.py`
+  - 重写 `SYSTEM_PROMPT`：强制只依据【检修知识】回答；
+  - 允许并要求答案中使用 `[1]`、`[2]` 来源编号；
+  - 要求关键判断附带“原文依据”；
+  - `hits` 为空时不再调用 LLM，直接返回“知识库未提供足够依据”。
+
+## 问题 2：上传文档中的照片不存在
+
+### 根因
+- DOCX 只提取 paragraph 文本，图片/表格丢弃；
+- PDF 只提取文字层，内嵌图片未进入可检索文本；
+- 图片内容没有入向量库。
+
+### 修改
+- `backend/app/services/parser.py`
+  - DOCX：提取段落、表格；
+  - DOCX：检测内嵌图片，最多自动识别前 12 张；
+  - 图片识别优先用 `pytesseract`，失败后尝试 `Qwen-VL document` 模式；
+  - PDF：对每页内嵌图片/图表写入可检索标记，避免用户问“文档里的图片”时系统误判不存在；
+  - 扫描版 PDF 仍保留 OCR fallback。
+
+> 说明：文本型 PDF 内嵌图片的完整视觉理解依赖底层库能否导出图片；当前先保证“图片存在性”不再丢失。DOCX 图片已支持 OCR/VL 描述入库。
+
+## 问题 3：对文档上下文理解存在问题
+
+### 根因
+- 原 `split_text()` 是 500/50 字符滑窗，容易切断语义；
+- 检索 top-k 固定 5，缺少相邻 chunk 上下文。
+
+### 修改
+- `backend/app/services/rag.py`
+  - `split_text()` 改为段落/句子边界优先切片；
+  - 切片大小从 500 提升到 900，重叠从 50 提升到 180；
+  - 向量库 metadata 增加 `total`；
+  - `search()` 默认拉取命中 chunk 的前后相邻 chunk 拼入上下文。
+
+## 问题 4：工单生成没有按上传手册来
+
+### 根因
+- `ticket.py` 创建工单只传 `device + fault`，没有检索手册；
+- 关联手册接口仅用于事后展示，不参与生成。
+
+### 修改
+- `backend/app/api/ticket.py`
+  - 新增 `_build_manual_context()`，创建工单前先检索手册；
+  - `SOP_SYSTEM` 强约束只能依据【相关手册】生成；
+  - 手册为空时不再让模型自由生成，而是创建“手册依据不足”的安全提示工单；
+  - 生成步骤要求关键子步骤带来源编号；
+  - 创建事件记录本次引用到的 `manual_doc_ids`；
+  - 创建接口返回 `manuals`，便于前端展示生成依据。
+
+## 验证结果
+
+- Python 语法检查通过：
+  - `backend/app/services/llm.py`
+  - `backend/app/services/rag.py`
+  - `backend/app/services/parser.py`
+  - `backend/app/api/ticket.py`
+  - `backend/app/api/chat.py`
+  - `backend/app/api/kb.py`
+- 前端类型检查通过：`npm run typecheck -- --noEmit`
+
+## 后续注意
+
+- 已有旧文档需要重新审核/重新入库，才能使用新的切片、表格、DOCX 图片识别逻辑。
+- 若要充分识别扫描版 PDF 和 DOCX 图片文字，部署环境需要安装 `tesseract`、`chi_sim` 语言包、`poppler-utils` 以及 Python 包 `pdf2image`、`pytesseract`。
