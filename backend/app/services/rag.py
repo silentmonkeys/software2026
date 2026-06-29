@@ -101,7 +101,7 @@ def remove_document(doc_id: int) -> None:
 
 # 多模态问题修复（第4项）：相似度阈值
 # cosine distance > MAX_SEARCH_DISTANCE 的结果视为不相关，不返回
-MAX_SEARCH_DISTANCE = 0.5
+MAX_SEARCH_DISTANCE = 0.65
 
 
 def _fetch_neighbor(doc_id: int, idx: int) -> tuple[str, dict]:
@@ -193,6 +193,20 @@ def rag_answer(question: str, image_desc: str = "") -> Tuple[str, List[dict]]:
         enriched = question
 
     hits = search(enriched, k=5)
+    # 关键词兜底：嵌入向量可能因术语偏差("曲轴箱分解图" vs "曲轴连杆部装组件")不匹配
+    # 提取短关键词逐一检索，合并命中结果
+    if not hits:
+        kws = re.findall(r'[\u4e00-\u9fff]{2,4}', enriched)
+        seen_ids: set[str] = set()
+        for kw in kws[:6]:
+            for h in search(kw, k=3):
+                hid = h.get("id", "")
+                if hid not in seen_ids:
+                    seen_ids.add(hid)
+                    hits.append(h)
+        if len(hits) > 5:
+            hits.sort(key=lambda x: x.get("distance", 1.0))
+            hits = hits[:5]
     if not hits:
         return (
             "知识库未检索到足够依据，不能可靠回答该问题。请补充或上传对应设备手册、故障代码表、"
