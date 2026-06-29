@@ -12,13 +12,14 @@
 """
 import logging
 import os
-import tempfile
 import hashlib
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_OCR_LIMIT = 40
+# 上传接口必须快速返回；逐图 OCR/VL 会让大 PDF 卡死或超时。
+# 因此上传阶段只抽取/保存图片并写入路径，视觉理解交给用户查询图或后续异步任务。
+_IMAGE_EXTRACT_LIMIT = 80
 
 
 @dataclass
@@ -89,25 +90,25 @@ def parse_pdf(path: str) -> ParsedDocument:
             embedded_image_count += len(images)
             page_parts.append(f"[第 {i + 1} 页包含 {len(images)} 张内嵌图片/图表，以下为图片识别结果。]")
             for j, img in enumerate(images, start=1):
-                if len(image_items) >= _IMAGE_OCR_LIMIT:
-                    page_parts.append(f"[第 {i + 1} 页另有图片未自动识别，已达到 {_IMAGE_OCR_LIMIT} 张处理上限。]")
+                if len(image_items) >= _IMAGE_EXTRACT_LIMIT:
+                    page_parts.append(f"[第 {i + 1} 页另有图片未抽取，已达到 {_IMAGE_EXTRACT_LIMIT} 张处理上限。]")
                     continue
                 try:
                     ext = os.path.splitext(getattr(img, "name", ""))[1] or ".png"
                     img_path = os.path.join(out_dir, f"page-{i + 1:03d}-image-{j:02d}{ext}")
                     with open(img_path, "wb") as f:
                         f.write(img.data)
-                    desc = _ocr_image_file(img_path)
                     label = f"第 {i + 1} 页图片 {j}"
-                    if desc:
-                        page_parts.append(f"[{label} 识别结果]\n{desc}\n[图片文件] {img_path}")
-                    else:
-                        page_parts.append(f"[{label}：存在图片，但未能自动识别文字/内容。]\n[图片文件] {img_path}")
+                    page_parts.append(
+                        f"[{label}]\n"
+                        f"该图片来自原文档第 {i + 1} 页，可作为维修手册图片证据返回给用户。\n"
+                        f"[图片文件] {img_path}"
+                    )
                     image_items.append({
                         "page": i + 1,
                         "index": j,
                         "path": img_path,
-                        "description": desc,
+                        "description": "",
                     })
                 except Exception as e:
                     logger.warning("PDF 图片提取失败 (%s, page %d image %d): %s", path, i + 1, j, e)
@@ -141,12 +142,9 @@ def parse_pdf(path: str) -> ParsedDocument:
             path, len(raw_text), empty_pages, total_pages,
         )
 
-    # 尝试 OCR 补充（仅当有依赖且检测到大量空白页时）
-    if is_scanned_like and _try_ocr_fallback(path):
-        ocr_text = _ocr_pdf(path)
-        if ocr_text and len(ocr_text) > len(raw_text):
-            raw_text = ocr_text
-            logger.info("PDF %s: OCR 成功补充了 %d 字符", path, len(ocr_text))
+    # 注意：上传接口不再同步做整本 PDF OCR。
+    # 大型手册逐页 OCR/VL 会导致上传接口长时间阻塞、前端超时并显示上传失败。
+    # 如需扫描版 PDF 全文 OCR，应拆成后台任务或离线预处理。
 
     return ParsedDocument(text=raw_text, images=image_items)
 
@@ -206,24 +204,20 @@ def _extract_docx_images(doc, source_path: str) -> tuple[list[str], list[dict]]:
         return parts, image_items
 
     parts.append(f"[文档包含 {len(image_rels)} 张内嵌图片/图表。]")
-    for idx, rel in enumerate(image_rels[:_IMAGE_OCR_LIMIT], start=1):
+    for idx, rel in enumerate(image_rels[:_IMAGE_EXTRACT_LIMIT], start=1):
         try:
             blob = rel.target_part.blob
             ext = os.path.splitext(getattr(rel.target_part, "partname", ""))[1] or ".png"
             img_path = os.path.join(out_dir, f"docx-image-{idx:02d}{ext}")
             with open(img_path, "wb") as f:
                 f.write(blob)
-            desc = _ocr_image_file(img_path)
-            if desc:
-                parts.append(f"[内嵌图片 {idx} 识别结果]\n{desc}\n[图片文件] {img_path}")
-            else:
-                parts.append(f"[内嵌图片 {idx}：存在图片，但未能自动识别文字/内容。]\n[图片文件] {img_path}")
-            image_items.append({"page": None, "index": idx, "path": img_path, "description": desc})
+            parts.append(f"[内嵌图片 {idx}：已从原文档抽取。]\n[图片文件] {img_path}")
+            image_items.append({"page": None, "index": idx, "path": img_path, "description": ""})
         except Exception as e:
             logger.warning("DOCX 图片提取失败 (%s, image %d): %s", source_path, idx, e)
             parts.append(f"[内嵌图片 {idx}：提取失败。]")
-    if len(image_rels) > _IMAGE_OCR_LIMIT:
-        parts.append(f"[另有 {len(image_rels) - _IMAGE_OCR_LIMIT} 张图片未自动识别，请查看原文档。]")
+    if len(image_rels) > _IMAGE_EXTRACT_LIMIT:
+        parts.append(f"[另有 {len(image_rels) - _IMAGE_EXTRACT_LIMIT} 张图片未抽取，请查看原文档。]")
     return parts, image_items
 
 
