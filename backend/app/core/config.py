@@ -37,6 +37,21 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# 将相对路径目录统一解析为绝对路径（避免 CWD 不一致导致文件找不到）
+# __file__ = backend/app/core/config.py → 往上 3 层到 backend/
+import os as _os
+_base = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+for _key in ("UPLOAD_DIR", "EXTRACTED_IMAGE_DIR", "CHROMA_DIR"):
+    _val = getattr(settings, _key, "")
+    if isinstance(_val, str) and _val and not _os.path.isabs(_val):
+        setattr(settings, _key, _os.path.abspath(_os.path.join(_base, _val)))
+# DB_URL 用绝对路径 + 正斜杠（避免 Windows 反斜杠被 SQLAlchemy 误解析）
+_val = settings.DB_URL
+if _val.startswith("sqlite:///"):
+    _path = _val[len("sqlite:///"):].lstrip("./\\")
+    _abs = _os.path.abspath(_os.path.join(_base, _path)).replace("\\", "/")
+    settings.DB_URL = f"sqlite:///{_abs}"
+
 # 生产环境安全检查
 if settings.JWT_SECRET == "change-me-in-prod":
     warnings.warn(

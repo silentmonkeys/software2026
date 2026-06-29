@@ -48,8 +48,9 @@ def _image_url(path: str) -> str:
 def _image_items(paths: list[str]) -> list[dict]:
     out = []
     for p in paths or []:
-        if p and os.path.exists(p):
-            out.append({"path": p, "url": _image_url(p), "name": os.path.basename(p)})
+        name = os.path.basename(p) if p else ""
+        url = f"/api/kb/image/{name}" if name else ""
+        out.append({"path": p or "", "url": url, "name": name})
     return out
 
 
