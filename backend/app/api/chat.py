@@ -1,6 +1,6 @@
 import os, shutil, uuid, re
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.config import settings
@@ -91,6 +91,10 @@ def _recommend_tickets(db: Session, user_id: int, question: str, img_desc: str =
     return scored[:4]
 
 
+# 多模态问题修复：纯图片查询（用户未输入文字）自动切换 VL 为文档识别模式
+_PLACEHOLDER_PATTERNS = {"请描述设备图片中的故障", "请描述", "", " "}
+
+
 @router.post("/query")
 async def query(
     question: str = Form(...),
@@ -99,15 +103,31 @@ async def query(
     user: User = Depends(get_current_user),
 ):
     img_desc = ""
+    # 检测是否为纯图片查询（question 为空或仅含前端兜底占位符）
+    q_trimmed = (question or "").strip()
+    is_image_only = not q_trimmed or q_trimmed in _PLACEHOLDER_PATTERNS
+
     if image is not None:
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         ext = image.filename.split(".")[-1]
         local = os.path.join(settings.UPLOAD_DIR, f"q_{uuid.uuid4().hex}.{ext}")
         with open(local, "wb") as f:
             shutil.copyfileobj(image.file, f)
-        img_desc = vl_describe(f"file://{os.path.abspath(local)}")
+        # 纯图片查询 → document 模式（OCR/文档识别）；有文字 → fault 模式（故障诊断）
+        vl_mode = "document" if is_image_only else "fault"
+        try:
+            img_desc = vl_describe(f"file://{os.path.abspath(local)}", mode=vl_mode)
+        except Exception as e:
+            # VL 调用失败：如果有文字问题就用文字，没有就报错
+            if not q_trimmed:
+                raise HTTPException(500, f"图片识别失败：{e}")
+            img_desc = ""
 
-    answer, hits = rag_answer(question, img_desc)
+    # 纯图片查询时，用 VL 识别结果作为主查询主体（而非被占位符稀释语义）
+    effective_question = img_desc if is_image_only and img_desc else q_trimmed
+    if not effective_question:
+        raise HTTPException(400, "请输入问题或上传图片")
+    answer, hits = rag_answer(effective_question, img_desc)
     log = QALog(question=question, answer=answer, sources=[h["metadata"] for h in hits], user_id=user.id)
     db.add(log); db.commit()
     # FIX7 续：用提问关键词定位 chunk 内的相关窗口作为 snippet，避免首段无关

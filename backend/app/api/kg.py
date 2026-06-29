@@ -126,7 +126,7 @@ def _approved_doc_ids(db: Session, requested: list[int]) -> list[int]:
     out = []
     for d in docs:
         # 兼容两种 schema：旧版用 ready，FIX3 后切到 approved
-        if d.status in ("ready", "approved", None):
+        if d.status in ("ready", "approved"):
             out.append(d.id)
     return out
 

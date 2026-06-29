@@ -71,8 +71,11 @@ export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> 
     throw new Error('请输入问题或上传图片')
   }
 
+  // 多模态问题修复：纯图片查询不再使用"请描述设备图片中的故障"作为默认 question
+  // 该占位符会污染 embedding 向量空间，导致检索不到相关文档
+  // 纯图片时传空字符串，由后端 chat.py 检测到后用 VL document 模式输出作为主查询
   const form = new FormData()
-  form.append('question', question || '请描述设备图片中的故障')
+  form.append('question', question || '')
   if (p.imageFile) form.append('image', p.imageFile)
 
   const data = await rawCall<BackendChatResp>(() =>

@@ -22,7 +22,7 @@ _seed_default_admin()
 app = FastAPI(title=settings.APP_NAME)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS != "*" else ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

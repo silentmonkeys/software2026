@@ -5,6 +5,9 @@ set -e
 
 echo "===== Phase 1: 系统依赖 ====="
 sudo yum install -y libffi-devel pkg-config openssl-devel gcc gcc-c++ make python3-devel
+# 多模态问题修复第3项：OCR 系统依赖（扫描版 PDF 识别）
+# tesseract + chi_sim 语言包 + poppler（pdf2image 依赖）
+sudo yum install -y tesseract tesseract-langpack-chi_sim poppler-utils || echo "[warn] OCR 系统依赖安装失败，扫描版 PDF 无法 OCR"
 
 echo "===== Phase 2: 重建虚拟环境 ====="
 cd ~
@@ -45,6 +48,8 @@ pip install "python-jose==3.3.0" ecdsa rsa pyasn1
 echo "===== Phase 10: DashScope + 文档处理 ====="
 pip install dashscope
 pip install pypdf python-docx reportlab
+# 多模态问题修复第3项：OCR Python 依赖（扫描版 PDF 识别，失败不中断）
+pip install pdf2image pytesseract || echo "[warn] OCR Python 包安装失败，扫描版 PDF 无法 OCR"
 
 echo "===== Phase 11: chromadb（跳过 onnxruntime/tokenizers/orjson）====="
 pip install "chromadb==0.5.23" --no-deps

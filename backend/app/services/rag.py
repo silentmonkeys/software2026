@@ -38,16 +38,31 @@ def remove_document(doc_id: int) -> None:
         pass
 
 
+# 多模态问题修复（第4项）：相似度阈值
+# cosine distance > MAX_SEARCH_DISTANCE 的结果视为不相关，不返回
+MAX_SEARCH_DISTANCE = 0.5
+
+
 def search(query: str, k: int = 5) -> List[dict]:
+    """向量检索，返回 Top-k 结果。
+
+    多模态问题修复：
+    - 过滤掉 distance > MAX_SEARCH_DISTANCE 的低质量匹配
+    - 返回实际匹配数（可能少于 k），前端据此判断是否显示 EmptyState
+    """
     q_vec = embed([query])[0]
     res = _col.query(query_embeddings=[q_vec], n_results=k)
     out = []
     for i in range(len(res["ids"][0])):
+        dist = res["distances"][0][i] if res.get("distances") else None
+        # 相似度阈值过滤：cosine distance 过大说明语义不相关
+        if dist is not None and dist > MAX_SEARCH_DISTANCE:
+            continue
         out.append({
             "id": res["ids"][0][i],
             "content": res["documents"][0][i],
             "metadata": res["metadatas"][0][i],
-            "distance": res["distances"][0][i] if res.get("distances") else None,
+            "distance": dist,
         })
     return out
 
@@ -62,7 +77,21 @@ SYSTEM_PROMPT = (
 
 
 def rag_answer(question: str, image_desc: str = "") -> Tuple[str, List[dict]]:
-    enriched = question if not image_desc else f"{question}\n（图片观察：{image_desc}）"
+    """RAG 问答：基于问题（+ 可选图片描述）检索知识库并生成回答。
+
+    多模态问题修复（第2项）：
+    - 当 question 为空但 image_desc 非空时，以 image_desc 作为检索主查询
+      （避免被空字符串或占位符稀释 embedding 语义）
+    - 有文字问题时，拼接格式保持原有逻辑
+    """
+    if not question and image_desc:
+        # 纯图片查询：VL 输出已包含文档识别结果，直接作为查询主体
+        enriched = image_desc
+    elif image_desc:
+        enriched = f"{question}\n（图片观察：{image_desc}）"
+    else:
+        enriched = question
+
     hits = search(enriched, k=5)
     context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(hits)])
     user = f"【检修知识】\n{context}\n\n【用户问题】\n{enriched}"
