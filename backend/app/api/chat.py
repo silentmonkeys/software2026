@@ -97,7 +97,7 @@ _PLACEHOLDER_PATTERNS = {"请描述设备图片中的故障", "请描述", "", "
 
 @router.post("/query")
 async def query(
-    question: str = Form(...),
+    question: str = Form(""),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
