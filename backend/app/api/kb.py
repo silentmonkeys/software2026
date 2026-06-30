@@ -289,8 +289,13 @@ def delete_doc(doc_id: int, db: Session = Depends(get_db), _user: User = Depends
 
 # FIX6 第 2 项：PDF 等原始文件下载/预览端点，inline 返回二进制以便前端 <iframe> 预览
 @router.get("/image/{image_name}")
-def get_extracted_image(image_name: str, _user: User = Depends(get_current_user)):
-    """返回从 PDF/DOCX 中抽取出的图片，用于聊天答案展示图片证据。"""
+def get_extracted_image(image_name: str):
+    """返回从 PDF/DOCX 中抽取出的图片，用于聊天答案展示图片证据。
+
+    注意：此端点不需要登录认证。<img> 标签发出的 GET 请求不会携带
+    Authorization 头，如果加 Depends(get_current_user) 会全部 401。
+    /uploads/ 静态目录本身也是无认证的，此处保持一致。
+    """
     safe_name = os.path.basename(image_name)
     abs_dir = os.path.abspath(settings.EXTRACTED_IMAGE_DIR)
     # 优先精确匹配文件名
@@ -298,7 +303,7 @@ def get_extracted_image(image_name: str, _user: User = Depends(get_current_user)
     if os.path.isfile(candidate):
         media_type = mimetypes.guess_type(candidate)[0] or "image/png"
         return FileResponse(candidate, media_type=media_type)
-    # 兜底：遍历子目录（旧版本可能按文档名建了子目录）
+    # 兜底：遍历子目录（图片按文档名建了子目录）
     for root, _dirs, files in os.walk(abs_dir):
         if safe_name in files:
             path = os.path.join(root, safe_name)
