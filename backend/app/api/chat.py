@@ -157,7 +157,7 @@ async def query(
                 "index": i,
                 "doc_id": h["metadata"].get("doc_id"),
                 "title": h["metadata"].get("title"),
-                "snippet": _build_snippet(h["content"] or "", keywords),
+                "snippet": _build_snippet(h.get("original_content") or h["content"] or "", keywords),
                 "images": _image_items(h.get("image_paths") or []),
             }
             for i, h in enumerate(hits, start=1)

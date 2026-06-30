@@ -123,6 +123,7 @@ def search(query: str, k: int = 5, include_neighbors: bool = True) -> List[dict]
 
     - 过滤掉 distance > MAX_SEARCH_DISTANCE 的低质量匹配；
     - 默认把命中 chunk 的前后相邻 chunk 拼入 context，缓解切片导致的上下文断裂。
+    - 图片只取主 chunk 的，不收集相邻 chunk 的图片（避免返回大量无关图）。
     """
     query = (query or "").strip()
     if not query:
@@ -135,28 +136,27 @@ def search(query: str, k: int = 5, include_neighbors: bool = True) -> List[dict]
         # 相似度阈值过滤：cosine distance 过大说明语义不相关
         if dist is not None and dist > MAX_SEARCH_DISTANCE:
             continue
-        content = res["documents"][0][i]
+        original_content = res["documents"][0][i]  # 主 chunk 原文（不合并邻居）
         meta = res["metadatas"][0][i] or {}
-        image_paths = _extract_image_paths(content)
+        # 图片只取主 chunk 的，不收集邻居的
+        image_paths = _extract_image_paths(original_content)
         if meta.get("image_paths"):
             image_paths.extend(str(meta.get("image_paths")).split("|"))
+        image_paths = list(dict.fromkeys([p for p in image_paths if p]))
+        # 邻居合并只用于 LLM context，不影响 snippet 和 images
+        content = original_content
         if include_neighbors:
             doc_id = meta.get("doc_id")
             idx = meta.get("idx")
             if isinstance(doc_id, int) and isinstance(idx, int):
-                before, before_meta = _fetch_neighbor(doc_id, idx - 1)
-                after, after_meta = _fetch_neighbor(doc_id, idx + 1)
-                parts = [p for p in [before, content, after] if p]
+                before, _ = _fetch_neighbor(doc_id, idx - 1)
+                after, _ = _fetch_neighbor(doc_id, idx + 1)
+                parts = [p for p in [before, original_content, after] if p]
                 content = "\n\n".join(parts)
-                image_paths.extend(_extract_image_paths(before))
-                image_paths.extend(_extract_image_paths(after))
-                for m in (before_meta, after_meta):
-                    if m.get("image_paths"):
-                        image_paths.extend(str(m.get("image_paths")).split("|"))
-        image_paths = list(dict.fromkeys([p for p in image_paths if p]))
         out.append({
             "id": res["ids"][0][i],
             "content": content,
+            "original_content": original_content,
             "metadata": meta,
             "distance": dist,
             "image_paths": image_paths,
