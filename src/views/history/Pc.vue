@@ -11,7 +11,7 @@ import { useRouter } from 'vue-router'
 import { History, Star, Trash2, MessageCircle, ChevronRight, Search } from 'lucide-vue-next'
 import { showConfirmDialog, showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
-import { useChatHistoryStore } from '@/stores/chatHistory'
+import { useChatHistoryStore, type ChatSession } from '@/stores/chatHistory'
 import { formatTime, formatRelTime } from '@/utils/format'
 
 const router = useRouter()
@@ -57,6 +57,14 @@ const onClearAll = async () => {
   } catch { return }
   chat.clearAll()
   showToast({ type: 'success', message: '已清空' })
+}
+
+// FIX12：历史列表中展示会话图片缩略图
+const firstImages = (s: ChatSession) => {
+  for (const m of s.messages) {
+    if (m.role === 'user' && m.images && m.images.length) return m.images
+  }
+  return []
 }
 </script>
 
@@ -104,6 +112,10 @@ const onClearAll = async () => {
               </span>
             </div>
             <div class="text-xs text-text-2 mt-1 line-clamp-2 leading-relaxed">{{ chat.summaryOf(s) || '（暂无内容）' }}</div>
+            <div v-if="firstImages(s).length" class="mt-2 flex items-center gap-2">
+              <img v-for="(u, i) in firstImages(s).slice(0, 3)" :key="i" :src="u"
+                   class="w-10 h-10 rounded-btn object-cover border border-border bg-bg flex-shrink-0" />
+            </div>
             <div class="mt-1.5 flex items-center gap-2 text-[11px] text-text-2">
               <span class="mono">{{ s.messages.filter(m => m.role === 'user').length }} 条提问</span>
               <span class="mono">·</span>

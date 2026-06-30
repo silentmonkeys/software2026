@@ -25,6 +25,7 @@ const loading = ref(false)
 const offline = ref(false)
 const q = ref('')
 const filterType = ref<string>('all')
+const filterCategory = ref<string>('all')
 
 const detail = ref<KbDocDetail | null>(null)
 const detailLoading = ref(false)
@@ -59,6 +60,7 @@ const types = computed(() => {
 const filtered = computed(() =>
   docs.value.filter(d =>
     (filterType.value === 'all' || d.type.toLowerCase() === filterType.value) &&
+    (filterCategory.value === 'all' || (d.category || 'manual') === filterCategory.value) &&
     (!q.value || d.title.toLowerCase().includes(q.value.toLowerCase()))
   )
 )
@@ -157,6 +159,12 @@ const STATUS_CLS: Record<string, string> = {
         </div>
         <div class="ml-auto flex items-center gap-2 flex-wrap">
           <div class="flex p-0.5 bg-bg rounded-btn border border-border text-xs">
+            <button v-for="c in [{k:'all',l:'全部'},{k:'experience',l:'案例'},{k:'manual',l:'手册'}]" :key="c.k" @click="filterCategory = c.k"
+                    :class="['px-3 h-7 rounded font-medium', filterCategory === c.k ? 'bg-card shadow-card text-accent' : 'text-text-2']">
+              {{ c.l }}
+            </button>
+          </div>
+          <div class="flex p-0.5 bg-bg rounded-btn border border-border text-xs">
             <button v-for="t in types" :key="t" @click="filterType = t"
                     :class="['px-3 h-7 rounded font-medium uppercase', filterType === t ? 'bg-card shadow-card text-accent' : 'text-text-2']">
               {{ t === 'all' ? '全部' : t }}
@@ -183,6 +191,7 @@ const STATUS_CLS: Record<string, string> = {
             <th class="text-left font-medium px-5 py-2 w-16">ID</th>
             <th class="text-left font-medium px-5 py-2">文档名</th>
             <th class="text-left font-medium px-5 py-2 w-20">类型</th>
+            <th class="text-left font-medium px-5 py-2 w-20">分类</th>
             <th class="text-left font-medium px-5 py-2 w-24">状态</th>
             <th class="text-left font-medium px-5 py-2 w-44">入库时间</th>
             <th class="text-right font-medium px-5 py-2 w-24">操作</th>
@@ -199,6 +208,9 @@ const STATUS_CLS: Record<string, string> = {
             </td>
             <td class="px-5 py-3">
               <span class="px-2 py-0.5 rounded text-[11px] mono uppercase bg-bg border border-border">{{ d.type }}</span>
+            </td>
+            <td class="px-5 py-3">
+              <span class="px-2 py-0.5 rounded text-[11px] bg-bg border border-border whitespace-nowrap inline-block">{{ (d.category || 'manual') === 'experience' ? '案例' : '手册' }}</span>
             </td>
             <td class="px-5 py-3">
               <span class="px-2 py-0.5 rounded-pill text-[11px] border" :class="STATUS_CLS[d.status] || 'bg-bg border-border text-text-2'">
@@ -236,6 +248,14 @@ const STATUS_CLS: Record<string, string> = {
     </div>
 
     <div class="flex gap-1 overflow-x-auto hide-scrollbar -mx-1 px-1">
+      <button v-for="c in [{k:'all',l:'全部'},{k:'experience',l:'案例'},{k:'manual',l:'手册'}]" :key="c.k" @click="filterCategory = c.k"
+              :class="['px-3 h-8 rounded-pill text-xs flex-shrink-0',
+                       filterCategory === c.k ? 'bg-accent text-white' : 'bg-card border border-border text-text-2']">
+        {{ c.l }}
+      </button>
+    </div>
+
+    <div class="flex gap-1 overflow-x-auto hide-scrollbar -mx-1 px-1">
       <button v-for="t in types" :key="t" @click="filterType = t"
               :class="['px-3 h-8 rounded-pill text-xs flex-shrink-0 uppercase',
                        filterType === t ? 'bg-accent text-white' : 'bg-card border border-border text-text-2']">
@@ -259,6 +279,7 @@ const STATUS_CLS: Record<string, string> = {
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-text-2">
               <span class="mono">#{{ d.id }}</span>
               <span class="px-1.5 py-0.5 rounded mono uppercase bg-bg border border-border">{{ d.type }}</span>
+              <span class="px-1.5 py-0.5 rounded bg-bg border border-border whitespace-nowrap inline-block">{{ (d.category || 'manual') === 'experience' ? '案例' : '手册' }}</span>
               <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[d.status] || 'bg-bg border-border'">{{ STATUS_LABEL[d.status] || d.status }}</span>
             </div>
           </div>
@@ -296,7 +317,7 @@ const STATUS_CLS: Record<string, string> = {
           <div class="flex flex-wrap items-center gap-2 text-xs text-text-2 mb-4">
             <span class="mono">#{{ detail.id }}</span>
             <span class="px-1.5 py-0.5 rounded mono uppercase bg-bg border border-border">{{ detail.type }}</span>
-            <span v-if="detail.category" class="px-1.5 py-0.5 rounded bg-bg border border-border">{{ detail.category }}</span>
+            <span v-if="detail.category" class="px-1.5 py-0.5 rounded bg-bg border border-border whitespace-nowrap inline-block">{{ detail.category === 'experience' ? '案例' : '手册' }}</span>
             <span class="px-1.5 py-0.5 rounded-pill border" :class="STATUS_CLS[detail.status] || 'bg-bg border-border'">{{ STATUS_LABEL[detail.status] || detail.status }}</span>
             <span class="mono opacity-70">{{ detail.created_at }}</span>
           </div>

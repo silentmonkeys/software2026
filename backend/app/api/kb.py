@@ -49,6 +49,7 @@ def _uploader_name_map(db: Session, docs) -> dict:
 @router.post("/upload")
 async def upload(file: UploadFile = File(...),
                  parent_id: Optional[int] = Form(None, description="FIX6 第 5 项：经验主条目 id"),
+                 category: Optional[str] = Form(None, description="分类：manual / experience"),
                  db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
     fname = file.filename or ""
@@ -72,7 +73,7 @@ async def upload(file: UploadFile = File(...),
     approved = _is_auditor(user.role)
     doc = Document(
         title=fname, file_path=path, type=fname.split(".")[-1].lower(),
-        category="manual", content=text[:20000] if text else "",
+        category=category or "manual", content=text[:20000] if text else "",
         status="approved" if approved else "pending",
         uploader_id=user.id,
         parent_id=parent.id if parent else None,

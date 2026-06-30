@@ -22,6 +22,8 @@ export interface SourceItem {
   docId?: string
   title: string
   snippet: string
+  /** 跳转定位专用：原文关键短语，未经格式化处理，在 Preview 页 locateInMarkdown 中可直接搜到 */
+  hl?: string
   page?: number
   similarity?: number
   images?: SourceImageItem[]

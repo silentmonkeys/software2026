@@ -45,11 +45,11 @@ export interface SearchResult {
   recommendedTickets: RecommendedTicket[]
 }
 
-/** 后端 /api/chat/query 返回结构（FIX7 第 1 项：sources 含 doc_id / index） */
+/** 后端 /api/chat/query 返回结构 */
 interface BackendChatResp {
   answer: string
   image_observation: string
-  sources: { id?: string; doc_id?: string | number; index?: number; title: string; snippet: string; page?: number; score?: number; images?: { url: string; name?: string; path?: string }[] }[]
+  sources: { id?: string; doc_id?: string | number; index?: number; title: string; snippet: string; hl?: string; page?: number; score?: number; images?: { url: string; name?: string; path?: string }[] }[]
   recommended_tickets?: RecommendedTicket[]
 }
 
@@ -92,7 +92,7 @@ export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> 
     similarity: typeof s.score === 'number' ? Math.max(0, Math.min(1, s.score)) : Math.max(0.55, 0.92 - i * 0.07),
     source: '知识库 · ' + (s.title || ''),
     highlights: [],
-    meta: { docId: s.doc_id != null ? String(s.doc_id) : undefined, page: s.page, images: s.images || [] }
+    meta: { docId: s.doc_id != null ? String(s.doc_id) : undefined, page: s.page, hl: s.hl, images: s.images || [] }
   }))
   return {
     summary: data.answer || '',

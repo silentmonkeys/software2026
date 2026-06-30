@@ -58,6 +58,15 @@ const onAddTicket = async (msgId: string, ticketId: number) => {
 
 const onPickFiles = (files: File[]) => { imageFiles.value.push(...files) }
 
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 const scrollToBottom = async () => {
   await nextTick()
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior: 'smooth' })
@@ -72,9 +81,13 @@ const onSend = async () => {
   const sid = sessionId.value
 
   const userMsgId = nanoid()
+  // FIX12：图片转 base64 持久化，避免 blob URL 刷新/重登后失效
+  const userImages = imageFiles.value.length
+    ? await Promise.all(imageFiles.value.map(f => fileToBase64(f)))
+    : []
   chat.appendMessage(sid, {
     id: userMsgId, role: 'user',
-    content: t, images: [...images.value], createdAt: Date.now()
+    content: t, images: userImages, createdAt: Date.now()
   })
 
   const aiId = nanoid()
@@ -101,6 +114,7 @@ const onSend = async () => {
         docId: (h.meta as any)?.docId,
         title: h.title,
         snippet: h.snippet || '',
+        hl: (h.meta as any)?.hl || h.snippet || '',
         similarity: h.similarity,
         page: (h.meta as any)?.page,
         images: (h.meta as any)?.images || []
@@ -289,7 +303,7 @@ onBeforeUnmount(() => {
                                            path: `/kb/preview/${h.docId}`,
                                            query: {
                                              chunk: h.id,
-                                             hl: stripDots(h.snippet),
+                                             hl: stripDots(h.hl || h.snippet),
                                              page: h.page || undefined
                                            }
                                          }"
@@ -325,13 +339,13 @@ onBeforeUnmount(() => {
 /* FIX7 第 1 项：引用面板样式 */
 .ref-snippet {
   font-size: 11px;
-  color: #666;
+  color: var(--color-text-2, #6B7280);
 }
 .ref-link {
-  color: #00B7C2;
+  color: var(--color-ai, #00B7C2);
   text-decoration: underline;
 }
 .ref-link:active {
-  color: #009aa3;
+  color: var(--color-accent-2, #FF7E36);
 }
 </style>

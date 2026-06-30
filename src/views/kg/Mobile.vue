@@ -5,7 +5,7 @@
  * - 顶部"已选文档"筛选器（多选已审文档）
  * - 节点详情展开时拉取真实原文片段
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getGraph, getChunk, type KGGraph, type KGNode, type KGType, type ChunkContent } from '@/api/kg'
 import { listDocs, type KbDoc } from '@/api/kb'
@@ -23,6 +23,8 @@ const filterEntity = ref<'all' | EntityType>('all')
 const filterDocType = ref<'all' | DocType>('all')
 const expanded = ref<Set<string>>(new Set())
 const chunks = ref<Record<string, ChunkContent | null>>({})
+// FIX7 续：追踪每个节点原文片段来自哪个关联文档（随案例/手册筛选联动）
+const activeChunkDocs = ref<Record<string, NonNullable<KGNode['source_docs']>[number] | null>>({})
 
 const docs = ref<KbDoc[]>([])
 const selectedDocs = ref<Set<string>>(new Set())
@@ -91,10 +93,24 @@ const toggle = async (n: KGNode) => {
   if (s.has(n.id)) s.delete(n.id)
   else {
     s.add(n.id)
-    if (n.docId && n.chunkId && chunks.value[n.id] === undefined) {
+    // FIX7 续：根据当前案例/手册筛选器，从 source_docs 中选取匹配的关联文档拉取 chunk
+    if (chunks.value[n.id] === undefined) {
+      const srcs = n.source_docs || []
+      const matched = (() => {
+        if (filterDocType.value === 'all') return srcs[0]
+        return srcs.find(sd => {
+          const isCase = (sd.doc_type || '').toLowerCase() === 'experience'
+          return filterDocType.value === 'case' ? isCase : !isCase
+        })
+      })()
+      const docId = matched ? String(matched.id) : n.docId
+      const chunkId = matched?.chunk_id || n.chunkId
+      activeChunkDocs.value[n.id] = matched || null
       chunks.value[n.id] = null  // 占位，避免重复请求
-      try { chunks.value[n.id] = await getChunk(n.docId, n.chunkId) }
-      catch { chunks.value[n.id] = null }
+      if (docId && chunkId) {
+        try { chunks.value[n.id] = await getChunk(docId, chunkId) }
+        catch { chunks.value[n.id] = null }
+      }
     }
   }
   expanded.value = s
@@ -111,6 +127,178 @@ const applyDocFilter = async () => {
   showDocFilter.value = false
   await reload()
 }
+
+// FIX7 续 + FIX9：移动端跳到文档详情时同样携带 keyword / hl / page 精准定位
+// hl 构造原则同 Pc.vue / 后端 _build_kg_snippet：keyword 在 hl 开头，单行内截取
+const buildHl = (text: string, keyword: string): string => {
+  if (!text) return ''
+  for (const ln of text.split('\n')) {
+    const s = ln.trim()
+    if (!s || s.startsWith('[图片文件]')) continue
+    const idx = s.indexOf(keyword)
+    if (idx >= 0) return s.slice(idx, idx + 120)
+  }
+  for (const ln of text.split('\n')) {
+    const s = ln.trim()
+    if (s && !s.startsWith('[图片文件]')) return s.slice(0, 120)
+  }
+  return ''
+}
+
+// FIX8 + FIX10 + FIX11 v2：原文片段格式全局优化
+// 把编号项及其续行合并成结构化块，解析名称/数量/工具/扭矩
+interface SnippetLine {
+  text: string
+  html: string
+  type: 'h' | 'list' | 'num' | 'para'
+  indent: number
+  num?: string
+  name?: string
+  quantity?: string
+  tool?: string
+  torque?: string
+}
+
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+const highlightLine = (text: string, label: string): string => {
+  if (!label) return escapeHtml(text)
+  const safe = escapeHtml(text)
+  const esc = escapeHtml(label)
+  const i = safe.indexOf(esc)
+  if (i < 0) return safe
+  return safe.slice(0, i) + `<mark class="sn-hl">${esc}</mark>` + safe.slice(i + esc.length)
+}
+
+const parseNumLine = (s: string) => {
+  const m = s.match(/^(\d{1,3})\s+(.*)$/)
+  if (!m) return { num: '', name: s, quantity: '', tool: '', torque: '' }
+  const num = m[1]
+  const rest = m[2].trim()
+  const r = rest.match(/^(.+?)\s+(\d+|—)\b(?:\s+(.*))?$/)
+  if (!r) return { num, name: rest, quantity: '', tool: '', torque: '' }
+  const name = r[1].trim()
+  const quantity = r[2]
+  const extra = r[3] ? r[3].trim() : ''
+  let tool = '', torque = ''
+  if (extra) {
+    const parts = extra.split(/\s*\/\s*/)
+    if (parts.length === 2) { tool = parts[0].trim(); torque = parts[1].trim() }
+  }
+  return { num, name, quantity, tool, torque }
+}
+
+const parseExtraLine = (s: string) => {
+  const parts = s.split(/\s*\/\s*/)
+  if (parts.length === 2) return { tool: parts[0].trim(), torque: parts[1].trim() }
+  return { tool: '', torque: '' }
+}
+
+const formatSnippet = (text: string, label: string, max = 14): SnippetLine[] => {
+  if (!text) return []
+  const lines = text.split('\n')
+  let ci = -1
+  lines.forEach((ln, i) => { if (ci < 0 && ln.includes(label)) ci = i })
+  if (ci < 0) {
+    const norm = label.replace(/\s+/g, '')
+    lines.forEach((ln, i) => { if (ci < 0 && ln.replace(/\s+/g, '').includes(norm)) ci = i })
+  }
+  if (ci < 0) ci = 0
+  const from = Math.max(0, ci - 5), to = Math.min(lines.length, from + max)
+
+  type Block =
+    | { type: 'num'; lines: string[] }
+    | { type: 'other'; line: string }
+  const blocks: Block[] = []
+
+  for (let i = from; i < to; i++) {
+    const s = lines[i].trim()
+    if (!s) continue
+    if (/^\[图片/.test(s) || /page-\d{3}-image-\d{2}\.(png|jpg|jpeg|webp)/i.test(s)) continue
+    if (/^!?\[.*?\]\(/.test(s) || /^uploads\//i.test(s) || /^extracted_images\//i.test(s)) continue
+
+    if (/^\d{1,3}\s/.test(s)) {
+      blocks.push({ type: 'num', lines: [s] })
+    } else if (blocks.length) {
+      const last = blocks[blocks.length - 1]
+      if (last.type === 'num') {
+        const isShort = s.length <= 70
+        const isToolLike = /[\/±]/.test(s) || /^\d+#/.test(s) || /N[·.]?m/.test(s) || /杆|套筒|扳手|扭力/.test(s)
+        if (isShort && isToolLike) { last.lines.push(s); continue }
+      }
+      blocks.push({ type: 'other', line: s })
+    } else {
+      blocks.push({ type: 'other', line: s })
+    }
+  }
+
+  const out: SnippetLine[] = []
+  for (const b of blocks) {
+    if (b.type === 'num') {
+      const main = b.lines[0]
+      const p = parseNumLine(main)
+      const extras = b.lines.slice(1)
+      let tool = p.tool, torque = p.torque
+      for (const ex of extras) {
+        const e = parseExtraLine(ex)
+        if (e.tool) { tool = e.tool; torque = e.torque }
+      }
+      out.push({
+        text: p.name,
+        html: highlightLine(p.name, label),
+        type: 'num',
+        indent: 0,
+        num: p.num,
+        name: p.name,
+        quantity: p.quantity,
+        tool,
+        torque
+      })
+    } else {
+      const s = b.line
+      const indent = (s.length - s.trimStart().length) * 3
+      let type: SnippetLine['type'] = 'para'
+      if (/^(第[一二三四五六七八九十百千\d]+章|\d+(\.\d+)+[\s、.·])/.test(s)) type = 'h'
+      else if (/^(\s*[·•\-–—*+])/.test(s)) type = 'list'
+      const clean = type === 'list' ? s.replace(/^\s*[·•\-–—*+]\s*/, '').trim() : s.trim()
+      out.push({ text: clean, html: highlightLine(clean, label), type, indent })
+    }
+  }
+  return out
+}
+
+// FIX7 续：移动端跳到文档详情时，优先跳到当前筛选对应的关联文档
+// keyword 优先用于精准定位（节点 label），hl 作为 fallback 上下文
+const jumpToDoc = async (n: KGNode) => {
+  const keyword = n.label || ''
+  const matched = activeChunkDocs.value[n.id]
+  if (matched) {
+    await router.push({
+      path: `/kb/preview/${matched.id}`,
+      query: { ...(keyword ? { keyword } : {}), ...(matched.hl ? { hl: matched.hl } : {}), ...(matched.page ? { page: String(matched.page) } : {}) }
+    })
+    return
+  }
+  // fallback：没有 source_docs 信息时，用节点原始 docId
+  if (!n.docId) return
+  const c = chunks.value[n.id]
+  if (c?.text) {
+    const hl = buildHl(c.text, keyword)
+    await router.push({
+      path: `/kb/preview/${n.docId}`,
+      query: { ...(keyword ? { keyword } : {}), ...(hl ? { hl } : {}), ...(c.page ? { page: String(c.page) } : {}) }
+    })
+  } else {
+    await router.push(`/kb/preview/${n.docId}`)
+  }
+}
+
+// FIX7 续：当案例/手册筛选器切换时，清除已有 chunk 缓存，下次展开时重新拉取对应类型的片段
+watch(filterDocType, () => {
+  // 清空 chunk 缓存，让 toggle 重新拉取
+  chunks.value = {}
+  activeChunkDocs.value = {}
+})
 
 onMounted(async () => {
   try { docs.value = (await listDocs()).filter(d => d.status === 'ready') } catch {}
@@ -202,19 +390,44 @@ onMounted(async () => {
 
         <transition name="collapse">
           <div v-if="expanded.has(n.id)" class="border-t border-border p-3 bg-bg/50 space-y-2">
-            <div v-if="n.docId" class="text-xs text-text-2 mono">来源文档 #{{ n.docId }}</div>
-            <div v-if="chunks[n.id] === null && !n.docId" class="text-xs text-text-2 italic">
-              该节点未关联到具体文档片段
+            <div class="text-xs text-text-2 mono">
+              来源文档 #{{ activeChunkDocs[n.id]?.id || n.docId }}
+              <span v-if="activeChunkDocs[n.id]?.title" class="ml-1">· {{ activeChunkDocs[n.id]!.title }}</span>
+            </div>
+            <div v-if="chunks[n.id] === null && !activeChunkDocs[n.id] && !n.docId" class="text-xs text-text-2 italic">
+              当前筛选下暂无匹配的原文片段
             </div>
             <div v-else-if="!chunks[n.id] && n.docId" class="text-xs text-text-2 italic">
               暂无原文片段（可能后端未实现 /api/kb/{docId}/chunk/{chunkId}）
             </div>
-            <div v-else-if="chunks[n.id]" class="bg-card rounded-btn p-3 text-xs leading-relaxed">
+            <div v-else-if="chunks[n.id]" class="bg-card rounded-btn p-3 sn-panel">
               <div v-if="chunks[n.id]!.page" class="mono text-[10px] text-text-2 mb-1">页码 {{ chunks[n.id]!.page }}</div>
-              <div class="whitespace-pre-wrap">{{ chunks[n.id]!.text }}</div>
+              <div class="sn-body">
+                <div v-for="(line, i) in formatSnippet(chunks[n.id]!.text, n.label)" :key="i"
+                     :class="['sn-line', `sn-${line.type}`]"
+                     :style="{ paddingLeft: `${line.indent}px` }">
+                  <template v-if="line.type === 'num'">
+                    <div class="sn-num">
+                      <span class="sn-badge">{{ line.num }}</span>
+                      <div class="sn-num-body">
+                        <div class="sn-num-name" v-html="line.html"></div>
+                        <div v-if="line.quantity && line.quantity !== '—' || line.tool || line.torque" class="sn-num-meta">
+                          <span v-if="line.quantity && line.quantity !== '—'">数量 {{ line.quantity }}</span>
+                          <span v-if="line.tool">工具 {{ line.tool }}</span>
+                          <span v-if="line.torque">扭矩 {{ line.torque }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <span v-if="line.type === 'list'" class="sn-dot">· </span>
+                    <span v-html="line.html"></span>
+                  </template>
+                </div>
+              </div>
             </div>
-            <button v-if="n.docId" class="w-full h-9 rounded-btn border border-border text-xs flex items-center justify-center gap-1"
-                    @click="router.push(`/kb/preview/${n.docId}`)">
+            <button v-if="activeChunkDocs[n.id] || n.docId" class="w-full h-9 rounded-btn border border-border text-xs flex items-center justify-center gap-1"
+                    @click="jumpToDoc(n)">
               <ExternalLink class="w-3.5 h-3.5" /> 跳到文档详情
             </button>
           </div>
@@ -242,4 +455,45 @@ onMounted(async () => {
   0%   { opacity: 0; transform: translateY(8px) scale(0.98); }
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* FIX10+FIX11 v2：原文片段格式——结构化展示 */
+.sn-panel { line-height: 1.6; }
+.sn-body { font-size: 12px; }
+.sn-line { color: var(--color-text-2); margin-bottom: 4px; }
+.sn-h { font-weight: 600; color: var(--color-text); margin-top: 8px; margin-bottom: 4px; }
+.sn-list { display: flex; align-items: baseline; }
+.sn-dot { color: var(--color-accent); }
+.sn-num { display: flex; align-items: flex-start; gap: 8px; }
+.sn-num-body { flex: 1; min-width: 0; }
+.sn-num-name { color: var(--color-text); word-break: break-word; }
+.sn-num-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-2);
+  margin-top: 4px;
+}
+.sn-num-meta span {
+  background: var(--color-bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.sn-badge {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--color-accent);
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+.sn-hl { background: rgba(255,193,7,0.35); color: var(--color-text); padding: 1px 2px; border-radius: 2px; font-weight: 600; }
+[data-theme='dark'] .sn-hl { background: rgba(255,215,0,0.4); }
+[data-theme='dark'] .sn-badge { background: var(--color-card); }
+[data-theme='dark'] .sn-num-meta span { background: var(--color-card); }
 </style>

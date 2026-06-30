@@ -168,15 +168,45 @@ SYSTEM_PROMPT = (
     "你是企业设备检修助手龙芯智修。必须严格、只依据用户提供的【检修知识】回答。"
     "硬性规则："
     "1) 不得使用常识或训练记忆补全手册中没有的步骤、参数、故障原因；"
-    "2) 如果【检修知识】中包含与用户问题相关的图片（[图片文件]标记），"
+    "2) 只回答用户明确提出的问题，严禁主动输出'图像观察'、'设备状态分析'、'可能故障'、'建议'等用户未要求的内容；"
+    "3) 如果用户上传了图片但问题非常宽泛（如'这是什么'、'这个在干嘛'、'分析一下'、'介绍一下'），"
+    "   应默认理解为询问图片中展示的设备/部件/操作，并直接基于【检修知识】回答，不得以'未指明对象'为由拒绝；"
+    "4) 如果【检修知识】中包含与用户问题相关的图片（[图片文件]标记），"
     "   必须结合图片内容和对应文字描述来回答，不能因为缺少编号标注就说不知道；"
-    "3) 回答中的关键判断、参数、步骤必须附带对应来源编号，如 [1]、[2]；"
-    "4) 每个主要结论后尽量引用原文关键句，格式为：原文依据：\"...\"；"
-    "5) 不得编造工具、零件型号、数值、验收标准。"
-    "6) 当用户问图中某个部件是什么时，如果知识库检索到了该图所在页面的文字和图片文件路径，"
-    "   应该根据文字内容（如零件清单、部件名称）结合图片视觉信息给出最可能的答案，并说明依据来源页码。"
+    "5) 回答中的关键判断、参数、步骤必须附带对应来源编号，如 [1]、[2]；"
+    "6) 每个主要结论后尽量引用原文关键句，格式为：原文依据：\"...\"；"
+    "7) 不得编造工具、零件型号、数值、验收标准；"
+    "8) 当用户问图中某个部件是什么时，直接根据手册中的零件清单、部件名称给出答案，并说明依据来源页码。"
+    "   不要描述用户没有问的设备状态，不要推测故障，不要把系统识别结果说成是用户的描述；"
+    "9) 回答应简洁，抓住要点，不过度展开。"
     "回答使用中文。"
 )
+
+
+def _is_vague_question(question: str) -> bool:
+    """判断问题是否为宽泛询问，需要结合图片才能明确意图。"""
+    if not question:
+        return False
+    q = question.strip().lower()
+    q = re.sub(r"[\s?？]+$", "", q)
+    vague_set = {
+        "这是什么", "这个是什么", "这什么", "这玩意是什么",
+        "这是什么在干嘛", "这是什么在做什么", "这个在干嘛", "这个在做什么",
+        "在干嘛", "在做什么", "做什么", "是什么",
+        "分析一下", "分析", "介绍一下", "介绍", "说明一下", "说明",
+        "看看", "帮我看看", "看一下", "", "?", "？",
+    }
+    if q in vague_set:
+        return True
+    # 短问题（<=4 字符）且包含宽泛动词，也视为宽泛
+    if len(q) <= 4 and any(v in q for v in ("什么", "干嘛", "分析", "介绍", "看", "说")):
+        return True
+    return False
+
+
+def _normalize_vague_question(question: str, image_desc: str) -> str:
+    """把宽泛问句转化为明确的图片内容询问，用于检索和生成。"""
+    return "请根据图片和【检修知识】说明图中展示的是什么设备/部件，以及正在进行什么操作"
 
 
 def rag_answer(question: str, image_desc: str = "", image_only: bool = False) -> Tuple[str, List[dict]]:
@@ -186,14 +216,20 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
     - 当 question 为空但 image_desc 非空时，以 image_desc 作为检索主查询
       （避免被空字符串或占位符稀释 embedding 语义）
     - 有文字问题时，拼接格式保持原有逻辑
+    - 当问题宽泛且上传了图片时，自动将其转化为对图片内容的询问，避免模型拒绝回答
     """
+    # 对宽泛问句进行归一化，使检索和生成都有明确意图
+    normalized_question = question
+    if image_desc and _is_vague_question(question):
+        normalized_question = _normalize_vague_question(question, image_desc)
+
     if not question and image_desc:
         # 纯图片查询：VL 输出已包含文档识别结果，直接作为查询主体
         enriched = image_desc
     elif image_desc:
-        enriched = f"{question}\n（图片观察：{image_desc}）"
+        enriched = f"{normalized_question}\n（图片观察：{image_desc}）"
     else:
-        enriched = question
+        enriched = normalized_question
 
     # 纯图片查询保持上一版能力：检索时允许邻居补充上下文，避免因为主chunk只含图片路径而答不出来。
     # 注意：search() 已经限制 images/snippet 只来自主chunk，不会影响引用展示。
@@ -219,13 +255,26 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
             [],
         )
     context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(hits)])
-    user = f"【检修知识】\n{context}\n\n【用户问题】\n{enriched}"
+    # FIX8-refine：把系统识别结果与用户原始问题分离，避免模型把 img_desc 当成"用户描述"复述
+    user = f"【检修知识】\n{context}\n\n【用户问题】\n{question or '(用户仅上传图片，未输入文字)'}"
+    if image_desc and _is_vague_question(question):
+        user += (
+            "\n\n【问题补充说明】\n"
+            "用户上传了图片，但问题比较宽泛。请默认理解为：请根据图片和手册说明图中展示的设备/部件/操作。"
+            "直接回答，不要以'未指明对象'或'无法确定'为由拒绝。"
+        )
+    if image_desc:
+        user += (
+            f"\n\n【系统图片识别参考】\n{image_desc}\n"
+            "（注意：以上是系统自动识别结果，仅用于辅助检索和交叉验证；"
+            "回答必须严格基于【检修知识】，且不得把它复述为'用户描述'或'图像观察'。）"
+        )
     if image_only and image_desc:
         user += (
             "\n\n【重要补充】\n"
-            "用户上传的是图片并询问图片内容。你必须先根据【用户问题】中的图片观察直接判断这张上传图，"
-            "再用【检修知识】做交叉验证。不要回答'不是来自知识库'、'无法确认'作为主要结论；"
-            "只有当检修知识确实矛盾时才说明不确定。"
+            "用户上传图片并询问图片内容。请直接基于【检修知识】回答用户问题，"
+            "不要主动描述图片、不要分析设备状态、不要推测故障。"
+            "只有当【检修知识】确实无法支撑时才说明不确定。"
         )
     answer = chat_text(SYSTEM_PROMPT, user, temperature=0.1, top_p=0.7)
     return answer, hits

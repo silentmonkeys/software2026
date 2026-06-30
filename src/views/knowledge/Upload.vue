@@ -28,6 +28,7 @@ const ALLOWED = ['pdf', 'docx', 'txt', 'md']
 // 经验分享表单
 const title = ref('')
 const body = ref('')
+const category = ref<'experience' | 'manual'>('experience')
 const submitting = ref(false)
 // FIX6-resume O3：原子提交——附件暂存在前端，点"提交分享"时随经验一起发送
 const pendingFiles = ref<File[]>([])
@@ -65,9 +66,8 @@ onMounted(() => {
   refresh()
 })
 onBeforeUnmount(() => {
-  if (title.value || body.value) {
-    searchStore.setUploadDraft(title.value, body.value, [])
-  }
+  // 始终保存当前状态——删除内容后也应保存空值，否则旧草稿不会被清掉
+  searchStore.setUploadDraft(title.value, body.value, [])
 })
 
 const filtered = computed(() =>
@@ -97,7 +97,7 @@ const submitExperience = async () => {
   }
   try {
     const res = await uploadTextWithFiles(
-      { title: t, content, category: 'experience' },
+      { title: t, content, category: category.value },
       pendingFiles.value
     )
     // 把后端返回的附件 id 回填到对应 UploadItem
@@ -116,6 +116,7 @@ const submitExperience = async () => {
     showToast({ type: 'success', message: msg })
     title.value = ''
     body.value = ''
+    category.value = 'experience'
     pendingFiles.value = []
     searchStore.clearUploadDraft()
     await refresh()
@@ -248,6 +249,17 @@ const goReview = () => router.push('/auditor/review')
         <div class="text-sm font-semibold flex items-center gap-2">
           <Lightbulb class="w-4 h-4 text-accent" />
           {{ user.isAuditor ? '录入一条知识' : '分享一条检修经验' }}
+        </div>
+        <!-- 审核员/管理员：分类选择（前线员工上传永远是案例，无需选择） -->
+        <div v-if="user.isAuditor" class="flex items-center gap-2">
+          <span class="text-sm text-text-2">分类</span>
+          <div class="flex p-0.5 bg-bg rounded-btn border border-border text-sm w-max">
+            <button v-for="c in [{k:'experience',l:'案例 / 经验'},{k:'manual',l:'手册 / 规程'}]" :key="c.k"
+                    @click="category = c.k as any" :disabled="submitting"
+                    :class="['px-4 h-8 rounded font-medium', category === c.k ? 'bg-card shadow-card text-accent' : 'text-text-2']">
+              {{ c.l }}
+            </button>
+          </div>
         </div>
         <div>
           <div class="text-sm text-text-2 mb-1">标题 <span class="text-danger">*</span></div>

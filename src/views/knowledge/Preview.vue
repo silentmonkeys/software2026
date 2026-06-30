@@ -30,7 +30,8 @@ const blobUrl = ref<string>('')      // FIX6 第 2 项：PDF Blob URL
 const blobErr = ref('')
 
 // FIX7 续：跳转锚点
-const highlight = computed(() => (route.query.hl as string) || '')
+const keyword = computed(() => (route.query.keyword as string) || '')   // 优先：节点 label（精准关键词）
+const highlight = computed(() => (route.query.hl as string) || '')      // fallback：上下文片段
 const targetPage = computed(() => {
   const p = Number(route.query.page)
   return Number.isFinite(p) && p > 0 ? p : 0
@@ -55,6 +56,7 @@ const isBinary = computed(() => {
 /**
  * FIX7 续：PDF iframe src 拼锚点。
  * Chrome / Edge 内置 viewer 识别 #page=N&search=... 跳页 + 自动查找命中。
+ * keyword（节点 label）比 hl 片段更短更精准，PDF 查找器更适合短词搜索。
  */
 const iframeSrc = computed(() => {
   if (!blobUrl.value) return ''
@@ -62,7 +64,9 @@ const iframeSrc = computed(() => {
   if (t !== 'pdf') return blobUrl.value
   const parts: string[] = []
   if (targetPage.value) parts.push(`page=${targetPage.value}`)
-  if (highlight.value) parts.push(`search=${encodeURIComponent(highlight.value.slice(0, 80))}`)
+  // PDF search 用 keyword（短词精准），fallback 用 hl 前 40 字
+  const searchTerm = keyword.value || highlight.value.slice(0, 40)
+  if (searchTerm) parts.push(`search=${encodeURIComponent(searchTerm)}`)
   return parts.length ? `${blobUrl.value}#${parts.join('&')}` : blobUrl.value
 })
 
@@ -76,31 +80,59 @@ const loadBlob = async () => {
 }
 
 /**
- * FIX7 续：在 markdown 渲染结果里查找并高亮文本节点。
- * 用 TreeWalker 扫描文本节点，找到包含目标子串的首个节点；
- * 命中后用 Range 拆分出来包一个 <mark>，再 scrollIntoView。
- * 找不到完整串就把 needle 折半（保留前缀）再试，最少 8 字。
+ * FIX7 续 + FIX9：在 markdown 渲染结果里查找并高亮文本节点。
+ * 定位策略（优先级从高到低）：
+ *   1. keyword（节点 label）——最精准，直接搜索关键词本身
+ *   2. hl 片段逐级折半——hl 现在从 keyword 开头（单行内截取），所以短子串也以 keyword 起始
+ * 命中后用 Range 拆分包 <mark>，scrollIntoView + 闪动提示用户视线。
+ *
+ * 关键改进：hl 不再是 space-join 跨行拼接（在 markdown 渲染后因换行而断裂无法匹配），
+ * 而是包含 keyword 的单行原文从 keyword 位置截取，hl.slice(0,N) 的短子串也从 keyword 开始。
  */
 const locateInMarkdown = () => {
-  if (!mdBodyRef.value || !highlight.value) return
+  if (!mdBodyRef.value) return
   const root = mdBodyRef.value
+
+  // 策略 1：优先搜索 keyword（节点 label），精准定位到关键词本身
+  if (keyword.value) {
+    const kw = keyword.value.trim()
+    if (kw.length >= 2) {
+      const hit = findAndMark(root, kw)
+      if (hit) {
+        locateHint.value = `已精准定位到「${kw}」`
+        hit.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+    }
+  }
+
+  // 策略 2：keyword 未命中，用 hl 片段搜索（hl 现从 keyword 开头，短子串也以 keyword 起始）
+  if (!highlight.value) {
+    locateHint.value = keyword.value ? `未在文本中找到「${keyword.value}」` : ''
+    if (locateHint.value) showToast({ message: locateHint.value, position: 'top' })
+    return
+  }
   let needle = highlight.value.trim()
-  // 优先用前 60 字（snippet 的相关段开头一般就是命中处）；命中失败时逐级折半
-  const tryLens = [60, 40, 24, 12, 8].filter(n => n <= needle.length).concat(needle.length)
+  // hl 从 keyword 开头，所以 tryLens 从短到长更合理——短子串更可能在单个 text node 内命中
+  const tryLens = [needle.length, 60, 40, 24, 12, 8].filter(n => n > 0 && n <= needle.length)
   const seen = new Set<number>()
   for (const len of tryLens) {
     if (seen.has(len)) continue
     seen.add(len)
     const probe = needle.slice(0, len)
-    if (probe.length < 4) continue
+    if (probe.length < 2) continue   // 最低 2 字（中文关键词如"轴承"就 2 字）
     const hit = findAndMark(root, probe)
     if (hit) {
-      locateHint.value = '已定位到引用片段'
+      locateHint.value = keyword.value
+        ? `已定位到引用片段（关键词「${keyword.value}」未直接命中，使用了上下文定位）`
+        : '已定位到引用片段'
       hit.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
   }
-  locateHint.value = '未在文本中找到引用片段，已显示文档开头'
+  locateHint.value = keyword.value
+    ? `未在文本中找到「${keyword.value}」及相关片段`
+    : '未在文本中找到引用片段'
   showToast({ message: locateHint.value, position: 'top' })
 }
 
@@ -130,15 +162,18 @@ const findAndMark = (root: HTMLElement, probe: string): HTMLElement | null => {
 }
 
 const onIframeLoad = () => {
-  if (!highlight.value) return
+  const kw = keyword.value || ''
+  const hlShort = highlight.value.slice(0, 30)
+  const searchTerm = kw || hlShort
+  if (!searchTerm) return
   const t = (doc.value?.type || '').toLowerCase()
   if (t === 'docx') {
     // docx iframe 没有标准搜索协议；告知用户使用浏览器查找
-    locateHint.value = `请在浏览器内用 Ctrl/Cmd+F 搜索：${highlight.value.slice(0, 30)}`
+    locateHint.value = `请在浏览器内用 Ctrl/Cmd+F 搜索：${kw || hlShort}`
   } else if (t === 'pdf') {
     locateHint.value = targetPage.value
-      ? `已跳至第 ${targetPage.value} 页 · 在 PDF 内查找：${highlight.value.slice(0, 30)}`
-      : `已在 PDF 内查找：${highlight.value.slice(0, 30)}`
+      ? `已跳至第 ${targetPage.value} 页 · 在 PDF 内查找：${kw || hlShort}`
+      : `已在 PDF 内查找：${kw || hlShort}`
   }
 }
 
@@ -152,16 +187,17 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  // 文本类：等 DOM 渲染完成后再定位
-  if (doc.value && !isBinary.value && highlight.value) {
+  // 文本类：等 DOM 渲染完成后再定位（keyword 或 hl 都可触发）
+  if (doc.value && !isBinary.value && (keyword.value || highlight.value)) {
     await nextTick()
     locateInMarkdown()
   }
 })
 
-// 同页内换 query 也要重新定位（同 docId 不同 hl 时 Vue Router 不会重建组件）
-watch(() => route.query.hl, async (v) => {
-  if (!v || !doc.value || isBinary.value) return
+// 同页内换 query 也要重新定位（同 docId 不同 keyword/hl 时 Vue Router 不会重建组件）
+watch([() => route.query.keyword, () => route.query.hl], async () => {
+  if (!doc.value || isBinary.value) return
+  if (!keyword.value && !highlight.value) return
   // 清掉旧高亮
   mdBodyRef.value?.querySelectorAll('mark.kb-hl-mark').forEach(el => {
     const parent = el.parentNode
@@ -271,17 +307,26 @@ const doExport = async (format: 'pdf' | 'md') => {
 </template>
 
 <style>
-/* FIX7 续：引用定位高亮 —— 浅黄底 + 闪动一次提示用户视线 */
+/* FIX7 续 + FIX9：引用定位高亮 —— 醒目黄底 + 两次闪动提示用户视线 */
 .md-body mark.kb-hl-mark {
-  background: #FFF3B0;
+  background: #FFE066;
   color: inherit;
-  padding: 0 2px;
-  border-radius: 2px;
-  animation: kb-hl-pulse 1.6s ease-out 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-weight: 600;
+  animation: kb-hl-flash 2s ease-out 1;
 }
-@keyframes kb-hl-pulse {
-  0%   { background: #FFE066; box-shadow: 0 0 0 4px rgba(255, 224, 102, 0.6); }
+@keyframes kb-hl-flash {
+  0%   { background: #FF4444; box-shadow: 0 0 8px 4px rgba(255, 68, 68, 0.7); }
+  15%  { background: #FFE066; box-shadow: 0 0 6px 3px rgba(255, 224, 102, 0.6); }
+  30%  { background: #FFD700; box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
+  45%  { background: #FFE066; box-shadow: 0 0 4px 2px rgba(255, 224, 102, 0.4); }
   60%  { background: #FFF3B0; box-shadow: 0 0 0 0 rgba(255, 224, 102, 0); }
   100% { background: #FFF3B0; }
+}
+/* 深色模式下高亮适配 */
+[data-theme='dark'] .md-body mark.kb-hl-mark {
+  background: #FFD700;
+  color: #1A1A2E;
 }
 </style>

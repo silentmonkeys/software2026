@@ -19,7 +19,7 @@ export interface KGNode {
   docId?: string
   chunkId?: string
   // FIX6 第 8 项：来源文档列表
-  source_docs?: { id: number; title: string; doc_type: string }[]
+  source_docs?: { id: number; title: string; doc_type: string; chunk_id?: string; page?: number; hl?: string }[]
 }
 export interface KGEdge { source: string; target: string; rel: string }
 export interface KGGraph { nodes: KGNode[]; edges: KGEdge[] }

@@ -58,6 +58,45 @@ _CATEGORY_LABEL = {
 }
 
 
+# FIX7 续 + FIX9：为图谱来源文档构造 hl 定位片段
+# 核心原则：hl 必须以 keyword 开头、必须是文档原文中的自然子串（单行内截取，不跨行 space-join）
+# 这样 Preview 页 locateInMarkdown 搜索 hl.slice(0,N) 时，短子串也从 keyword 开始，
+# 能精准命中关键词本身，而非 keyword 前 40 字上下文（上下文在 markdown 渲染后因换行而断裂）
+_STOP_TOKENS = {"[图片文件]", "uploads", "extracted_images"}
+
+
+def _build_kg_snippet(text: str, keyword: str, max_len: int = 120) -> str:
+    """返回包含 keyword 的那行原文，从 keyword 位置截取（keyword 在 hl 开头），不跨行 space-join。
+
+    这样 hl 是文档原文中的自然连续子串，Preview 页 locateInMarkdown 能在 markdown 渲染结果里找到。
+    """
+    if not text or not keyword:
+        return ""
+    # 找包含 keyword 的行（保留原文格式，不做 space-join）
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("[图片文件]"):
+            continue
+        if "uploads" in s or "extracted_images" in s:
+            continue
+        if re.search(r"page-\d{3}-image-\d{2}\.(png|jpg|jpeg|webp)", s, re.I):
+            continue
+        idx = s.find(keyword)
+        if idx >= 0:
+            # 从 keyword 位置截取，keyword 在 hl 开头
+            return s[idx:idx + max_len]
+    # keyword 不在任何单行内 → fallback：取第一行非空内容
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s and not s.startswith("[图片文件]") and "uploads" not in s and "extracted_images" not in s:
+            if re.search(r"page-\d{3}-image-\d{2}\.(png|jpg|jpeg|webp)", s, re.I):
+                continue
+            return s[:max_len]
+    return ""
+
+
 def _build_pattern(words: Iterable[str]) -> re.Pattern:
     # 直接 OR；中文无需 \b 边界
     parts = sorted({w for w in words if w}, key=len, reverse=True)
@@ -186,7 +225,7 @@ def get_graph(
     node_overrides, deleted_nodes, edge_overrides, deleted_edges = _load_overrides(db)
 
     # node_id 用 "{cat}:{label}"，保证跨文档同名实体合并
-    node_meta: dict[str, dict] = {}        # node_id -> { label, type, docId, chunkId, weight, sourceDocIds }
+    node_meta: dict[str, dict] = {}        # node_id -> { label, type, docId, chunkId, weight, sourceDocs }
     pair_count: dict[tuple[str, str], dict] = {}  # (a,b) -> { rel, weight }
 
     for did in valid_ids:
@@ -197,7 +236,9 @@ def get_graph(
             for cat, names in ents_by_cat.items():
                 for n in names:
                     flat.append((cat, n))
-            # 注册节点 + 跟踪 source_doc_ids
+            # 注册节点 + 跟踪来源文档（chunk_id / page / 文本片段）
+            meta = ch.get("metadata") or {}
+            chunk_info = {"chunk_id": ch["id"], "page": meta.get("page"), "text": (ch["content"] or "")[:800]}
             for cat, name in flat:
                 nid = f"{cat}:{name}"
                 if nid not in node_meta:
@@ -208,11 +249,11 @@ def get_graph(
                         "docId": str(did),
                         "chunkId": ch["id"],
                         "weight": 1,
-                        "sourceDocIds": {did},
+                        "sourceDocs": {did: chunk_info},
                     }
                 else:
                     node_meta[nid]["weight"] += 1
-                    node_meta[nid]["sourceDocIds"].add(did)
+                    node_meta[nid]["sourceDocs"].setdefault(did, chunk_info)
             # 共现成边
             seen_pair: set[tuple[str, str]] = set()
             for i in range(len(flat)):
@@ -267,22 +308,36 @@ def get_graph(
 
     # FIX6 第 8 项：按文档筛选
     if filter_doc_id is not None:
-        keep_ids = {n["id"] for n in nodes if filter_doc_id in n.get("sourceDocIds", set())}
+        keep_ids = {n["id"] for n in nodes if filter_doc_id in n.get("sourceDocs", {})}
         nodes = [n for n in nodes if n["id"] in keep_ids]
         edges = [e for e in edges if e["source"] in keep_ids and e["target"] in keep_ids]
 
-    # FIX6 第 8 项：构建 source_docs 列表
+    # FIX6 第 8 项：构建 source_docs 列表；FIX7 续：附带 chunk_id/page/hl 用于精准跳转
     all_doc_ids = set()
     for n in nodes:
-        all_doc_ids.update(n.get("sourceDocIds", set()))
+        all_doc_ids.update(n.get("sourceDocs", {}).keys())
     if all_doc_ids:
         doc_map = {}
         for d in db.query(Document).filter(Document.id.in_(list(all_doc_ids))).all():
             doc_map[d.id] = {"id": d.id, "title": d.title, "doc_type": d.type or "unknown"}
         for n in nodes:
-            n["source_docs"] = [doc_map[did] for did in sorted(n.get("sourceDocIds", set())) if did in doc_map]
+            source_docs = []
+            for did, info in sorted(n.get("sourceDocs", {}).items()):
+                if did not in doc_map:
+                    continue
+                doc = doc_map[did]
+                hl = _build_kg_snippet(info.get("text", ""), n["label"])
+                source_docs.append({
+                    "id": doc["id"],
+                    "title": doc["title"],
+                    "doc_type": doc["doc_type"],
+                    "chunk_id": info.get("chunk_id"),
+                    "page": info.get("page"),
+                    "hl": hl,
+                })
+            n["source_docs"] = source_docs
             # 移除内部集合，不暴露给前端
-            n.pop("sourceDocIds", None)
+            n.pop("sourceDocs", None)
 
     return {"nodes": nodes, "edges": edges}
 

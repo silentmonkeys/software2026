@@ -72,6 +72,15 @@ const onDrop = (e: DragEvent) => {
   onPickFiles(e.dataTransfer?.files || null)
 }
 
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 const scrollToBottom = async () => {
   await nextTick()
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior: 'smooth' })
@@ -85,13 +94,16 @@ const onSend = async () => {
   ensureSession()
   const sid = sessionId.value
 
-  // 1) 投递用户消息
+  // 1) 投递用户消息（FIX12：将图片转为 base64 持久化，避免 blob URL 刷新/重登后失效）
   const userMsgId = nanoid()
+  const userImages = imageList.value.length
+    ? await Promise.all(imageList.value.map(i => fileToBase64(i.file)))
+    : []
   chat.appendMessage(sid, {
     id: userMsgId,
     role: 'user',
     content: text,
-    images: imageList.value.map(i => i.url),
+    images: userImages,
     createdAt: Date.now()
   })
 
@@ -126,6 +138,7 @@ const onSend = async () => {
         docId: (h.meta as any)?.docId,
         title: h.title,
         snippet: h.snippet || '',
+        hl: (h.meta as any)?.hl || h.snippet || '',
         similarity: h.similarity,
         page: (h.meta as any)?.page,
         images: (h.meta as any)?.images || []
@@ -409,7 +422,7 @@ onBeforeUnmount(() => {
                                                path: `/kb/preview/${h.docId}`,
                                                query: {
                                                  chunk: h.id,
-                                                 hl: stripDots(h.snippet),
+                                                 hl: stripDots(h.hl || h.snippet),
                                                  page: h.page || undefined
                                                }
                                              }"
@@ -482,28 +495,32 @@ onBeforeUnmount(() => {
 /* FIX7 第 1 项：引用面板样式 */
 .ref-snippet {
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-2, #6B7280);
 }
 .ref-link {
-  color: #00B7C2;
+  color: var(--color-ai, #00B7C2);
   text-decoration: underline;
 }
 .ref-link:hover {
-  color: #009aa3;
+  color: var(--color-accent-2, #FF7E36);
 }
 </style>
 
 <style>
 /* markdown 渲染基础样式（全局生效以便嵌套 v-html） */
-.md-body { font-size: 15px; line-height: 1.7; color: var(--text, #1F2937); word-break: break-word; }
+.md-body { font-size: 15px; line-height: 1.7; color: var(--color-text, #1F2937); word-break: break-word; }
 /* 深色模式下主输出文本提亮，避免灰字和卡片背景分不清 */
-.dark .md-body { color: #F9FAFB; }
-.dark .md-body p,
-.dark .md-body li,
-.dark .md-body td,
-.dark .md-body th { color: #F9FAFB; }
-.dark .md-body blockquote { color: #E5E7EB; background: rgba(255,255,255,0.06); }
-.dark .md-body code { color: #F9FAFB; background: rgba(255,255,255,0.14); }
+[data-theme='dark'] .md-body { color: #F1F5F9; }
+[data-theme='dark'] .md-body p,
+[data-theme='dark'] .md-body li,
+[data-theme='dark'] .md-body td,
+[data-theme='dark'] .md-body th { color: #F1F5F9; }
+[data-theme='dark'] .md-body blockquote { color: #E5E7EB; background: rgba(255,255,255,0.06); }
+[data-theme='dark'] .md-body code { color: #F1F5F9; background: rgba(255,255,255,0.14); }
+[data-theme='dark'] .md-body th { background: rgba(255,255,255,0.06); }
+[data-theme='dark'] .md-body th,
+[data-theme='dark'] .md-body td { border-color: var(--color-border, #234373); }
+[data-theme='dark'] .md-body hr { border-top-color: var(--color-border, #234373); }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; margin: 0.85em 0 0.35em; line-height: 1.35; }
 .md-body h1 { font-size: 1.4em; }
 .md-body h2 { font-size: 1.25em; }
@@ -516,9 +533,9 @@ onBeforeUnmount(() => {
 .md-body li { margin: 0.2em 0; }
 .md-body blockquote {
   margin: 0.6em 0; padding: 0.4em 0.9em;
-  border-left: 3px solid var(--accent, #F26B1F);
+  border-left: 3px solid var(--color-accent, #F26B1F);
   background: rgba(242, 107, 31, 0.05);
-  color: var(--text-2, #6B7280);
+  color: var(--color-text-2, #6B7280);
 }
 .md-body code {
   background: rgba(0, 0, 0, 0.06);
@@ -532,8 +549,8 @@ onBeforeUnmount(() => {
 }
 .md-body pre code { background: transparent; padding: 0; color: inherit; }
 .md-body table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 0.95em; }
-.md-body th, .md-body td { border: 1px solid #E5E7EB; padding: 0.45em 0.7em; text-align: left; }
+.md-body th, .md-body td { border: 1px solid var(--color-border, #E4E7ED); padding: 0.45em 0.7em; text-align: left; }
 .md-body th { background: #F3F4F6; font-weight: 600; }
-.md-body a { color: #00B7C2; text-decoration: underline; }
-.md-body hr { border: 0; border-top: 1px solid #E5E7EB; margin: 1em 0; }
+.md-body a { color: var(--color-ai, #00B7C2); text-decoration: underline; }
+.md-body hr { border: 0; border-top: 1px solid var(--color-border, #E4E7ED); margin: 1em 0; }
 </style>

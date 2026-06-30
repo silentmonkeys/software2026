@@ -44,6 +44,7 @@ const uploads = reactive<UploadingItem[]>([])
 
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
+const fileCategory = ref<'manual' | 'experience'>('manual')
 
 // 录入文本知识
 const showText = ref(false)
@@ -102,14 +103,14 @@ const onFiles = async (files: FileList | File[] | null) => {
   try {
     await showConfirmDialog({
       title: '确认上传',
-      message: `将上传 ${valid.length} 个文件并直接入库（已通过）。是否继续？`
+      message: `将以「${fileCategory.value === 'manual' ? '手册' : '案例'}」分类上传 ${valid.length} 个文件并直接入库（已通过）。是否继续？`
     })
   } catch { return }
   for (const f of valid) {
     const item: UploadingItem = { name: f.name, size: f.size, progress: 'uploading' }
     uploads.push(item)
     try {
-      const res = await uploadDoc(f)
+      const res = await uploadDoc(f, undefined, fileCategory.value)
       item.docId = res.doc_id
       item.chunks = res.chunks
       item.progress = 'done'
@@ -384,6 +385,16 @@ const isApproved = (s: string) => s === 'approved' || s === 'ready'
     <section class="industrial-card p-5">
       <div class="text-sm font-semibold mb-2 flex items-center gap-2">
         <Upload class="w-4 h-4 text-accent" /> 上传新文档
+      </div>
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-sm text-text-2">分类</span>
+        <div class="flex p-0.5 bg-bg rounded-btn border border-border text-sm w-max">
+          <button v-for="c in [{k:'manual',l:'手册 / 规程'},{k:'experience',l:'案例 / 经验'}]" :key="c.k"
+                  @click="fileCategory = c.k as any"
+                  :class="['px-4 h-8 rounded font-medium', fileCategory === c.k ? 'bg-card shadow-card text-accent' : 'text-text-2']">
+            {{ c.l }}
+          </button>
+        </div>
       </div>
       <div @click="fileInput?.click()"
            @dragover.prevent="dragging = true"

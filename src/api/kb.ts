@@ -37,12 +37,15 @@ export interface KbUploadResult {
   status?: KbStatus
 }
 
-/** FIX6 第 5 项：上传文件时可指定 parent_id 关联到主条目 */
-export const uploadDoc = (file: File, parentId?: number): Promise<KbUploadResult> => {
+/** FIX6 第 5 项：上传文件时可指定 parent_id 关联到主条目；category 可指定分类（manual/experience） */
+export const uploadDoc = (file: File, parentId?: number, category?: string): Promise<KbUploadResult> => {
   const form = new FormData()
   form.append('file', file)
   if (parentId !== undefined) {
     form.append('parent_id', String(parentId))
+  }
+  if (category) {
+    form.append('category', category)
   }
   return rawCall<KbUploadResult>(() =>
     request.post<KbUploadResult>('/kb/upload', form, {
