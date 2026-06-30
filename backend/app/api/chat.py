@@ -143,7 +143,8 @@ async def query(
     effective_question = img_desc if is_image_only and img_desc else q_trimmed
     if not effective_question:
         raise HTTPException(400, "请输入问题或上传图片")
-    answer, hits = rag_answer(effective_question, img_desc)
+    # 检索和回答仍使用上传图片的视觉分析结果；不要因为只调整引用展示而削弱图片识别能力
+    answer, hits = rag_answer(effective_question, img_desc, image_only=is_image_only)
     log = QALog(question=question, answer=answer, sources=[h["metadata"] for h in hits], user_id=user.id)
     db.add(log); db.commit()
     # FIX7 续：用提问关键词定位 chunk 内的相关窗口作为 snippet，避免首段无关

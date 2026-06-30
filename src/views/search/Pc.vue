@@ -487,6 +487,14 @@ onBeforeUnmount(() => {
 <style>
 /* markdown 渲染基础样式（全局生效以便嵌套 v-html） */
 .md-body { font-size: 15px; line-height: 1.7; color: var(--text, #1F2937); word-break: break-word; }
+/* 深色模式下主输出文本提亮，避免灰字和卡片背景分不清 */
+.dark .md-body { color: #F9FAFB; }
+.dark .md-body p,
+.dark .md-body li,
+.dark .md-body td,
+.dark .md-body th { color: #F9FAFB; }
+.dark .md-body blockquote { color: #E5E7EB; background: rgba(255,255,255,0.06); }
+.dark .md-body code { color: #F9FAFB; background: rgba(255,255,255,0.14); }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; margin: 0.85em 0 0.35em; line-height: 1.35; }
 .md-body h1 { font-size: 1.4em; }
 .md-body h2 { font-size: 1.25em; }

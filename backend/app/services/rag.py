@@ -179,7 +179,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def rag_answer(question: str, image_desc: str = "") -> Tuple[str, List[dict]]:
+def rag_answer(question: str, image_desc: str = "", image_only: bool = False) -> Tuple[str, List[dict]]:
     """RAG 问答：基于问题（+ 可选图片描述）检索知识库并生成回答。
 
     多模态问题修复（第2项）：
@@ -195,7 +195,9 @@ def rag_answer(question: str, image_desc: str = "") -> Tuple[str, List[dict]]:
     else:
         enriched = question
 
-    hits = search(enriched, k=5)
+    # 纯图片查询保持上一版能力：检索时允许邻居补充上下文，避免因为主chunk只含图片路径而答不出来。
+    # 注意：search() 已经限制 images/snippet 只来自主chunk，不会影响引用展示。
+    hits = search(enriched, k=5, include_neighbors=True)
     # 关键词兜底：嵌入向量可能因术语偏差("曲轴箱分解图" vs "曲轴连杆部装组件")不匹配
     # 提取短关键词逐一检索，合并命中结果
     if not hits:
@@ -218,5 +220,12 @@ def rag_answer(question: str, image_desc: str = "") -> Tuple[str, List[dict]]:
         )
     context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(hits)])
     user = f"【检修知识】\n{context}\n\n【用户问题】\n{enriched}"
+    if image_only and image_desc:
+        user += (
+            "\n\n【重要补充】\n"
+            "用户上传的是图片并询问图片内容。你必须先根据【用户问题】中的图片观察直接判断这张上传图，"
+            "再用【检修知识】做交叉验证。不要回答'不是来自知识库'、'无法确认'作为主要结论；"
+            "只有当检修知识确实矛盾时才说明不确定。"
+        )
     answer = chat_text(SYSTEM_PROMPT, user, temperature=0.1, top_p=0.7)
     return answer, hits
