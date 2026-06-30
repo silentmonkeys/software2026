@@ -54,11 +54,34 @@ def _image_items(paths: list[str]) -> list[dict]:
     return out
 
 
-def _build_snippet(content: str, keywords: list[str], window: int = 80, max_len: int = 220) -> str:
-    """围绕命中的关键词截取上下文窗口；找不到关键词时退回到首段。"""
+def _clean_source_text(text: str) -> str:
+    """清理引用文本：隐藏图片路径/文件名等技术噪音，只保留手册原文。"""
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("[图片文件]"):
+            continue
+        if "uploads" in s or "extracted_images" in s:
+            continue
+        if re.search(r"page-\d{3}-image-\d{2}\.(png|jpg|jpeg|webp)", s, re.I):
+            continue
+        if s.startswith("该图片来自原文档") or s.startswith("[第 ") and "图片" in s:
+            continue
+        lines.append(s)
+    return "\n".join(lines)
+
+
+def _build_snippet(content: str, keywords: list[str], window: int = 70, max_len: int = 180) -> str:
+    """围绕命中的关键词截取上下文窗口；找不到关键词时退回到清理后的首段。"""
     if not content:
         return ""
-    text = content.strip()
+    text = _clean_source_text(content).strip()
+    if not text:
+        return ""
     # 找到第一个命中的关键词位置
     best_pos = -1
     for kw in keywords:
@@ -66,7 +89,6 @@ def _build_snippet(content: str, keywords: list[str], window: int = 80, max_len:
         if idx >= 0 and (best_pos < 0 or idx < best_pos):
             best_pos = idx
     if best_pos < 0:
-        # 无命中关键词，退回到 chunk 开头
         return text[:max_len] + ("…" if len(text) > max_len else "")
     start = max(0, best_pos - window)
     end = min(len(text), best_pos + window + max_len // 2)
