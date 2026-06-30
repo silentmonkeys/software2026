@@ -167,12 +167,14 @@ def search(query: str, k: int = 5, include_neighbors: bool = True) -> List[dict]
 SYSTEM_PROMPT = (
     "你是企业设备检修助手龙芯智修。必须严格、只依据用户提供的【检修知识】回答。"
     "硬性规则："
-    "1) 只回答用户问的内容，不主动展开无关否定项、风险项或额外分析；"
-    "2) 回答要短，优先给结论；用户问'这是什么'时，用1-3句话回答即可；"
-    "3) 不要使用✅、❌等符号列长清单，不要说'不包含xxx'，除非用户明确问是否包含；"
-    "4) 关键判断必须附带来源编号，如 [1]；一般只引用1条，最多2条；"
-    "5) 不得使用常识或训练记忆补全手册中没有的步骤、参数、故障原因；"
-    "6) 如果【检修知识】中包含与用户问题相关的图片或文字，结合图片观察和手册文字给出最可能答案。"
+    "1) 不得使用常识或训练记忆补全手册中没有的步骤、参数、故障原因；"
+    "2) 如果【检修知识】中包含与用户问题相关的图片（[图片文件]标记），"
+    "   必须结合图片内容和对应文字描述来回答，不能因为缺少编号标注就说不知道；"
+    "3) 回答中的关键判断、参数、步骤必须附带对应来源编号，如 [1]、[2]；"
+    "4) 每个主要结论后尽量引用原文关键句，格式为：原文依据：\"...\"；"
+    "5) 不得编造工具、零件型号、数值、验收标准。"
+    "6) 当用户问图中某个部件是什么时，如果知识库检索到了该图所在页面的文字和图片文件路径，"
+    "   应该根据文字内容（如零件清单、部件名称）结合图片视觉信息给出最可能的答案，并说明依据来源页码。"
     "回答使用中文。"
 )
 
@@ -195,7 +197,7 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
 
     # 纯图片查询保持上一版能力：检索时允许邻居补充上下文，避免因为主chunk只含图片路径而答不出来。
     # 注意：search() 已经限制 images/snippet 只来自主chunk，不会影响引用展示。
-    hits = search(enriched, k=3 if image_only else 5, include_neighbors=True)
+    hits = search(enriched, k=5, include_neighbors=True)
     # 关键词兜底：嵌入向量可能因术语偏差("曲轴箱分解图" vs "曲轴连杆部装组件")不匹配
     # 提取短关键词逐一检索，合并命中结果
     if not hits:
@@ -216,16 +218,14 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
             "维修步骤、参数表或更清晰的现场/文档图片后再试。",
             [],
         )
-    # 纯图片问答不需要塞太多引用，避免模型长篇解释和引用无关内容。
-    answer_hits = hits[:2] if image_only else hits
-    context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(answer_hits)])
+    context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(hits)])
     user = f"【检修知识】\n{context}\n\n【用户问题】\n{enriched}"
     if image_only and image_desc:
         user += (
             "\n\n【重要补充】\n"
             "用户上传的是图片并询问图片内容。你必须先根据【用户问题】中的图片观察直接判断这张上传图，"
-            "再用【检修知识】做交叉验证。输出只保留结论和一句依据，最多引用2条；"
-            "不要列出无关的'不包含xxx'，不要输出长篇反驳，除非用户明确问对错。"
+            "再用【检修知识】做交叉验证。不要回答'不是来自知识库'、'无法确认'作为主要结论；"
+            "只有当检修知识确实矛盾时才说明不确定。"
         )
     answer = chat_text(SYSTEM_PROMPT, user, temperature=0.1, top_p=0.7)
     return answer, hits

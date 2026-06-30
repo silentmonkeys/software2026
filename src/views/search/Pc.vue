@@ -28,6 +28,8 @@ const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
 const scrollEl = ref<HTMLDivElement>()
 const expandedSources = ref<Record<string, boolean>>({})
+// 最近一次上传的图片文件：用于“1和2是什么”这类连续追问自动带上同一张图
+const lastImageFile = ref<File | null>(null)
 
 /** 当前会话；首次发送时再创建，避免空会话被收藏 */
 const sessionId = ref<string>('')
@@ -104,8 +106,10 @@ const onSend = async () => {
     createdAt: Date.now()
   })
 
-  // 3) 同步保留首张图发到后端，再清空输入区
-  const file = imageList.value[0]?.file || null
+  // 3) 同步保留首张图发到后端，再清空输入区。
+  // 连续追问时，如果本轮没上传图，则沿用上一轮图片，避免“1和2是什么”丢失图片上下文。
+  const file = imageList.value[0]?.file || lastImageFile.value
+  if (imageList.value[0]?.file) lastImageFile.value = imageList.value[0].file
   input.value = ''
   imageList.value = []
   if (text) store.push(text)
@@ -179,6 +183,11 @@ watch(() => route.query.session, (v) => {
     sessionId.value = v
   }
 }, { immediate: true })
+
+// 实时保存草稿：不能只依赖 onBeforeUnmount，KeepAlive/路由缓存场景可能不触发卸载
+watch(input, (v) => {
+  store.setDraft(v, imageList.value.map(i => i.file), imageList.value.map(i => i.url))
+})
 
 // FIX6-resume M2：跨路由保留检索表单草稿 + 活动会话
 onMounted(() => {
@@ -333,7 +342,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <!-- 正常回复 -->
-                  <div v-else class="industrial-card p-4 border-l-2 border-l-ai ai-answer-card">
+                  <div v-else class="industrial-card p-4 border-l-2 border-l-ai">
                     <div class="text-xs text-text-2 mb-2 flex items-center gap-2">
                       <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai mono text-[10px]">multimodal-v2.4</span>
                       <span v-if="m.imageObservation">· 已分析图片</span>
@@ -488,29 +497,13 @@ onBeforeUnmount(() => {
 /* markdown 渲染基础样式（全局生效以便嵌套 v-html） */
 .md-body { font-size: 15px; line-height: 1.7; color: var(--text, #1F2937); word-break: break-word; }
 /* 深色模式下主输出文本提亮，避免灰字和卡片背景分不清 */
-html.dark .ai-answer-card,
-html.dark .ai-answer-card .md-body,
-html.dark .ai-answer-card .md-body *,
-body.dark .ai-answer-card,
-body.dark .ai-answer-card .md-body,
-body.dark .ai-answer-card .md-body *,
-.dark .ai-answer-card,
-.dark .ai-answer-card .md-body,
-.dark .ai-answer-card .md-body * {
-  color: #FFFFFF !important;
-}
-html.dark .ai-answer-card .md-body blockquote,
-body.dark .ai-answer-card .md-body blockquote,
-.dark .ai-answer-card .md-body blockquote {
-  color: #F3F4F6 !important;
-  background: rgba(255,255,255,0.08) !important;
-}
-html.dark .ai-answer-card .md-body code,
-body.dark .ai-answer-card .md-body code,
-.dark .ai-answer-card .md-body code {
-  color: #FFFFFF !important;
-  background: rgba(255,255,255,0.16) !important;
-}
+.dark .md-body { color: #F9FAFB; }
+.dark .md-body p,
+.dark .md-body li,
+.dark .md-body td,
+.dark .md-body th { color: #F9FAFB; }
+.dark .md-body blockquote { color: #E5E7EB; background: rgba(255,255,255,0.06); }
+.dark .md-body code { color: #F9FAFB; background: rgba(255,255,255,0.14); }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; margin: 0.85em 0 0.35em; line-height: 1.35; }
 .md-body h1 { font-size: 1.4em; }
 .md-body h2 { font-size: 1.25em; }
