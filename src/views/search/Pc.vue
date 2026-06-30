@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <!-- 正常回复 -->
-                  <div v-else class="industrial-card p-4 border-l-2 border-l-ai">
+                  <div v-else class="industrial-card p-4 border-l-2 border-l-ai ai-answer-card">
                     <div class="text-xs text-text-2 mb-2 flex items-center gap-2">
                       <span class="px-1.5 py-0.5 rounded bg-ai/10 text-ai mono text-[10px]">multimodal-v2.4</span>
                       <span v-if="m.imageObservation">· 已分析图片</span>
@@ -488,13 +488,29 @@ onBeforeUnmount(() => {
 /* markdown 渲染基础样式（全局生效以便嵌套 v-html） */
 .md-body { font-size: 15px; line-height: 1.7; color: var(--text, #1F2937); word-break: break-word; }
 /* 深色模式下主输出文本提亮，避免灰字和卡片背景分不清 */
-.dark .md-body { color: #F9FAFB; }
-.dark .md-body p,
-.dark .md-body li,
-.dark .md-body td,
-.dark .md-body th { color: #F9FAFB; }
-.dark .md-body blockquote { color: #E5E7EB; background: rgba(255,255,255,0.06); }
-.dark .md-body code { color: #F9FAFB; background: rgba(255,255,255,0.14); }
+html.dark .ai-answer-card,
+html.dark .ai-answer-card .md-body,
+html.dark .ai-answer-card .md-body *,
+body.dark .ai-answer-card,
+body.dark .ai-answer-card .md-body,
+body.dark .ai-answer-card .md-body *,
+.dark .ai-answer-card,
+.dark .ai-answer-card .md-body,
+.dark .ai-answer-card .md-body * {
+  color: #FFFFFF !important;
+}
+html.dark .ai-answer-card .md-body blockquote,
+body.dark .ai-answer-card .md-body blockquote,
+.dark .ai-answer-card .md-body blockquote {
+  color: #F3F4F6 !important;
+  background: rgba(255,255,255,0.08) !important;
+}
+html.dark .ai-answer-card .md-body code,
+body.dark .ai-answer-card .md-body code,
+.dark .ai-answer-card .md-body code {
+  color: #FFFFFF !important;
+  background: rgba(255,255,255,0.16) !important;
+}
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; margin: 0.85em 0 0.35em; line-height: 1.35; }
 .md-body h1 { font-size: 1.4em; }
 .md-body h2 { font-size: 1.25em; }

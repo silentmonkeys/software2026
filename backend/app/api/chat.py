@@ -161,7 +161,7 @@ async def query(
                 "snippet": _build_snippet(h.get("original_content") or h["content"] or "", keywords),
                 "images": _image_items(h.get("image_paths") or []),
             }
-            for i, h in enumerate(hits, start=1)
+            for i, h in enumerate((hits[:2] if is_image_only else hits), start=1)
         ],
         "recommended_tickets": _recommend_tickets(db, user.id, question, img_desc),
     }
