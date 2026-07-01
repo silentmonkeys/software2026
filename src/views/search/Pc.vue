@@ -100,6 +100,16 @@ const onPickFiles = (files: FileList | null) => {
   if (!files) return
   Array.from(files).forEach(f => imageList.value.push({ url: URL.createObjectURL(f), name: f.name, file: f }))
 }
+// FIX(内存)：移除/清空图片时释放 Blob URL，避免会话内累积泄漏
+const removeImage = (i: number) => {
+  const removed = imageList.value[i]
+  imageList.value.splice(i, 1)
+  if (removed?.url) URL.revokeObjectURL(removed.url)
+}
+const clearImages = () => {
+  imageList.value.forEach(img => { if (img.url) URL.revokeObjectURL(img.url) })
+  imageList.value = []
+}
 const onDrop = (e: DragEvent) => {
   e.preventDefault(); dragging.value = false
   onPickFiles(e.dataTransfer?.files || null)
@@ -156,7 +166,7 @@ const onSend = async () => {
   const file = imageList.value[0]?.file || lastImageFile.value
   if (imageList.value[0]?.file) lastImageFile.value = imageList.value[0].file
   input.value = ''
-  imageList.value = []
+  clearImages()
   if (text) store.push(text)
   store.clearDraft()  // FIX6 第 9 项：提交成功后清除草稿
   sending.value = true
@@ -165,7 +175,11 @@ const onSend = async () => {
   // FIX6-resume M2：把异步流程包成 Promise 存到 store，切走时后台继续，切回时同步
   const job = (async () => {
     try {
-      const res = await searchApi.multimodalSearch({ text, imageFile: file })
+      let acc = ''
+      const res = await searchApi.multimodalSearchStream(
+        { text, imageFile: file },
+        { onToken: (delta) => { acc += delta; chat.updateMessage(sid, aiId, { content: acc }) } }
+      )
       const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
         id: h.id || `src-${i}`,
         docId: (h.meta as any)?.docId,
@@ -177,7 +191,7 @@ const onSend = async () => {
         images: (h.meta as any)?.images || []
       }))
       chat.updateMessage(sid, aiId, {
-        content: res.summary || '（后端未返回内容）',
+        content: res.summary || acc || '（后端未返回内容）',
         qaLogId: res.qaLogId,
         sources,
         imageObservation: res.imageObservation || '',
@@ -306,7 +320,7 @@ onBeforeUnmount(() => {
             <div v-for="(img, i) in imageList" :key="i" class="relative w-14 h-14 rounded-btn overflow-hidden bg-bg group">
               <img :src="img.url" class="w-full h-full object-cover" />
               <button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center opacity-80"
-                      @click="imageList.splice(i, 1)">
+                      @click="removeImage(i)">
                 <X class="w-3 h-3" />
               </button>
             </div>
@@ -516,7 +530,7 @@ onBeforeUnmount(() => {
               <div v-for="(img, i) in imageList" :key="i" class="relative w-12 h-12 rounded-btn overflow-hidden bg-bg group">
                 <img :src="img.url" class="w-full h-full object-cover" />
                 <button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center"
-                        @click="imageList.splice(i, 1)">
+                        @click="removeImage(i)">
                   <X class="w-3 h-3" />
                 </button>
               </div>

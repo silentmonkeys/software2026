@@ -1,4 +1,4 @@
-import { request, rawCall } from './request'
+import { request, rawCall, readActiveToken, clearActiveToken } from './request'
 
 export type SearchMode = 'precise' | 'smart' | 'explore'
 export type SourceType = 'manual' | 'case' | 'graph'
@@ -112,4 +112,116 @@ export const correctAnswer = (qaLogId: number, correctedAnswer: string) => {
   form.append('qa_log_id', String(qaLogId))
   form.append('corrected_answer', correctedAnswer)
   return request.post('/chat/correct', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
+/**
+ * 流式多模态检索（FIX NEEDS「打字机流式」）：消费后端 /chat/query 的 SSE 流，
+ * 逐 token 回调 onToken，最终 resolve 出与 multimodalSearch 相同结构的 SearchResult。
+ *
+ * 不用 EventSource（不支持 POST/multipart），改用 fetch + ReadableStream 手动解析 SSE。
+ * 401 时复用 request.ts 的清 token + 跳登录 语义。
+ */
+export interface StreamCallbacks {
+  onToken?: (delta: string) => void
+}
+
+export async function multimodalSearchStream(
+  p: SearchPayload,
+  cb: StreamCallbacks = {}
+): Promise<SearchResult> {
+  const question = [p.text || '', p.deviceModel ? `设备型号：${p.deviceModel}` : '']
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+
+  if (!question && !p.imageFile) {
+    throw new Error('请输入问题或上传图片')
+  }
+
+  const form = new FormData()
+  form.append('question', question || '')
+  if (p.imageFile) form.append('image', p.imageFile)
+
+  const base = (import.meta as any).env?.VITE_API_BASE || '/api'
+  const headers: Record<string, string> = {}
+  const token = readActiveToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const resp = await fetch(`${base}/chat/query`, { method: 'POST', headers, body: form })
+
+  if (resp.status === 401) {
+    clearActiveToken()
+    if (typeof location !== 'undefined' && !location.hash.startsWith('#/login')) {
+      location.hash = '#/login'
+    }
+    throw new Error('登录已过期，请重新登录')
+  }
+  if (!resp.ok || !resp.body) {
+    let detail = ''
+    try { detail = await resp.text() } catch { /* ignore */ }
+    // 尝试从 FastAPI 错误体取 detail 字段
+    try {
+      const j = JSON.parse(detail)
+      if (j?.detail) detail = String(j.detail)
+    } catch { /* ignore */ }
+    throw new Error(detail || `检索失败 (${resp.status})`)
+  }
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let summary = ''
+  let meta: any = null
+
+  const parseBlock = (raw: string): { event: string; data: any } | null => {
+    let event = 'message'
+    let dataStr = ''
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+    }
+    if (!dataStr) return { event, data: null }
+    try { return { event, data: JSON.parse(dataStr) } } catch { return { event, data: null } }
+  }
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx: number
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const raw = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      const ev = parseBlock(raw)
+      if (!ev) continue
+      if (ev.event === 'token') {
+        const delta = ev.data?.delta || ''
+        if (delta) { summary += delta; cb.onToken?.(delta) }
+      } else if (ev.event === 'meta') {
+        meta = ev.data
+      } else if (ev.event === 'error') {
+        throw new Error(ev.data?.message || 'AI 生成失败')
+      }
+    }
+  }
+
+  const hits: SearchHit[] = (meta?.sources || []).map((s: any, i: number) => ({
+    id: String(s.id ?? 'src-' + i),
+    type: 'manual' as SourceType,
+    title: s.title || `引用 ${i + 1}`,
+    snippet: s.snippet || '',
+    similarity: typeof s.score === 'number' ? Math.max(0, Math.min(1, s.score)) : Math.max(0.55, 0.92 - i * 0.07),
+    source: '知识库 · ' + (s.title || ''),
+    highlights: [],
+    meta: { docId: s.doc_id != null ? String(s.doc_id) : undefined, page: s.page, hl: s.hl, images: s.images || [] }
+  }))
+  return {
+    summary: meta?.answer || summary || '',
+    qaLogId: meta?.qa_log_id ?? undefined,
+    causes: [],
+    hits,
+    imageObservation: meta?.image_observation || '',
+    recommendedTickets: meta?.recommended_tickets || []
+  }
 }

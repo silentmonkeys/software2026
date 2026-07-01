@@ -141,7 +141,11 @@ const onSend = async () => {
   // FIX6-resume M2：异步流程登记到 store；切走时后台继续，切回时同步
   const job = (async () => {
     try {
-      const res = await searchApi.multimodalSearch({ text: t, imageFile: file })
+      let acc = ''
+      const res = await searchApi.multimodalSearchStream(
+        { text: t, imageFile: file },
+        { onToken: (delta) => { acc += delta; chat.updateMessage(sid, aiId, { content: acc }) } }
+      )
       const sources: SourceItem[] = (res.hits || []).map((h, i) => ({
         id: h.id || `src-${i}`,
         docId: (h.meta as any)?.docId,
@@ -153,7 +157,7 @@ const onSend = async () => {
         images: (h.meta as any)?.images || []
       }))
       chat.updateMessage(sid, aiId, {
-        content: res.summary || '（后端未返回内容）',
+        content: res.summary || acc || '（后端未返回内容）',
         qaLogId: res.qaLogId,
         sources,
         imageObservation: res.imageObservation || '',

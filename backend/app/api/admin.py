@@ -12,6 +12,7 @@
 """
 
 from typing import Optional
+import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -25,6 +26,11 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 DEFAULT_PASSWORD = "123456"
 # 后端实际存储的合法角色（前端映射见 src/constants/roles.ts）
 VALID_ROLES = {"worker", "leader", "auditor", "admin"}
+
+
+def _generate_one_time_password() -> str:
+    """生成一次性随机口令（base64url，截断 12 位，避免通用已知值）。"""
+    return secrets.token_urlsafe(9)[:12]
 
 
 def _is_protected_admin(u: User) -> bool:
@@ -63,12 +69,20 @@ def create_user(body: CreateUserIn, db: Session = Depends(get_db), _admin: User 
         raise HTTPException(400, f"非法角色：{body.role}")
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(400, "用户名已存在")
-    pw = body.password or DEFAULT_PASSWORD
+    # FIX(安全)：未指定密码时生成一次性随机口令，不再使用通用已知默认值 123456
+    generated = False
+    pw = body.password
+    if not pw:
+        pw = _generate_one_time_password()
+        generated = True
     if len(pw) < 6:
         raise HTTPException(400, "密码长度不少于 6 位")
     u = User(username=username, password_hash=hash_password(pw), role=role)
     db.add(u); db.commit(); db.refresh(u)
-    return _user_out(u)
+    out = _user_out(u)
+    if generated:
+        out["password"] = pw  # 仅在自动生成时回显一次性口令，供管理员转交用户
+    return out
 
 
 class UpdateUserIn(BaseModel):
@@ -120,9 +134,13 @@ def reset_password(user_id: int, db: Session = Depends(get_db), _admin: User = D
     u = db.query(User).get(user_id)
     if not u:
         raise HTTPException(404, "用户不存在")
-    u.password_hash = hash_password(DEFAULT_PASSWORD)
+    # FIX(安全)：重置为一次性随机口令（非通用 123456），并 bump token_version 失效旧会话
+    new_pw = _generate_one_time_password()
+    u.password_hash = hash_password(new_pw)
+    u.token_version = (u.token_version or 0) + 1
     db.commit()
-    return {"ok": True, "password": DEFAULT_PASSWORD}
+    return {"ok": True, "password": new_pw,
+            "note": "一次性口令，请尽快告知用户并提示登录后修改"}
 
 
 @router.delete("/users/{user_id}")

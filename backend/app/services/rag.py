@@ -209,12 +209,17 @@ def _normalize_vague_question(question: str, image_desc: str) -> str:
     return "请根据图片和【检修知识】说明图中展示的是什么设备/部件，以及正在进行什么操作"
 
 
-def rag_answer(question: str, image_desc: str = "", image_only: bool = False) -> Tuple[str, List[dict]]:
-    """RAG 问答：基于问题（+ 可选图片描述）检索知识库并生成回答。
+_NO_HIT_ANSWER = (
+    "知识库未检索到足够依据，不能可靠回答该问题。请补充或上传对应设备手册、故障代码表、"
+    "维修步骤、参数表或更清晰的现场/文档图片后再试。"
+)
+
+
+def rag_retrieve(question: str, image_desc: str = "", image_only: bool = False) -> tuple[str, list[dict]]:
+    """检索知识库（含关键词兜底），返回 (normalized_question, hits)。
 
     多模态问题修复（第2项）：
     - 当 question 为空但 image_desc 非空时，以 image_desc 作为检索主查询
-      （避免被空字符串或占位符稀释 embedding 语义）
     - 有文字问题时，拼接格式保持原有逻辑
     - 当问题宽泛且上传了图片时，自动将其转化为对图片内容的询问，避免模型拒绝回答
     """
@@ -248,14 +253,12 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
         if len(hits) > 5:
             hits.sort(key=lambda x: x.get("distance", 1.0))
             hits = hits[:5]
-    if not hits:
-        return (
-            "知识库未检索到足够依据，不能可靠回答该问题。请补充或上传对应设备手册、故障代码表、"
-            "维修步骤、参数表或更清晰的现场/文档图片后再试。",
-            [],
-        )
+    return normalized_question, hits
+
+
+def build_user_prompt(question: str, image_desc: str, image_only: bool, hits: list[dict]) -> str:
+    """依据检索结果组装给 LLM 的 user prompt（FIX8-refine：分离系统识别结果与用户原始问题）。"""
     context = "\n\n".join([f"[{i+1}] {h['metadata'].get('title','')}: {h['content']}" for i, h in enumerate(hits)])
-    # FIX8-refine：把系统识别结果与用户原始问题分离，避免模型把 img_desc 当成"用户描述"复述
     user = f"【检修知识】\n{context}\n\n【用户问题】\n{question or '(用户仅上传图片，未输入文字)'}"
     if image_desc and _is_vague_question(question):
         user += (
@@ -276,5 +279,14 @@ def rag_answer(question: str, image_desc: str = "", image_only: bool = False) ->
             "不要主动描述图片、不要分析设备状态、不要推测故障。"
             "只有当【检修知识】确实无法支撑时才说明不确定。"
         )
+    return user
+
+
+def rag_answer(question: str, image_desc: str = "", image_only: bool = False) -> Tuple[str, List[dict]]:
+    """RAG 问答：基于问题（+ 可选图片描述）检索知识库并生成回答（非流式，保留供兼容/测试）。"""
+    _normalized, hits = rag_retrieve(question, image_desc, image_only)
+    if not hits:
+        return _NO_HIT_ANSWER, []
+    user = build_user_prompt(question, image_desc, image_only, hits)
     answer = chat_text(SYSTEM_PROMPT, user, temperature=0.1, top_p=0.7)
     return answer, hits

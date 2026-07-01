@@ -40,8 +40,11 @@ const onPick = (ev: Event) => {
 }
 
 const removeImg = (i: number) => {
+  const removed = props.images[i]
   const n = [...props.images]
   n.splice(i, 1)
+  // FIX(内存)：释放被移除图片的 Blob URL，避免长会话累积内存
+  if (removed) URL.revokeObjectURL(removed)
   emit('update:images', n)
 }
 </script>

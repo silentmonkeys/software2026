@@ -52,7 +52,8 @@ async def upload(file: UploadFile = File(...),
                  category: Optional[str] = Form(None, description="分类：manual / experience"),
                  db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
-    fname = file.filename or ""
+    # FIX(安全)：仅取 basename，防止 file.filename 含 ../ 或绝对路径造成路径穿越
+    fname = os.path.basename(file.filename or "") or f"upload_{uuid.uuid4().hex}.pdf"
     if not fname.lower().endswith(ALLOWED_EXT):
         raise HTTPException(400, "仅支持 PDF / DOCX / TXT / MD 文件")
     data = await file.read()
@@ -137,7 +138,8 @@ async def upload_text_with_files(
     # 预校验所有附件后再写库，避免主条目已提交、附件失败导致脏数据
     attach_buf: list[tuple[str, bytes]] = []
     for f in files or []:
-        fname = f.filename or ""
+        # FIX(安全)：仅取 basename，防止附件名含 ../ 或绝对路径造成路径穿越
+        fname = os.path.basename(f.filename or "") or f"attach_{uuid.uuid4().hex}.pdf"
         if not fname.lower().endswith(ALLOWED_EXT):
             raise HTTPException(400, f"附件 {fname} 不支持的格式，仅支持 PDF / DOCX / TXT / MD")
         data = await f.read()
@@ -253,8 +255,12 @@ def review_doc(doc_id: int, body: ReviewIn, db: Session = Depends(get_db),
         d.review_reason = None
         text = d.content or (read_any(d.file_path) if d.file_path else "")
         if text:
-            remove_document(d.id)
-            ingest_document(d.id, d.title, text)
+            # FIX(健壮)：审批入库失败转 502，避免 500 堆栈泄露；未 commit 故状态仍为 pending
+            try:
+                remove_document(d.id)
+                ingest_document(d.id, d.title, text)
+            except Exception as e:
+                raise HTTPException(502, f"向量入库失败：{e}")
         # FIX6 第 5 项：同步通过附件
         for att in db.query(Document).filter(Document.parent_id == doc_id).all():
             att.status = "approved"; att.reviewer_id = user.id; att.reviewed_at = datetime.utcnow()
@@ -357,6 +363,8 @@ def update_doc(doc_id: int, body: KbUpdateIn, db: Session = Depends(get_db),
     if not d:
         raise HTTPException(404, "文档不存在")
     changed_text = False
+    old_content = d.content
+    old_title = d.title
     if body.title is not None:
         d.title = body.title.strip() or d.title
     if body.content is not None:
@@ -366,14 +374,21 @@ def update_doc(doc_id: int, body: KbUpdateIn, db: Session = Depends(get_db),
         d.category = body.category.strip() or d.category
     if body.status is not None and body.status in ("pending", "approved", "rejected", "taken_down", "ready"):
         d.status = body.status
-    db.commit(); db.refresh(d)
-    # 若文档已通过且文本内容有变化，重建向量
+    # FIX(数据完整性)：向量重建必须在 commit 之前；失败时回滚本次编辑并尝试恢复旧向量，
+    # 避免 status=approved 但 Chroma 零向量的静默不一致（旧实现 except:pass 静默吞错）。
     if changed_text and d.status in ("approved", "ready"):
         try:
             remove_document(d.id)
             ingest_document(d.id, d.title, d.content or "")
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                if old_content:
+                    ingest_document(d.id, old_title or d.title, old_content)
+            except Exception:
+                pass
+            db.rollback()
+            raise HTTPException(500, f"向量重建失败，已回滚本次编辑：{e}")
+    db.commit(); db.refresh(d)
     return {"ok": True, "id": d.id, "status": d.status}
 
 

@@ -1,7 +1,7 @@
 """统一封装 DashScope 调用：文本、图文、嵌入。
 A（算法）在 ai/ 深耕，B（后端）通过这层薄封装调用。
 """
-from typing import List
+from typing import List, Iterator
 import dashscope
 from dashscope import Generation, MultiModalConversation, TextEmbedding
 from app.core.config import settings
@@ -24,7 +24,42 @@ def chat_text(system: str, user: str, temperature: float = 0.2, top_p: float = 0
         temperature=temperature,
         top_p=top_p,
     )
+    # FIX(健壮)：DashScope 异常时 rsp.output 为 None / choices 为空，统一抛 RuntimeError，
+    # 由调用方（rag/chat/ticket）捕获并转为 HTTPException，避免 500 堆栈泄露。
+    if rsp.output is None or not rsp.output.choices:
+        raise RuntimeError(
+            f"chat_text failed: code={rsp.code}, message={rsp.message}, "
+            f"status_code={getattr(rsp, 'status_code', 'N/A')}"
+        )
     return rsp.output.choices[0].message.content
+
+
+def chat_text_stream(system: str, user: str, temperature: float = 0.2, top_p: float = 0.8) -> Iterator[str]:
+    """流式调用文本大模型，逐段 yield 增量文本（FIX NEEDS「打字机流式」）。
+
+    使用 DashScope stream=True + incremental_output=True，每次 yield 一段增量。
+    """
+    responses = Generation.call(
+        model=settings.LLM_TEXT_MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        result_format="message",
+        temperature=temperature,
+        top_p=top_p,
+        stream=True,
+        incremental_output=True,
+    )
+    for rsp in responses:
+        if rsp.output is None or not rsp.output.choices:
+            raise RuntimeError(
+                f"chat_text_stream failed: code={rsp.code}, message={rsp.message}, "
+                f"status_code={getattr(rsp, 'status_code', 'N/A')}"
+            )
+        delta = rsp.output.choices[0].message.content or ""
+        if delta:
+            yield delta
 
 
 def vl_describe(

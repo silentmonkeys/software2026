@@ -175,7 +175,11 @@ def create(body: TicketIn, db: Session = Depends(get_db), user: User = Depends(g
         f"【故障描述】\n{body.fault}\n\n"
         "请只依据【相关手册】生成标准化检修方案；按系统要求返回 JSON 数组。"
     )
-    raw = chat_text(SOP_SYSTEM, prompt, temperature=0.1, top_p=0.7)
+    # FIX(健壮)：DashScope 异常时 chat_text 抛 RuntimeError，转 502 避免堆栈泄露
+    try:
+        raw = chat_text(SOP_SYSTEM, prompt, temperature=0.1, top_p=0.7)
+    except Exception as e:
+        raise HTTPException(502, f"AI 服务暂时不可用，无法生成检修方案：{e}")
     parsed = _parse_steps(raw)
     steps = parsed if parsed is not None else {"raw": raw}
     t = Ticket(device=body.device, fault=body.fault, steps=steps, creator_id=user.id)

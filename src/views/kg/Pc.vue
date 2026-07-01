@@ -7,7 +7,7 @@
  * - FIX6 第 6 项：审查员/管理员对节点 label/desc 做修正、删除节点或边
  * - FIX6 第 8 项：节点弹窗展示 source_docs 关联文档；侧栏支持按文档筛选
  */
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getGraph, getChunk, updateNode, deleteNode, updateEdge, deleteEdge,
@@ -537,15 +537,27 @@ const loadDocOptions = async () => {
   }
 }
 
+const onResize = () => inst?.resize()
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(async () => {
   await loadDocOptions()
   await reload()
-  window.addEventListener('resize', () => inst?.resize())
+  window.addEventListener('resize', onResize)
   // FIX7 第 2 项：监听容器尺寸变化，确保父容器过渡动画结束后图谱能正确渲染
   if (chartRef.value && typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(() => inst?.resize())
-    ro.observe(chartRef.value)
+    resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(chartRef.value)
   }
+})
+
+// FIX(内存)：导航离开时释放 ECharts 实例与监听，避免长班次运行累积内存
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  inst?.dispose()
+  inst = null
 })
 
 watch([filterEntity, filterDocType, q], () => {

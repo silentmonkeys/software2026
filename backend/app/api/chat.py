@@ -1,12 +1,15 @@
-import os, shutil, uuid, re
+import os, shutil, uuid, re, json
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from app.core.db import get_db
+from app.core.db import get_db, SessionLocal
 from app.core.config import settings
 from app.core.security import get_current_user
-from app.services.llm import vl_describe
-from app.services.rag import rag_answer
+from app.services.llm import vl_describe, chat_text_stream
+from app.services.rag import (
+    rag_retrieve, build_user_prompt, SYSTEM_PROMPT, _NO_HIT_ANSWER,
+)
 from app.models import QALog, Ticket, UserTicketProgress, User
 from difflib import SequenceMatcher
 
@@ -366,6 +369,11 @@ def _build_raw_snippet(content: str, keywords: list[str], window: int = 40, max_
 _PLACEHOLDER_PATTERNS = {"请描述设备图片中的故障", "请描述", "", " "}
 
 
+def _sse(event: str, data: dict) -> str:
+    """格式化一条 SSE 事件（event + data JSON）。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 @router.post("/query")
 async def query(
     question: str = Form(""),
@@ -398,35 +406,84 @@ async def query(
     effective_question = img_desc if is_image_only and img_desc else q_trimmed
     if not effective_question:
         raise HTTPException(400, "请输入问题或上传图片")
-    # 检索和回答仍使用上传图片的视觉分析结果；不要因为只调整引用展示而削弱图片识别能力
-    answer, hits = rag_answer(effective_question, img_desc, image_only=is_image_only)
-    log = QALog(question=question, answer=answer, sources=[h["metadata"] for h in hits], user_id=user.id)
-    db.add(log); db.commit(); db.refresh(log)
+
+    # FIX NEEDS「打字机流式」：先检索 + 组装 prompt，再流式生成。
+    # 检索/推荐/引用在流式开始前用请求级 db 计算；QALog 在生成完成后用独立 session 写入
+    # （StreamingResponse 生成器在 endpoint 返回后才执行，请求级 Depends session 已关闭）。
+    try:
+        _normalized, hits = rag_retrieve(effective_question, img_desc, image_only=is_image_only)
+    except Exception as e:
+        raise HTTPException(502, f"检索失败：{e}")
     # FIX7 续：用提问关键词定位 chunk 内的相关窗口作为 snippet，避免首段无关
     # FIX8-refine：引用只保留最相关的 1-2 条，避免无关来源刷屏
     keywords = _extract_keywords(f"{question} {img_desc}")
     selected = _select_sources(hits, keywords, max_sources=2)
-    return {
-        "qa_log_id": log.id,
-        "answer": answer,
-        "image_observation": img_desc,
-        "sources": [
-            {
-                "index": i,
-                "id": h.get("id", f"src-{i}"),
-                "doc_id": h["metadata"].get("doc_id"),
-                "title": h["metadata"].get("title"),
-                "snippet": _build_snippet(h.get("original_content") or h["content"] or "", keywords),
-                # 跳转定位专用：用原文关键短语而非格式化后的 snippet，确保 Preview 页能搜到
-                "hl": _build_raw_snippet(h.get("original_content") or h["content"] or "", keywords),
-                # 从 chunk 原文推断页码（PDF 场景下用于跳页定位）
-                "page": _extract_page_from_chunk(h.get("original_content") or h["content"] or ""),
-                "images": _image_items(h.get("image_paths") or []),
-            }
-            for i, h in enumerate(selected, start=1)
-        ],
-        "recommended_tickets": _recommend_tickets(db, user.id, question, img_desc),
-    }
+    sources_payload = [
+        {
+            "index": i,
+            "id": h.get("id", f"src-{i}"),
+            "doc_id": h["metadata"].get("doc_id"),
+            "title": h["metadata"].get("title"),
+            "snippet": _build_snippet(h.get("original_content") or h["content"] or "", keywords),
+            # 跳转定位专用：用原文关键短语而非格式化后的 snippet，确保 Preview 页能搜到
+            "hl": _build_raw_snippet(h.get("original_content") or h["content"] or "", keywords),
+            # 从 chunk 原文推断页码（PDF 场景下用于跳页定位）
+            "page": _extract_page_from_chunk(h.get("original_content") or h["content"] or ""),
+            "images": _image_items(h.get("image_paths") or []),
+        }
+        for i, h in enumerate(selected, start=1)
+    ]
+    recommended = _recommend_tickets(db, user.id, question, img_desc)
+    user_id = user.id
+
+    # 无命中：直接返回兜底文案（单次 token + meta + done）
+    if not hits:
+        def _gen_empty():
+            yield _sse("token", {"delta": _NO_HIT_ANSWER})
+            yield _sse("meta", {
+                "qa_log_id": None,
+                "answer": _NO_HIT_ANSWER,
+                "image_observation": img_desc,
+                "sources": [],
+                "recommended_tickets": recommended,
+            })
+            yield _sse("done", {})
+        return StreamingResponse(_gen_empty(), media_type="text/event-stream")
+
+    user_prompt = build_user_prompt(question, img_desc, is_image_only, hits)
+
+    def _gen():
+        full: list[str] = []
+        try:
+            for delta in chat_text_stream(SYSTEM_PROMPT, user_prompt, temperature=0.1, top_p=0.7):
+                full.append(delta)
+                yield _sse("token", {"delta": delta})
+        except Exception as e:
+            yield _sse("error", {"message": f"AI 生成失败：{e}"})
+            return
+        answer = "".join(full)
+        # 用独立 session 写 QALog（请求级 session 在 endpoint 返回后已关闭）
+        qa_log_id = None
+        _db = SessionLocal()
+        try:
+            log = QALog(question=question, answer=answer,
+                        sources=[h["metadata"] for h in hits], user_id=user_id)
+            _db.add(log); _db.commit(); _db.refresh(log)
+            qa_log_id = log.id
+        except Exception:
+            pass
+        finally:
+            _db.close()
+        yield _sse("meta", {
+            "qa_log_id": qa_log_id,
+            "answer": answer,
+            "image_observation": img_desc,
+            "sources": sources_payload,
+            "recommended_tickets": recommended,
+        })
+        yield _sse("done", {})
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
 @router.post("/correct")
