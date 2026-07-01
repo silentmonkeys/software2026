@@ -64,11 +64,13 @@ software2026/
 # 1) 进入仓库根目录
 cd software2026
 
-# 2) 配置后端环境变量（最重要的是 DASHSCOPE_API_KEY）
+# 2) 配置后端环境变量（最重要的是 DASHSCOPE_API_KEY + JWT_SECRET）
 cp backend/.env.example backend/.env
 vim backend/.env
 #   DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxx
-#   JWT_SECRET=请改为强随机字符串
+#   JWT_SECRET=必须改！默认值会让后端拒绝启动（FIX9 C1）：
+#              python -c "import secrets; print(secrets.token_hex(32))"
+#   CORS_ORIGINS=生产改为前端实际域名，逗号分隔（默认仅放行 localhost:5173）
 #   其余三项 DB_URL / CHROMA_DIR / UPLOAD_DIR 不用动 —— compose 会覆盖到挂卷路径
 
 # 3) 一键构建并启动
@@ -162,9 +164,9 @@ vim backend/.env       # 填入 DASHSCOPE_API_KEY 与 JWT_SECRET
 # 4) 启动（注意：用 up -d 不要加 --build，直接用 tar 里的镜像）
 docker compose up -d
 
-# 5) 验证
+# 5) 验证（深度健康检查：DB / Chroma / DashScope 逐项探活，FIX9 H3）
 curl http://localhost:8080/api/health
-# {"ok":true,"app":"LoongChip-Maintain"}
+# {"ok":true,"app":"LoongChip-Maintain","db":"ok","chroma":"ok","dashscope":"ok"}
 ```
 
 > `docker-compose.yml` 已经写了 `image: loongchip-{backend,frontend}:latest`，没有 `--build` 时 compose 优先用本地已 load 的镜像，不会去拉 docker.io。
@@ -204,7 +206,7 @@ docker compose up -d      # 改完直接重启即可，无需 --build
 | `docker ps` 显示 `127.0.0.1:8080->80/tcp` | 之前的 compose 缓存把端口绑到回环了 → `docker compose down && docker compose up -d` 让新 `BIND_ADDR` 生效 |
 | WSL2 上 Windows 局域网不通 | WSL2 默认 NAT，外部进不到 WSL 子网。两种解法：① 在 Windows PowerShell 管理员里跑 `netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=8080 connectaddress=$(wsl hostname -I)` 做端口转发；② 切到 WSL2 `mirrored` 网络模式（Win11 22H2+，`.wslconfig` 里加 `networkingMode=mirrored`） |
 | Docker Desktop (Mac/Win) 上同网段不通 | 不是 docker 的锅，是宿主机防火墙；Mac 在「系统设置 → 网络 → 防火墙」放行 Docker，Windows 同上 |
-| 客户端打开了页面但 `/api/health` 401/CORS | 后端 CORS 已配 `*`，正常不会 CORS；401 是没登录 → 用 admin/123456 登录 |
+| 客户端打开了页面但接口报 CORS | 后端 CORS 默认仅放行 `localhost:5173`（FIX9 C3），从其他域名访问会被浏览器拦。在 `backend/.env` 设 `CORS_ORIGINS` 加上该域名后重启。`/api/health` 本身免鉴权；其它接口 401 是没登录 → 用 admin/123456 登录 |
 
 对外发布（公网）请在前面放一层反向代理（Nginx / Traefik / Caddy）做 HTTPS + 域名 + 限流。**不要直接把 8080 暴露到公网**，因为：默认 admin 密码、JWT 密钥都是部署方设置的，没经过 TLS 风险很高。
 
@@ -309,10 +311,11 @@ docker build --network=host -t loongchip-frontend .
 | 项 | 说明 |
 | --- | --- |
 | **后端单 worker** | `gunicorn -w 1`：SQLite + 本地 ChromaDB 不支持多进程并发写。要横向扩展请切到 Postgres + 远端 Chroma / Qdrant，并把 worker 调高。 |
-| **JWT_SECRET** | `.env.example` 的默认值仅供本地开发，生产必须改成强随机串（`openssl rand -hex 32`）。 |
+| **JWT_SECRET（必填）** | **FIX9 C1：`JWT_SECRET` 仍为默认值 `please-change-me` 时后端 `raise SystemExit` 拒绝启动。** 生产**必须**在 `backend/.env` 设强随机串：`python -c "import secrets; print(secrets.token_hex(32))"`（或 `openssl rand -hex 32`）。本地开发可临时设 `ALLOW_INSECURE_JWT=true` 绕过。 |
 | **CJK PDF 导出** | 后端镜像已内置 `fonts-noto-cjk` + `fonts-wqy-microhei`，匹配 `_render_pdf()` 字体回退链（FIX6 第 7 项），中文 PDF 导出开箱即用。 |
-| **CORS** | 后端 `allow_origins=["*"]`，仅适合 demo。生产请改 `app/main.py` 的 `CORSMiddleware` 白名单。 |
+| **CORS** | **FIX9 C3：默认仅放行 `http://localhost:5173,http://127.0.0.1:5173`**，不再 `*`。生产在 `backend/.env` 设 `CORS_ORIGINS=https://maintain.example.com`（逗号分隔多域名）；Bearer token 场景 `allow_credentials=False` 使 `Authorization` 头直接放行。仅 `CORS_ORIGINS=*` 时退化为完全开放。 |
 | **首次启动** | 自动建表 + 跑 `run_migrations()` + 播种默认 admin（约 5–10 秒，看 `docker compose logs -f backend`）。 |
+| **行为变化（FIX9）** | ① 管理员重置用户口令 → 随机一次性口令（不再 `123456`），旧会话立即失效；② `/api/chat/query` 改 SSE 流式（`text/event-stream`），前端逐字渲染；③ `/api/health` 返回 `{ok,app,db,chroma,dashscope}`，任一依赖异常 `ok=false`。 |
 | **DashScope key 没填** | 后端能起，但 `/api/chat/query`、知识入库 embedding、KG 抽取等 LLM 路径会报错。 |
 | **暴露后端调试端口** | 默认不暴露 8000；要直连后端测接口，把 `docker-compose.yml` 中 backend 的 `ports: ["8000:8000"]` 注释取消即可。 |
 | **反向代理 / HTTPS** | 前面再放一层 Nginx / Traefik / Caddy 做 TLS 与域名分发，本服务自身不需要再改。 |
