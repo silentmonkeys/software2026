@@ -25,6 +25,10 @@ _ADD_COLUMNS = {
     "tickets": {
         "creator_id": "INTEGER",
     },
+    "qa_logs": {
+        # 赛题要求：支持手动标注与修正大模型输出结果
+        "corrected_answer": "TEXT",
+    },
 }
 
 

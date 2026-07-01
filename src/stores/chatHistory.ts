@@ -46,6 +46,10 @@ export interface ChatMessage {
   content: string
   /** 用户消息附带的图片预览（base64 或 blob url） */
   images?: string[]
+  /** 仅 assistant：后端 QA 日志 ID，用于手动修正功能 */
+  qaLogId?: number
+  /** 仅 assistant：用户修正后的回答（赛题要求：支持手动标注与修正大模型输出） */
+  correctedAnswer?: string
   /** 仅 assistant：本次回答携带的来源引用（与本条消息强绑定） */
   sources?: SourceItem[]
   /** 仅 assistant：图像观察文本 */

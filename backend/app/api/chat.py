@@ -401,12 +401,13 @@ async def query(
     # 检索和回答仍使用上传图片的视觉分析结果；不要因为只调整引用展示而削弱图片识别能力
     answer, hits = rag_answer(effective_question, img_desc, image_only=is_image_only)
     log = QALog(question=question, answer=answer, sources=[h["metadata"] for h in hits], user_id=user.id)
-    db.add(log); db.commit()
+    db.add(log); db.commit(); db.refresh(log)
     # FIX7 续：用提问关键词定位 chunk 内的相关窗口作为 snippet，避免首段无关
     # FIX8-refine：引用只保留最相关的 1-2 条，避免无关来源刷屏
     keywords = _extract_keywords(f"{question} {img_desc}")
     selected = _select_sources(hits, keywords, max_sources=2)
     return {
+        "qa_log_id": log.id,
         "answer": answer,
         "image_observation": img_desc,
         "sources": [
@@ -426,3 +427,19 @@ async def query(
         ],
         "recommended_tickets": _recommend_tickets(db, user.id, question, img_desc),
     }
+
+
+@router.post("/correct")
+async def correct_answer(
+    qa_log_id: int = Form(...),
+    corrected_answer: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """保存用户对 AI 问答结果的手动修正。"""
+    log = db.query(QALog).filter(QALog.id == qa_log_id, QALog.user_id == user.id).first()
+    if not log:
+        raise HTTPException(404, "问答记录不存在")
+    log.corrected_answer = corrected_answer
+    db.commit()
+    return {"ok": True}

@@ -36,6 +36,8 @@ export interface RecommendedTicket {
 
 export interface SearchResult {
   summary: string
+  /** 后端 QA 日志 ID，用于手动修正功能 */
+  qaLogId?: number
   /** 后端目前不返回原因 Top3，前端根据问题展示空数组或保留默认 */
   causes: { name: string; confidence: number }[]
   hits: SearchHit[]
@@ -48,6 +50,7 @@ export interface SearchResult {
 /** 后端 /api/chat/query 返回结构 */
 interface BackendChatResp {
   answer: string
+  qa_log_id?: number
   image_observation: string
   sources: { id?: string; doc_id?: string | number; index?: number; title: string; snippet: string; hl?: string; page?: number; score?: number; images?: { url: string; name?: string; path?: string }[] }[]
   recommended_tickets?: RecommendedTicket[]
@@ -96,9 +99,17 @@ export const multimodalSearch = async (p: SearchPayload): Promise<SearchResult> 
   }))
   return {
     summary: data.answer || '',
+    qaLogId: data.qa_log_id,
     causes: [],
     hits,
     imageObservation: data.image_observation || '',
     recommendedTickets: data.recommended_tickets || []
   }
+}
+
+export const correctAnswer = (qaLogId: number, correctedAnswer: string) => {
+  const form = new FormData()
+  form.append('qa_log_id', String(qaLogId))
+  form.append('corrected_answer', correctedAnswer)
+  return request.post('/chat/correct', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 }

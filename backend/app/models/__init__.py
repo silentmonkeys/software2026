@@ -78,6 +78,7 @@ class QALog(Base):
     question = Column(Text)
     answer = Column(Text)
     sources = Column(JSON)
+    corrected_answer = Column(Text, nullable=True)  # 用户手动修正后的回答
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

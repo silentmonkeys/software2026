@@ -6,7 +6,7 @@
  */
 import { ref, nextTick, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
-import { Sparkles, Bot, User as UserIcon, BookOpen, Image as ImageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star, ListChecks, UserPlus, Check } from 'lucide-vue-next'
+import { Sparkles, Bot, User as UserIcon, BookOpen, Image as ImageIcon, Loader, ChevronDown, ChevronUp, Trash2, Star, ListChecks, UserPlus, Check, Edit3 } from 'lucide-vue-next'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import * as searchApi from '@/api/search'
 import { addTicketToMine } from '@/api/ticket'
@@ -41,6 +41,39 @@ const ensureSession = () => {
 
 /** 推荐工单：一键添加到我的工单（FIX5 第 13 项） */
 const addingTicket = ref<Record<number, boolean>>({})
+
+/** 问答结果手动修正 */
+const correctingId = ref<string>('')
+const correctionText = ref<string>('')
+const savingCorrection = ref(false)
+const startCorrect = (m: any) => {
+  correctingId.value = m.id
+  correctionText.value = m.correctedAnswer || m.content
+}
+const cancelCorrect = () => {
+  correctingId.value = ''
+  correctionText.value = ''
+}
+const submitCorrect = async (m: any) => {
+  if (!m.qaLogId) {
+    showFailToast('当前回答缺少日志ID，请重新提问后再修正')
+    return
+  }
+  const value = correctionText.value.trim()
+  if (!value) return
+  savingCorrection.value = true
+  try {
+    await searchApi.correctAnswer(m.qaLogId, value)
+    chat.updateMessage(sessionId.value, m.id, { correctedAnswer: value })
+    correctingId.value = ''
+    showSuccessToast('修正已保存')
+  } catch (e: any) {
+    showFailToast(e?.message || '保存失败')
+  } finally {
+    savingCorrection.value = false
+  }
+}
+
 const onAddTicket = async (msgId: string, ticketId: number) => {
   addingTicket.value[ticketId] = true
   try {
@@ -121,6 +154,7 @@ const onSend = async () => {
       }))
       chat.updateMessage(sid, aiId, {
         content: res.summary || '（后端未返回内容）',
+        qaLogId: res.qaLogId,
         sources,
         imageObservation: res.imageObservation || '',
         recommendedTickets: res.recommendedTickets || []
@@ -254,6 +288,28 @@ onBeforeUnmount(() => {
                     {{ m.imageObservation }}
                   </div>
                   <div class="md-body" v-html="renderMarkdown(m.content)"></div>
+
+                  <!-- 问答结果手动修正 -->
+                  <div v-if="m.correctedAnswer" class="mt-2 p-2 rounded bg-warning/10 border border-warning/30">
+                    <div class="text-xs text-warning font-semibold mb-1 flex items-center gap-1">
+                      <Edit3 class="w-3 h-3" /> 已修正（用户标注）
+                    </div>
+                    <div class="md-body" v-html="renderMarkdown(m.correctedAnswer)"></div>
+                  </div>
+                  <div v-if="correctingId === m.id" class="mt-2 p-2 rounded bg-bg border border-accent">
+                    <textarea v-model="correctionText" rows="4"
+                              class="w-full resize-y bg-card border border-border rounded px-2 py-1 text-sm outline-none"></textarea>
+                    <div class="mt-2 flex justify-end gap-2">
+                      <button @click="cancelCorrect" class="text-xs px-2 py-1 rounded border border-border">取消</button>
+                      <button @click="submitCorrect(m)" :disabled="savingCorrection"
+                              class="text-xs px-2 py-1 rounded bg-accent text-white disabled:opacity-40">保存修正</button>
+                    </div>
+                  </div>
+                  <div v-if="!m.correctedAnswer && correctingId !== m.id" class="mt-2 pt-2 border-t border-border">
+                    <button @click="startCorrect(m)" class="text-xs text-text-2 flex items-center gap-1">
+                      <Edit3 class="w-3 h-3" /> 修正回答
+                    </button>
+                  </div>
 
                   <!-- 推荐工单（FIX5 第 13 项） -->
                   <div v-if="m.recommendedTickets && m.recommendedTickets.length" class="mt-3 pt-2 border-t border-border">
