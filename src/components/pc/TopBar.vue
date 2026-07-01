@@ -2,17 +2,15 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Search, Bell, Command as CmdIcon, Sun, Moon, Settings, LogOut, User,
+  Sun, Moon, Settings, LogOut, User,
   Type, Minus, Plus, RotateCcw, HardHat, Sparkles, Check
 } from 'lucide-vue-next'
 import { useUserStore } from '@/stores/user'
-import { useUiStore } from '@/stores/ui'
 import { useTheme } from '@/composables/useTheme'
 import { ROLE_LABEL } from '@/utils/permission'
 
 const router = useRouter()
 const user = useUserStore()
-const ui = useUiStore()
 const {
   theme, fontSize, glove, fontSizeLabel,
   toggleDark, toggleContrast, toggleGlove,
@@ -49,19 +47,8 @@ const toggleUser = () => {
       <div class="font-semibold tracking-wide">检修助手</div>
     </div>
 
-    <!-- 全局搜索 / ⌘K 触发 -->
-    <button
-      @click.stop="ui.cmdPaletteOpen = true"
-      class="flex-1 max-w-2xl mx-auto h-9 px-3 rounded-btn bg-white/10 hover:bg-white/15 transition flex items-center gap-2 text-sm text-on-dark/70 border border-white/10">
-      <Search class="w-4 h-4" />
-      <span>搜索设备 / 故障 / 案例…</span>
-      <span class="ml-auto flex items-center gap-1 mono text-xs opacity-70">
-        <CmdIcon class="w-3 h-3" />K
-      </span>
-    </button>
-
     <!-- 工具区 -->
-    <div class="flex items-center gap-2" @click.stop>
+    <div class="flex items-center gap-2 ml-auto" @click.stop>
       <!-- 显示设置统一入口 -->
       <div class="relative">
         <button class="w-9 h-9 rounded-btn hover:bg-white/10 flex items-center justify-center"
@@ -127,11 +114,6 @@ const toggleUser = () => {
           </div>
         </transition>
       </div>
-
-      <button class="w-9 h-9 rounded-btn hover:bg-white/10 flex items-center justify-center relative" title="通知">
-        <Bell class="w-4 h-4" />
-        <span class="absolute top-2 right-2 w-1.5 h-1.5 bg-accent rounded-full"></span>
-      </button>
 
       <div class="relative">
         <button class="flex items-center gap-2 h-9 px-2 rounded-btn hover:bg-white/10"
