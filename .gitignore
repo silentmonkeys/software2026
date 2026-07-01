@@ -16,7 +16,6 @@ dist-ssr
 .env.*.local
 pnpm-lock.yaml
 yarn.lock
-package-lock.json
 __pycache__/
 *.pyc
 *.pyo
